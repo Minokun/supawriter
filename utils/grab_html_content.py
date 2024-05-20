@@ -52,34 +52,30 @@ async def fetch(browser, url):
     page = await context.new_page()
     try:
         # 使用 wait_for 来设置超时时间
-        await page.goto(url, timeout=30000)
+        await page.goto(url, timeout=60000)
         # images = await page.query_selector_all('img')
         # print(images)
         content = await page.content()
     except Exception as e:
         print(f"Timeout occurred while fetching {url}")
-        content = None
+        content = ''
     # finally:
     #     await page.close()
-    return content
+    return {'url': url, 'content': text_from_html(content)}
 
 async def get_main_content(url_list):
     async with async_playwright() as p:
         browser = await p.firefox.launch()
         tasks = []
         for url in url_list:
-            print(url)
             tasks.append(fetch(browser, url))
-        html_content = await asyncio.gather(*tasks)
-        content_list = [text_from_html(html) for html in html_content if html is not None]
+        html_content_list = await asyncio.gather(*tasks)
         await browser.close()
-        print('browser closed!')
-        return content_list
+        return html_content_list
 
 if __name__ == '__main__':
     url_list = ['https://news.sina.com.cn/o/2024-05-09/doc-inaurtsc9410350.shtml?tj=cxvertical_pc_hp&tr=181']
     main_content = asyncio.run(get_main_content(url_list))
-    # main_content = get_main_content_by_request(url_list)
     if main_content:
         print(len(main_content))
         print(main_content)
