@@ -4,7 +4,7 @@ import json
 import pandas as pd
 
 # 从Amap_adcode_citycode.json中读取json数据
-with open('utils/Amap_adcode_citycode.json', 'r', encoding='utf-8') as f:
+with open('utils/AMap_adcode_citycode.json', 'r', encoding='utf-8') as f:
     data = json.load(f)
 # 将json转为pandas
 pd_data = pd.DataFrame(data)
