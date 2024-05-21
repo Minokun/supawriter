@@ -27,7 +27,7 @@ def search(question: str):
 def search(question: str):
     global search_obj
     result = search_obj.run(question, return_type='search_spider')
-    return json.dumps({'result': result})
+    return result
 
 @app.get("/pdu_spec")
 def pdu_spec(pdu: str):

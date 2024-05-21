@@ -135,8 +135,8 @@ class Search:
 
 
 if __name__ == '__main__':
-    result = Search().run(question='''
-    starRock和clickhouse各自的使用场景
-    ''', output_type=prompt_template.ARTICLE, return_type='search_spider')
+    result = Search(result_num=15).run(question='''
+    微软最新发布会
+    ''', output_type=prompt_template.ARTICLE, return_type='search_spider_summary')
     print(len(result))
     print(result)
