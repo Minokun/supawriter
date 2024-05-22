@@ -4,6 +4,7 @@ import sys, os
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
+from settings import base_path
 import json
 import requests
 import urllib3
@@ -34,6 +35,15 @@ def process_result(content, question, output_type=prompt_template.ARTICLE):
     chat_result = chat(f'## 参考的上下文知识：<content>{html_content}</content> ## 围绕主题：<topic>{question}</topic> ', output_type)
     print(f'总结后的字数统计：{len(chat_result)}')
     return chat_result
+
+def llm_task(search_result, question, output_type):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+        futures = [executor.submit(process_result, i['html_content'], question, output_type) for i
+                   in search_result]
+    # 获取结果
+    outlines = '\n'.join([future.result().replace('\n', '').replace('```json', '').replace('```', '') for future in
+                          concurrent.futures.as_completed(futures)])
+    return outlines
 
 class Search:
     def __init__(self, result_num=5):
@@ -113,11 +123,11 @@ class Search:
         # 创建Search实例并获取搜索结果
         if return_type == 'search':
             return self.get_search_result(question)
-        result = self.get_search_result(question, spider_mode=True)
+        search_result = self.get_search_result(question, spider_mode=True)
         print('抓取完成开始形成摘要......')
         # 使用线程池并发处理结果
         with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
-            futures = [executor.submit(process_result, i['html_content'], question, output_type) for i in result]
+            futures = [executor.submit(process_result, i['html_content'], question, output_type) for i in search_result]
         # 收集并合并结果
         lock = threading.Lock()
         combine_contents = ""
@@ -132,11 +142,49 @@ class Search:
             return chat(f'<topic>{question}</topic> <content>{combine_contents}</content>',
                                 prompt_template.ARTICLE_FINAL)
 
+    def auto_writer(self, prompt):
+        """
+        自动生成文章
+        :param prompt: 提示词
+        :return: 生成的文章
+        """
+        # 首先根据问题获得搜索结果
+        search_result = self.get_search_result(prompt, spider_mode=True)
+        if len(search_result) == 0:
+            return 0
+        # 根据抓取的每一篇文章生成大纲
+        # 使用线程池并发处理结果
+        outlines = llm_task(search_result, prompt, prompt_template.ARTICLE_OUTLINE_GEN)
+        # 融合多份大纲
+        outline_summary = chat(f'<topic>{prompt}</topic> <content>{outlines}</content>', prompt_template.ARTICLE_OUTLINE_SUMMARY)
+        outline_summary_json = json.loads(outline_summary.replace('\n', '').replace('```json', '').replace('```', ''))
+        repeat_num = len(outline_summary_json['content_outline'])
+        # 开始写文章
+        article_title = outline_summary_json['title']
+        article_summary = outline_summary_json['summary']
+        article_outline = chat(str(outline_summary_json['content_outline']), prompt_template.OUTLINE_MD)
+        # 根据大纲一步一步生成文章
+        output_path = os.path.join(base_path, 'output', f'{article_title}.md')
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(f'# {article_title}\n\n>{article_summary}\n\n[toc]\n\n## 目录：\n{article_outline}\n\n')
+            n = 0
+            for outline_block in outline_summary_json['content_outline']:
+                n += 1
+                print(f'{outline_block['h1']} {n}/{repeat_num}')
+                # 根据抓取的内容资料生成内容
+                outline_block_content_list = [chat(f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{i['html_content']}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{outline_block}',
+                                       prompt_template.ARTICLE_OUTLINE_BLOCK) for i in search_result]
+                outline_block_conetent_final = chat(f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{'\n'.join(outline_block_content_list)}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{outline_block}',
+                                       prompt_template.ARTICLE_OUTLINE_BLOCK)
+
+                # 写入文件
+                f.write(outline_block_conetent_final + '\n\n')
 
 
 if __name__ == '__main__':
-    result = Search(result_num=15).run(question='''
-    微软最新发布会
-    ''', output_type=prompt_template.ARTICLE, return_type='search_spider_summary')
-    print(len(result))
-    print(result)
+    # result = Search(result_num=15).run(question='''
+    # YOLO-World Model介绍 入门指南
+    # ''', output_type=prompt_template.IT_ARTICLE, return_type='search_spider_summary')
+    # print(len(result))
+    # print(result)
+    Search(result_num=15).auto_writer('鸿蒙开发指南')

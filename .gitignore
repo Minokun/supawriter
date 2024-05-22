@@ -3,3 +3,4 @@ venv/
 __pycache__/
 utils/__pycache__/*.pyc
 *.pyc
+output/*
