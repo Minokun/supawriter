@@ -1,6 +1,7 @@
 venv/
 .idea/
 __pycache__/
+.vscode/
 utils/__pycache__/*.pyc
 *.pyc
 output/*

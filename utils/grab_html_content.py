@@ -73,6 +73,7 @@ async def get_main_content(url_list):
         await browser.close()
         return html_content_list
 
+
 if __name__ == '__main__':
     url_list = ['https://news.sina.com.cn/o/2024-05-09/doc-inaurtsc9410350.shtml?tj=cxvertical_pc_hp&tr=181']
     main_content = asyncio.run(get_main_content(url_list))

@@ -57,7 +57,7 @@ def pdf_translate(input_path, output_path):
                     if len(original_text) < 6:
                         translate_text = original_text
                     else:
-                        system_prompt = "你是一个几十年资深的英中双鱼翻译官。请将我给的文字翻译成中文，翻译结果要达到专八水平，只输出翻译后的结果。如果无法翻译,或输入的是一串乱码或无意义的字符则直接输出数字0！注意：如果你无法翻译就直接输出数字0"
+                        system_prompt = "你是一个几十年资深的英中双语翻译官。请将我给的文字翻译成中文，翻译结果要达到专八水平要简明扼要，只输出翻译后的结果。如果无法翻译,或输入的是一串乱码或无意义的字符则直接输出数字0！注意：如果你无法翻译就直接输出数字0"
                         translate_text = chat(original_text, system_prompt)
 
                     if translate_text == '0':

@@ -1,26 +1,27 @@
 import openai
+import pyglet
+from settings import LLM_MODEL
 
-api_key = 'sk-Mr1Tt95beGr2ko0u21634797230045639970Aa76B86bB958'
-base_url = 'http://192.168.5.31:3000/v1'
-client = openai.OpenAI(api_key=api_key, base_url=base_url)
-
-
-def chat(prompt, system_prompt):
+def chat(prompt, system_prompt, model_type='deepseek', model_name='deepseek-chat'):
+    client = openai.OpenAI(api_key=LLM_MODEL[model_type]['api_key'], base_url=LLM_MODEL[model_type]['base_url'])
     response = client.chat.completions.create(
-        model="qwen1.5-chat",
+        model=model_name,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ],
-        max_tokens=20000,
-        temperature=0.7
+        max_tokens=2500,
+        temperature=0.3,
+        stream=False
     )
     return response.choices[0].message.content
 
 
 async def chat_async(prompt, system_prompt):
+    client = openai.OpenAI(api_key=LLM_MODEL['qwen'].api_key, base_url=LLM_MODEL['qwen'].base_url)
+    model = 'qwen-1.5'
     response = await client.chat.completions.create(
-        model="qwen1.5-chat",
+        model=model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
@@ -30,8 +31,21 @@ async def chat_async(prompt, system_prompt):
     )
     return response.choices[0].message.content
 
+def text_2_speech(input_text, mp3_file_name='speech.mp3'):
+    client = openai.OpenAI(api_key=LLM_MODEL['qwen'].api_key, base_url=LLM_MODEL['qwen'].base_url)
+    model_name = "ChatTTS"
+    response = client.audio.speech.create(
+        model=model_name,
+        voice=359154910,
+        input=input_text
+    )
+    response.stream_to_file(mp3_file_name)
+def on_player_eos():
+    """当播放结束时调用的回调函数，用于退出应用"""
+    pyglet.app.exit()
 
 if __name__ == '__main__':
-    prompt = "你好"
-    system_prompt = "你是一个助手"
-    print(chat(prompt, system_prompt))
+    prompt = '请叫我如何才能哄女孩子开心'
+    system_prompt = "你是一个来自台湾的知心大姐姐，会用最温柔最贴心最绿茶的话和我聊天。"
+    response = chat(prompt, system_prompt, model_type='deepseek', model_name='deepseek-v2.5')
+    print(response)
