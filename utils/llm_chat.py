@@ -11,7 +11,7 @@ def chat(prompt, system_prompt, model_type='deepseek', model_name='deepseek-chat
             {"role": "user", "content": prompt},
         ],
         max_tokens=2500,
-        temperature=0.3,
+        temperature=0.2,
         stream=False
     )
     return response.choices[0].message.content

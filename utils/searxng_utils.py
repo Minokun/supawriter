@@ -32,11 +32,13 @@ def process_result(content, question, output_type=prompt_template.ARTICLE, model
     else:
         html_content = content[:20000]
     # 创建对话提示
-    chat_result = chat(f'## 参考的上下文资料：<content>{html_content}</content> ## 围绕主题：<topic>{question}</topic> ', output_type, model_type, model_name)
+    chat_result = chat(f'## 参考的上下文资料：<content>{html_content}</content> ## 请围绕该主题撰写：<topic>{question}</topic> ', output_type, model_type, model_name)
     # print(f'总结后的字数统计：{len(chat_result)}')
     return chat_result
 
-def llm_task(search_result, question, output_type, model_type, model_name):
+def llm_task(search_result, question, output_type, model_type, model_name, max_workers=20):
+    if model_type == 'glm':
+        max_workers = 15
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(process_result, i['html_content'], question, output_type, model_type, model_name) for i
                    in search_result]
