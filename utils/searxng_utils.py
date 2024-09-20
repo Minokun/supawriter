@@ -38,7 +38,7 @@ def process_result(content, question, output_type=prompt_template.ARTICLE, model
 
 def llm_task(search_result, question, output_type, model_type, model_name, max_workers=20):
     if model_type == 'glm':
-        max_workers = 15
+        max_workers = 10
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [executor.submit(process_result, i['html_content'], question, output_type, model_type, model_name) for i
                    in search_result]
@@ -132,6 +132,8 @@ class Search:
         # 创建Search实例并获取搜索结果
         if return_type == 'search':
             return self.get_search_result(question)
+        # 爬取搜索结果 中英结合
+        # 中文查询
         search_result = self.get_search_result(question, spider_mode=True)
         print('抓取完成开始形成摘要......')
         # 使用线程池并发处理结果
