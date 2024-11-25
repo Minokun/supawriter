@@ -28,8 +28,8 @@ with st.sidebar:
         with col1:
             write_type = st.selectbox('写作模式', ['简易', '详细'], key=2)
         with col2:
-            spider_num = st.slider(label='爬取网页数量', help='（默认5，数量越多时间越长！)', min_value=1, max_value=30, key=3,
-                               value=3)
+            spider_num = st.slider(label='爬取网页数量', help='（默认5，数量越多时间越长！)', min_value=1, max_value=25, key=3,
+                               value=15)
         submit_button = st.form_submit_button(label='执行', disabled=st.session_state.run_status)
 
 st.caption('SuperWriter by WuXiaokun. ')

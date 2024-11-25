@@ -31,7 +31,12 @@ if st.button("清空"):
 
 from settings import LLM_MODEL
 import openai
-client = openai.OpenAI(api_key=LLM_MODEL['fastgpt']['api_key'], base_url=LLM_MODEL['fastgpt']['base_url'])
+
+model_type = 'openai'
+model_name = LLM_MODEL[model_type]['model'][0]
+model_api_key = LLM_MODEL[model_type]['api_key']
+model_base_url = LLM_MODEL[model_type]['base_url']
+client = openai.OpenAI(api_key=model_api_key, base_url=model_base_url)
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -52,7 +57,7 @@ if prompt := st.chat_input("What is up?"):
     
     with st.chat_message("assistant"):
         stream = client.chat.completions.create(
-            model='qwen1.5-chat',
+            model=model_name,
             messages=[
                 {"role": m["role"], "content": m["content"]}
                 for m in st.session_state.messages

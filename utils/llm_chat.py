@@ -10,8 +10,8 @@ def chat(prompt, system_prompt, model_type='deepseek', model_name='deepseek-chat
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ],
-        max_tokens=2500,
-        temperature=0.2,
+        max_tokens=4000,
+        temperature=0,
         stream=False
     )
     return response.choices[0].message.content
@@ -44,8 +44,20 @@ def on_player_eos():
     """当播放结束时调用的回调函数，用于退出应用"""
     pyglet.app.exit()
 
+def multimodal_response(img):
+    client = openai.OpenAI(api_key=LLM_MODEL['qwen'].api_key, base_url=LLM_MODEL['qwen'].base_url)
+    model = 'qwen-1.5'
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": "你是一个来自台湾的知心大姐姐，会用最温柔最贴心最绿茶的话和我聊天。"},
+            {"role": "user", "content":"请帮我用最温柔的话，用最compact的话，用最compact"}
+        ]
+    )
+    return response
+
 if __name__ == '__main__':
     prompt = '请叫我如何才能哄女孩子开心'
     system_prompt = "你是一个来自台湾的知心大姐姐，会用最温柔最贴心最绿茶的话和我聊天。"
-    response = chat(prompt, system_prompt, model_type='deepseek', model_name='deepseek-v2.5')
+    response = chat(prompt, system_prompt, model_type='xinference', model_name='qwen2.5-instruct')
     print(response)

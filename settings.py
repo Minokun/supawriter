@@ -41,5 +41,10 @@ LLM_MODEL = {
         'model': st.secrets['fastgpt']['model'],
         'base_url': st.secrets['fastgpt']['base_url'],
         'api_key': st.secrets['fastgpt']['api_key']
+    },
+    'xinference': {
+        'model': st.secrets['xinference']['model'],
+        'base_url': st.secrets['xinference']['base_url'],
+        'api_key': st.secrets['xinference']['api_key']
     }
 }
