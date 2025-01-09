@@ -10,8 +10,7 @@ with st.sidebar:
     st.markdown("""
         邮箱：952718180@qq.com 
         地址: 四川省成都市  
-        微信公众号: 坤塔 
-        ![联系二维码](https://www.apuqi.com/uploads/96bfb1e66d7c1a04f8240d64b7a9b99.jpg)
+        更多请搜索微信公众号: 坤塔 
     """)
 st.subheader("超能写手🌟", divider='rainbow')
 st.caption("""
