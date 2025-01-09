@@ -11,7 +11,7 @@ from settings import LLM_MODEL
 # 应用nest_asyncio
 nest_asyncio.apply()
 # 切换到ProactorEventLoop
-if st.runtime.exists():
+if st.runtime.exists() and sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 if "run_status" not in st.session_state:
