@@ -1,6 +1,6 @@
 from utils.searxng_utils import auto_run
 import streamlit as st
-import json
+import json, sys
 from utils.searxng_utils import Search, llm_task, chat
 import utils.prompt_template as pt
 import concurrent.futures
