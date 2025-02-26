@@ -38,7 +38,7 @@ def tag_visible(element) -> bool:
         return False
     return True
 
-async def download_image(session: aiohttp.ClientSession, img_src: str, image_url_cache: set) -> str:
+async def download_image(session: aiohttp.ClientSession, img_src: str, image_url_cache: set, task_id: str) -> str:
     """
     异步下载图片
     """
@@ -46,7 +46,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_url
         return ''
     
     try:
-        async with session.get(img_src) as response:
+        async with session.get(img_src, ssl=False) as response:
             if response.status != 200:
                 logger.warning(f"Failed to download image {img_src}, status: {response.status}")
                 return ''
@@ -63,7 +63,10 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_url
             if not any(file_name.lower().endswith(ext) for ext in VALID_IMAGE_EXTENSIONS):
                 file_name += '.jpg'
                 
-            file_path = IMAGES_DIR / file_name
+            # Create task-specific folder
+            task_folder = IMAGES_DIR / task_id
+            task_folder.mkdir(exist_ok=True)
+            file_path = task_folder / file_name
             
             # 保存图片 - 使用同步文件操作
             with open(file_path, 'wb') as f:
@@ -77,7 +80,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_url
         logger.error(f"Error downloading image {img_src}: {str(e)}")
         return ''
 
-async def text_from_html(body: str, session: aiohttp.ClientSession) -> Dict[str, any]:
+async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str) -> Dict[str, any]:
     """
     从HTML内容中提取文本和图片
     """
@@ -91,7 +94,7 @@ async def text_from_html(body: str, session: aiohttp.ClientSession) -> Dict[str,
         for img in soup.find_all('img'):
             img_src = img.get('src', '').split('?')[0]
             if img_src and img_src.startswith('http') and not img_src.endswith('.svg'):
-                img_tasks.append(download_image(session, img_src, image_url_cache))
+                img_tasks.append(download_image(session, img_src, image_url_cache, task_id))
         
         image_paths = await asyncio.gather(*img_tasks)
         image_paths = [path for path in image_paths if path]  # 过滤空路径
@@ -109,7 +112,7 @@ async def text_from_html(body: str, session: aiohttp.ClientSession) -> Dict[str,
         logger.error(f"Error processing HTML content: {str(e)}")
         return {'text': '', 'images': []}
 
-async def fetch(browser, url: str) -> Dict[str, any]:
+async def fetch(browser, url: str, task_id: str) -> Dict[str, any]:
     """
     获取页面内容
     """
@@ -133,7 +136,7 @@ async def fetch(browser, url: str) -> Dict[str, any]:
         try:
             await page.goto(url, timeout=60000)
             content = await page.content()
-            result = await text_from_html(content, session)
+            result = await text_from_html(content, session, task_id)
             return {
                 'url': url,
                 'content': result['text'],
@@ -146,14 +149,23 @@ async def fetch(browser, url: str) -> Dict[str, any]:
             await page.close()
             await context.close()
 
-async def get_main_content(url_list: List[str]) -> List[Dict[str, any]]:
+async def get_main_content(url_list: List[str], task_id: str = None) -> List[Dict[str, any]]:
+    """
+    获取多个URL的内容
+    :param url_list: URL列表
+    :param task_id: 任务ID，如果未提供则使用时间戳
+    """
     """
     获取多个URL的内容
     """
     async with async_playwright() as p:
         browser = await p.firefox.launch()
         try:
-            tasks = [fetch(browser, url) for url in url_list]
+            # 如果没有提供task_id，使用时间戳作为任务ID
+            if task_id is None:
+                task_id = f"task_{int(asyncio.get_event_loop().time())}"
+            
+            tasks = [fetch(browser, url, task_id) for url in url_list]
             results = await asyncio.gather(*tasks)
             return results
         finally:
@@ -161,7 +173,7 @@ async def get_main_content(url_list: List[str]) -> List[Dict[str, any]]:
 
 if __name__ == '__main__':
     url_list = ['http://news.china.com.cn/2024-11/18/content_117554263.shtml']
-    main_content = asyncio.run(get_main_content(url_list))
+    main_content = asyncio.run(get_main_content(url_list, task_id="test_task"))
     if main_content:
         print(main_content)
     else:

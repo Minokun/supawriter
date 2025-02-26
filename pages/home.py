@@ -31,7 +31,7 @@ if st.button("清空"):
 from settings import LLM_MODEL
 import openai
 
-model_type = 'deepseek'
+model_type = 'hs-deepseek'
 model_name = LLM_MODEL[model_type]['model'][0]
 model_api_key = LLM_MODEL[model_type]['api_key']
 model_base_url = LLM_MODEL[model_type]['base_url']

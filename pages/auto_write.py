@@ -1,7 +1,7 @@
 from utils.searxng_utils import auto_run
 import streamlit as st
 import json, sys
-from utils.searxng_utils import Search, llm_task, chat
+from utils.searxng_utils import Search, llm_task, chat, parse_outline_json
 import utils.prompt_template as pt
 import concurrent.futures
 import asyncio
@@ -44,6 +44,7 @@ st.info("""
         1. 模型默认deepseek，效果最好，速度最快，该选项可以不用修改。
         2. 填写文章主题为你想要撰写的文章主题
         3. 写作模式，简易模式将只搜索，不爬取网页内容。详细模式将搜索并爬取网页内容，爬取网页数量为默认15，数量越多时间越长！
+
         """)
 
 placeholder_status = st.container()
@@ -77,16 +78,23 @@ if submit_button:
         # *************************** 生成大纲 *************************
         my_bar.progress(30, text="Spider Down! Now generate the outline...")
         with st.status("生成大纲"):
-            outlines = llm_task(search_result, text_input, pt.ARTICLE_OUTLINE_GEN, model_type=model_type, model_name=model_name)
+            try:
+                outlines = llm_task(search_result, text_input, pt.ARTICLE_OUTLINE_GEN, model_type=model_type, model_name=model_name)
+            except ConnectionError as e:
+                st.error(f"错误: {str(e)}")
+                st.stop()  # 停止程序执行
 
         # *************************** 融合大纲 *************************
         my_bar.progress(60, text="Integrate article outline...")
         with st.status("融合大纲"):
-            outline_summary = chat(f'<topic>{text_input}</topic> <content>{outlines}</content>', pt.ARTICLE_OUTLINE_SUMMARY, model_type=model_type, model_name=model_name)
-        try:
-            outline_summary_json = json.loads(outline_summary.replace('\n', '').replace('```json', '').replace('```', ''))
-        except Exception as e:
-            print(e, outline_summary)
+            try:
+                outline_summary = chat(f'<topic>{text_input}</topic> <content>{outlines}</content>', pt.ARTICLE_OUTLINE_SUMMARY, model_type=model_type, model_name=model_name)
+            except ConnectionError as e:
+                st.error(f"错误: {str(e)}")
+                st.stop()  # 停止程序执行
+        
+        # 使用改进的JSON解析函数
+        outline_summary_json = parse_outline_json(outline_summary, text_input)
     with placeholder_preview.container():
         with st.popover("查看大纲"):
             st.json(outline_summary_json)
