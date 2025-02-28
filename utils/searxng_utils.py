@@ -230,16 +230,40 @@ class Search:
                     h1 = outline_block['h1']
                     h2 = outline_block['h2']
                     print(f'{h1} {n}/{repeat_num}')
-                    for j in h2:
+                    
+                    if n == 1:
+                        # 第一章不要包含h1和h2标题
                         # 根据抓取的内容资料生成内容
-                        task = h1 + '之' + j
-                        question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {task} <<<',
+                        task = h1 + '之' + h2[0]  # 只取第一个h2
+                        question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {task} <<<，注意不要包含任何标题，直接开始正文内容',
                         outline_block_content = llm_task(search_result, question=question, output_type=prompt_template.ARTICLE_OUTLINE_BLOCK)
-                        outline_block_content_final = chat(f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{task}',
+                        outline_block_content_final = chat(f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{task}，注意不要包含任何标题（不要包含h1和h2标题），直接开始正文内容',
                                            prompt_template.ARTICLE_OUTLINE_BLOCK)
                         print(outline_block_content_final)
                         # 写入文件
                         f.write(outline_block_content_final + '\n\n\r')
+                        
+                        # 处理第一章的其余h2（如果有）
+                        for j in h2[1:]:
+                            task = h1 + '之' + j
+                            question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {task} <<<',
+                            outline_block_content = llm_task(search_result, question=question, output_type=prompt_template.ARTICLE_OUTLINE_BLOCK)
+                            outline_block_content_final = chat(f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{task}',
+                                               prompt_template.ARTICLE_OUTLINE_BLOCK)
+                            print(outline_block_content_final)
+                            # 写入文件
+                            f.write(outline_block_content_final + '\n\n\r')
+                    else:
+                        for j in h2:
+                            # 根据抓取的内容资料生成内容
+                            task = h1 + '之' + j
+                            question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {task} <<<',
+                            outline_block_content = llm_task(search_result, question=question, output_type=prompt_template.ARTICLE_OUTLINE_BLOCK)
+                            outline_block_content_final = chat(f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{task}',
+                                               prompt_template.ARTICLE_OUTLINE_BLOCK)
+                            print(outline_block_content_final)
+                            # 写入文件
+                            f.write(outline_block_content_final + '\n\n\r')
             return output_path
         except ConnectionError as e:
             # 捕获连接错误并重新抛出，以便上层处理

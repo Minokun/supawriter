@@ -114,20 +114,32 @@ if submit_button:
         article_content = ''
         for outline_block in outline_summary_json['content_outline']:
             my_bar.progress(my_bar_article_start + n*2, text=f"正在撰写  {outline_block['h1']}  {n}/{repeat_num}")
+            
             # 根据抓取的内容资料生成内容
-            question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {outline_block} <<<',
-            outline_block_content = llm_task(search_result, question=question,
-                                             output_type=pt.ARTICLE_OUTLINE_BLOCK, model_type=model_type, model_name=model_name)
-            outline_block_content_final = chat(
-                f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{outline_block}',
-                pt.ARTICLE_OUTLINE_BLOCK, model_type=model_type, model_name=model_name)
+            if n == 1:
+                # 第一章不要包含h1和h2标题
+                question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {outline_block} <<<，注意不要包含任何标题，直接开始正文内容',
+                outline_block_content = llm_task(search_result, question=question,
+                                              output_type=pt.ARTICLE_OUTLINE_BLOCK, model_type=model_type, model_name=model_name)
+                outline_block_content_final = chat(
+                    f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{outline_block}，注意不要包含任何标题（不要包含h1和h2标题），直接开始正文内容',
+                    pt.ARTICLE_OUTLINE_BLOCK, model_type=model_type, model_name=model_name)
+            else:
+                question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {outline_block} <<<',
+                outline_block_content = llm_task(search_result, question=question,
+                                              output_type=pt.ARTICLE_OUTLINE_BLOCK, model_type=model_type, model_name=model_name)
+                outline_block_content_final = chat(
+                    f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{outline_block}',
+                    pt.ARTICLE_OUTLINE_BLOCK, model_type=model_type, model_name=model_name)
+            
             with st.popover(f'{outline_block["h1"]} {n}/{repeat_num}', use_container_width=True):
                 st.markdown(f"""
                 {outline_block_content_final}
                 """)
             n += 1
-            article_content += outline_block_content_final + '   '
-
+            
+            # 添加换行符，确保每个部分之间有适当的分隔
+            article_content += outline_block_content_final + '\n\n'
     # *************************** 点击下载文章 *************************
     st.download_button(
         label="下载文章",

@@ -37,8 +37,7 @@ def chat(prompt, system_prompt, model_type='deepseek', model_name='deepseek-chat
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=4000,
-                temperature=0,
+                temperature=0.3,
                 stream=False
             )
             
