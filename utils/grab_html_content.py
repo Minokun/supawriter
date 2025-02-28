@@ -12,6 +12,7 @@ from PIL import Image
 import uuid
 import random
 import re
+import hashlib
 from typing import List, Dict
 from pathlib import Path
 
@@ -38,12 +39,13 @@ def tag_visible(element) -> bool:
         return False
     return True
 
-async def download_image(session: aiohttp.ClientSession, img_src: str, image_url_cache: set, task_id: str) -> str:
+async def download_image(session: aiohttp.ClientSession, img_src: str, image_hash_cache: dict, task_id: str) -> str:
     """
-    异步下载图片
+    异步下载图片，使用MD5哈希确保每张图片只下载一次
     """
-    if img_src in image_url_cache:
-        return ''
+    if img_src in image_hash_cache:
+        logger.info(f"Image URL already processed: {img_src}, using cached path: {image_hash_cache[img_src]}")
+        return image_hash_cache[img_src]
     
     try:
         async with session.get(img_src, ssl=False) as response:
@@ -56,28 +58,69 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_url
             
             if content_size < MIN_IMAGE_SIZE:
                 logger.info(f"Image {img_src} is too small ({content_size} bytes), skipping")
+                image_hash_cache[img_src] = ''
                 return ''
+            
+            # 计算图片内容的MD5哈希值
+            content_hash = hashlib.md5(content).hexdigest()
+            
+            # 检查是否已经下载过相同内容的图片
+            for cached_url, cached_path in image_hash_cache.items():
+                if cached_url != img_src and cached_path.startswith(str(IMAGES_DIR / task_id)) and Path(cached_path).exists():
+                    try:
+                        with open(cached_path, 'rb') as f:
+                            cached_content = f.read()
+                            cached_hash = hashlib.md5(cached_content).hexdigest()
+                            if cached_hash == content_hash:
+                                logger.info(f"Duplicate image content detected. Using existing file: {cached_path}")
+                                image_hash_cache[img_src] = cached_path
+                                return cached_path
+                    except Exception as e:
+                        logger.warning(f"Error checking cached file {cached_path}: {str(e)}")
+            
+            # 检查图片尺寸
+            try:
+                img = Image.open(BytesIO(content))
+                width, height = img.size
                 
-            # 生成文件名
-            file_name = f"{uuid.uuid4()}{random.randint(1, 99999)}_{Path(img_src).name}"
-            if not any(file_name.lower().endswith(ext) for ext in VALID_IMAGE_EXTENSIONS):
-                file_name += '.jpg'
+                # 跳过 480x480 和 226x226 尺寸的图片
+                if (width == 480 and height == 480) or (width == 226 and height == 226) or (width == 300 and height == 300) or (width == 656 and height == 656):
+                    logger.info(f"Skipping image with dimensions {width}x{height}: {img_src}")
+                    image_hash_cache[img_src] = ''
+                    return ''
+            except Exception as e:
+                logger.warning(f"Failed to check image dimensions for {img_src}: {str(e)}")
+                
+            # 使用MD5哈希值作为文件名的一部分，确保唯一性
+            original_filename = Path(img_src).name
+            extension = ''.join(Path(original_filename).suffixes)
+            if not any(extension.lower().endswith(ext) for ext in VALID_IMAGE_EXTENSIONS):
+                extension = '.jpg'
+                
+            file_name = f"{content_hash}{extension}"
                 
             # Create task-specific folder
             task_folder = IMAGES_DIR / task_id
             task_folder.mkdir(exist_ok=True)
             file_path = task_folder / file_name
             
+            # 检查文件是否已存在（基于哈希值的文件名）
+            if file_path.exists():
+                logger.info(f"File with same hash already exists: {file_path}")
+                image_hash_cache[img_src] = str(file_path)
+                return str(file_path)
+            
             # 保存图片 - 使用同步文件操作
             with open(file_path, 'wb') as f:
                 f.write(content)
                 
-            image_url_cache.add(img_src)
+            image_hash_cache[img_src] = str(file_path)
             logger.info(f"Successfully downloaded image: {file_path}")
             return str(file_path)
             
     except Exception as e:
         logger.error(f"Error downloading image {img_src}: {str(e)}")
+        image_hash_cache[img_src] = ''
         return ''
 
 async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str) -> Dict[str, any]:
@@ -86,26 +129,34 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
     """
     try:
         soup = BeautifulSoup(body, 'html.parser')
-        texts = soup.findAll(string=True)
-        image_url_cache = set()
-        
-        # 异步下载所有图片
-        img_tasks = []
-        for img in soup.find_all('img'):
-            img_src = img.get('src', '').split('?')[0]
-            if img_src and img_src.startswith('http') and not img_src.endswith('.svg'):
-                img_tasks.append(download_image(session, img_src, image_url_cache, task_id))
-        
-        image_paths = await asyncio.gather(*img_tasks)
-        image_paths = [path for path in image_paths if path]  # 过滤空路径
-        
-        # 处理文本
+        texts = soup.findAll(text=True)
         visible_texts = filter(tag_visible, texts)
-        cleaned_text = re.sub(r'\s+', ' ', ' '.join(t.strip() for t in visible_texts)).strip()
+        
+        # 提取正文文本
+        text_content = " ".join(t.strip() for t in visible_texts if t.strip())
+        
+        # 提取图片
+        img_tags = soup.find_all('img')
+        img_paths = []
+        
+        if img_tags:
+            # 创建一个字典来存储图片哈希和路径
+            image_hash_cache = {}
+            
+            # 创建异步任务列表
+            img_tasks = []
+            for img in img_tags:
+                img_src = img.get('src', '')
+                if img_src and not img_src.startswith('data:'):
+                    img_tasks.append(download_image(session, img_src, image_hash_cache, task_id))
+            
+            # 等待所有图片下载完成
+            img_paths = await asyncio.gather(*img_tasks)
+            img_paths = [path for path in img_paths if path]  # 过滤空路径
         
         return {
-            'text': cleaned_text,
-            'images': image_paths
+            'text': text_content,
+            'images': img_paths
         }
         
     except Exception as e:
@@ -154,9 +205,6 @@ async def get_main_content(url_list: List[str], task_id: str = None) -> List[Dic
     获取多个URL的内容
     :param url_list: URL列表
     :param task_id: 任务ID，如果未提供则使用时间戳
-    """
-    """
-    获取多个URL的内容
     """
     async with async_playwright() as p:
         browser = await p.firefox.launch()
