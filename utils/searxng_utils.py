@@ -84,8 +84,8 @@ def llm_task(search_result, question, output_type, model_type, model_name, max_w
         # 获取结果
         outlines = '\n'.join([future.result() for future in concurrent.futures.as_completed(futures)])
     
-    if len(outlines) > 25000:
-        outlines = outlines[:25000]
+    if len(outlines) > 16000:
+        outlines = outlines[:16000]
     
     return outlines
 
