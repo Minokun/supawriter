@@ -44,10 +44,16 @@ PAGE_PROFILE = st.Page(
     icon=":material/person:"
 )
 
+PAGE_HISTORY = st.Page(
+    "page/history.py",
+    title="历史记录",
+    icon=":material/history:"
+)
+
 # ******************菜单配置********************
 PAGES = {
     "APP": [PAGE_HOME],
     "GPTS": [PAGE_GPTS, PAGE_GPTS_AUTOWITER],
     "Toolkits": [PAGE_DOCUMENT_UTIL, PAGE_ASR, PAGE_TTS],
-    "用户": [PAGE_PROFILE]
+    "用户": [PAGE_PROFILE, PAGE_HISTORY]
 }
