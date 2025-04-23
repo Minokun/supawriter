@@ -1,8 +1,10 @@
 import os
 import pickle
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
+import base64
+import json
 
 # Path to the user database file
 USER_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'users.pkl')
@@ -51,7 +53,7 @@ def register_user(username, password, email=None):
     save_users(users)
     return True, "注册成功"
 
-def authenticate_user(username, password):
+def authenticate_user(username, password, remember_me=False):
     """Authenticate a user."""
     users = load_users()
     
@@ -65,11 +67,52 @@ def authenticate_user(username, password):
     # Update last login time
     user.update_last_login()
     save_users(users)
+    
+    # Set persistent login if remember_me is True
+    if remember_me:
+        # Set expiry to 30 days from now
+        expiry = datetime.now() + timedelta(days=30)
+        
+        # Create auth token and store in query params
+        auth_data = {
+            "username": username,
+            "expiry": expiry.isoformat()
+        }
+        
+        # Encode auth data as base64
+        auth_token = base64.b64encode(json.dumps(auth_data).encode("utf-8")).decode("utf-8")
+        
+        # Set query param
+        st.query_params["auth_token"] = auth_token
+    
     return True, "登录成功"
 
 def is_authenticated():
     """Check if user is authenticated."""
-    return "user" in st.session_state and st.session_state.user is not None
+    # Check if user is in session state
+    if "user" in st.session_state and st.session_state.user is not None:
+        return True
+    
+    # If not in session state, try to load from query params
+    try:
+        query_params = st.query_params
+        if "auth_token" in query_params:
+            auth_token = query_params["auth_token"]
+            # Decode the auth token
+            auth_data = json.loads(base64.b64decode(auth_token).decode("utf-8"))
+            username = auth_data.get("username")
+            expiry = auth_data.get("expiry")
+            
+            # Check if token is still valid
+            if expiry and datetime.fromisoformat(expiry) > datetime.now():
+                # Set the user in session state
+                st.session_state.user = username
+                return True
+    except Exception as e:
+        # If there's any error parsing the auth token, ignore it
+        pass
+    
+    return False
 
 def get_current_user():
     """Get current authenticated user."""
@@ -81,3 +124,7 @@ def logout():
     """Log out the current user."""
     if "user" in st.session_state:
         st.session_state.user = None
+    
+    # Clear auth token from query params
+    if "auth_token" in st.query_params:
+        del st.query_params["auth_token"]

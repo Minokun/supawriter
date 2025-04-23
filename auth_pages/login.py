@@ -17,13 +17,14 @@ def app():
         with st.form("login_form"):
             username = st.text_input("用户名")
             password = st.text_input("密码", type="password")
+            remember_me = st.checkbox("记住我", value=True, help="保持登录状态，下次访问无需重新登录")
             submit = st.form_submit_button("登录")
             
             if submit:
                 if not username or not password:
                     st.error("请输入用户名和密码")
                 else:
-                    success, message = authenticate_user(username, password)
+                    success, message = authenticate_user(username, password, remember_me=remember_me)
                     if success:
                         st.session_state.user = username
                         st.success(message)
