@@ -6,10 +6,11 @@ import utils.prompt_template as pt
 import concurrent.futures
 import asyncio
 import nest_asyncio
-from settings import LLM_MODEL
+from settings import LLM_MODEL, ARTICLE_TRANSFORMATIONS
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
 from utils.history_utils import add_history_record, load_user_history
+import page.transform_article as transform_article_page
 
 @require_auth
 def main():
@@ -31,25 +32,35 @@ def main():
         with st.form(key='my_form'):
             text_input = st.text_input(label='请填写文章的主题', help='文章将全部围绕该主题撰写，主题越细，文章也越详细',
                                        value='')
+            # 添加自定义书写风格的输入框
+            custom_style = st.text_area(
+                label='自定义书写风格和要求', 
+                help='在此输入特定的写作风格和要求，如"幽默风趣"、"严谨学术"、"简洁明了"等，将影响整篇文章的风格',
+                placeholder='例如：请以幽默风趣的口吻撰写，多使用比喻和生动的例子',
+                height=100,
+                key='custom_style'
+            )
             col1, col2 = st.columns(2)
             with col1:
                 write_type = st.selectbox('写作模式', ['简易', '详细'], key=2)
             with col2:
                 spider_num = st.slider(label='爬取网页数量', help='（默认5，数量越多时间越长！)', min_value=1, max_value=25, key=3,
                                    value=15)
+            convert_to_simple = st.checkbox("转换白话文", key="convert_to_simple")
             submit_button = st.form_submit_button(label='执行', disabled=st.session_state.run_status)
 
     st.caption('SuperWriter by WuXiaokun. ')
     st.subheader("超级写手🤖", divider='rainbow')
     
     # Create tabs for main functionality and history
-    main_tab, history_tab = st.tabs(["写作", "历史记录"])
+    main_tab, transform_tab, history_tab = st.tabs(["写作", "文章再创作", "文章列表"])
     
     # Create placeholders only for the main tab content
     with main_tab:
         placeholder_status = st.container()
-        placeholder_progress = st.empty()
-        placeholder_preview = st.empty()
+
+    with transform_tab:
+        transform_article_page.main()
 
     with main_tab:
         st.info("""
@@ -72,83 +83,73 @@ def main():
         article_content = ''
 
         if submit_button:
-            my_bar = placeholder_status.progress(0, text="Operation in progress. Please wait.")
-            # *************************** 搜索引擎开始搜索并抓取网页内容 ***************************
-            my_bar.progress(10, text="Spider in progress. Please wait...")
-            col1, col2 = st.columns(2)
-            with col1:
+            # Container for progress and process details
+            progress_container = st.container()
+            col_left, col_right = progress_container.columns(2)
+            # Left column: crawling, search details, outline generation, outline merging
+            with col_left:
                 st.caption("当前进度：")
-                placeholder_progress = st.empty()
-            with col2:
-                st.caption("过程详情预览：")
-                placeholder_preview = st.empty()
-            with placeholder_progress.container():
+                progress_bar = st.progress(0, text="Operation in progress. Please wait.")
+                # Crawl web content
+                progress_bar.progress(10, text="Spider in progress. Please wait...")
                 with st.status("抓取网页内容"):
-                    # 开一个线程运行函数
                     with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(Search(result_num=spider_num).get_search_result, text_input, False if write_type == '简易' else True)
+                        future = executor.submit(Search(result_num=spider_num).get_search_result, text_input, write_type != '简易')
                         for future in concurrent.futures.as_completed([future]):
                             search_result = future.result()
-            with st.popover("查看搜索详细..."):
-                for i in search_result:
-                    title = i.get('title')
-                    url = i.get('url')
-                    st.markdown(f"""
-                    标题：{title} 
-                    链接：{url}
-                    """)
-            # *************************** 生成大纲 *************************
-            my_bar.progress(30, text="Spider Down! Now generate the outline...")
-            with st.status("生成大纲"):
-                try:
-                    outlines = llm_task(search_result, text_input, pt.ARTICLE_OUTLINE_GEN, model_type=model_type, model_name=model_name)
-                except ConnectionError as e:
-                    st.error(f"错误: {str(e)}")
-                    st.stop()  # 停止程序执行
+                with st.popover("查看搜索详细..."):
+                    for item in search_result:
+                        st.markdown(f"标题：{item.get('title')}  链接：{item.get('url')}")
 
-            # *************************** 融合大纲 *************************
-            my_bar.progress(60, text="Integrate article outline...")
-            with st.status("融合大纲"):
-                try:
-                    outline_summary = chat(f'<topic>{text_input}</topic> <content>{outlines}</content>', pt.ARTICLE_OUTLINE_SUMMARY, model_type=model_type, model_name=model_name)
-                except ConnectionError as e:
-                    st.error(f"错误: {str(e)}")
-                    st.stop()  # 停止程序执行
-        
-            # 使用改进的JSON解析函数
-            outline_summary_json = parse_outline_json(outline_summary, text_input)
-            # Ensure the required keys exist
-            if 'title' not in outline_summary_json:
-                outline_summary_json['title'] = text_input
-            if 'summary' not in outline_summary_json:
-                outline_summary_json['summary'] = ""
-            if 'content_outline' not in outline_summary_json:
-                outline_summary_json['content_outline'] = []
-                
-        # Only show outline if it's not empty
-        if outline_summary_json.get('title') or outline_summary_json.get('summary') or outline_summary_json.get('content_outline'):
-            with placeholder_preview.container():
-                with st.popover("查看大纲"):
-                    st.json(outline_summary_json)
-                st.markdown(f"""
-                #### {outline_summary_json['title']} 
-        
-                > {outline_summary_json['summary']}
-                --------------------------
-                """)
+                # Generate outline
+                progress_bar.progress(30, text="Spider Down! Now generate the outline...")
+                with st.status("生成大纲"):
+                    try:
+                        outlines = llm_task(search_result, text_input, pt.ARTICLE_OUTLINE_GEN, model_type=model_type, model_name=model_name)
+                    except ConnectionError as e:
+                        st.error(f"错误: {str(e)}")
+                        st.stop()
+
+                # Merge outline
+                progress_bar.progress(60, text="Integrate article outline...")
+                with st.status("融合大纲"):
+                    try:
+                        outline_summary = chat(f'<topic>{text_input}</topic> <content>{outlines}</content>', pt.ARTICLE_OUTLINE_SUMMARY, model_type=model_type, model_name=model_name)
+                    except ConnectionError as e:
+                        st.error(f"错误: {str(e)}")
+                        st.stop()
+
+                # Parse outline JSON
+                outline_summary_json = parse_outline_json(outline_summary, text_input)
+                outline_summary_json.setdefault('title', text_input)
+                outline_summary_json.setdefault('summary', "")
+                outline_summary_json.setdefault('content_outline', [])
+
+            # Right column: outline preview
+            with col_right:
+                st.caption("大纲预览")
+                if outline_summary_json.get('content_outline'):
+                    with st.popover("查看大纲"):
+                        st.json(outline_summary_json)
+                    st.markdown(f"""
+                    #### {outline_summary_json['title']}
+
+                    > {outline_summary_json['summary']}
+                    --------------------------
+                    """)
 
         # *************************** 书写文章 *************************
         if 'content_outline' in outline_summary_json and outline_summary_json['content_outline']:
             repeat_num = len(outline_summary_json['content_outline'])
             my_bar_article_start = 100 - repeat_num*2
-            my_bar.progress(my_bar_article_start, text="Writing article...")
+            progress_bar.progress(my_bar_article_start, text="Writing article...")
         with st.spinner("书写文章..."):
             n = 1
             # Reset article_content if it's already in the submit_button block
             article_content = ''
             if 'content_outline' in outline_summary_json and outline_summary_json['content_outline']:
                 for outline_block in outline_summary_json['content_outline']:
-                    my_bar.progress(my_bar_article_start + n*2, text=f"正在撰写  {outline_block['h1']}  {n}/{repeat_num}")
+                    progress_bar.progress(my_bar_article_start + n*2, text=f"正在撰写  {outline_block['h1']}  {n}/{repeat_num}")
                 
                     # 根据抓取的内容资料生成内容
                     if n == 1:
@@ -156,16 +157,30 @@ def main():
                         question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {outline_block} <<<，注意不要包含任何标题，直接开始正文内容',
                         outline_block_content = llm_task(search_result, question=question,
                                                       output_type=pt.ARTICLE_OUTLINE_BLOCK, model_type=model_type, model_name=model_name)
+                        
+                        # 获取自定义风格并应用到prompt中
+                        custom_prompt = pt.ARTICLE_OUTLINE_BLOCK
+                        if 'custom_style' in st.session_state and st.session_state.custom_style.strip():
+                            # 在原有prompt基础上添加自定义风格要求
+                            custom_prompt = custom_prompt.replace('---要求---', f'---要求---\n        - {st.session_state.custom_style}')
+                            
                         outline_block_content_final = chat(
                             f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{outline_block}，注意不要包含任何标题（不要包含h1和h2标题），直接开始正文内容',
-                            pt.ARTICLE_OUTLINE_BLOCK, model_type=model_type, model_name=model_name)
+                            custom_prompt, model_type=model_type, model_name=model_name)
                     else:
                         question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {outline_block} <<<',
                         outline_block_content = llm_task(search_result, question=question,
                                                       output_type=pt.ARTICLE_OUTLINE_BLOCK, model_type=model_type, model_name=model_name)
+                        
+                        # 获取自定义风格并应用到prompt中
+                        custom_prompt = pt.ARTICLE_OUTLINE_BLOCK
+                        if 'custom_style' in st.session_state and st.session_state.custom_style.strip():
+                            # 在原有prompt基础上添加自定义风格要求
+                            custom_prompt = custom_prompt.replace('---要求---', f'---要求---\n        - {st.session_state.custom_style}')
+                            
                         outline_block_content_final = chat(
                             f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{outline_block}',
-                            pt.ARTICLE_OUTLINE_BLOCK, model_type=model_type, model_name=model_name)
+                            custom_prompt, model_type=model_type, model_name=model_name)
             
                     with st.popover(f'{outline_block["h1"]} {n}/{repeat_num}', use_container_width=True):
                         st.markdown(f"""
@@ -175,19 +190,75 @@ def main():
                 
                     # 添加换行符，确保每个部分之间有适当的分隔
                     article_content += outline_block_content_final + '\n\n'
-            # *************************** 自动保存文章到历史记录 *************************
+            # *************************** 自动保存原始文章到历史记录 *************************
+            original_article_id = None
             if article_content.strip():
                 current_user = get_current_user()
                 if current_user:
-                    # Add to history records
-                    add_history_record(current_user, text_input, article_content, model_type=model_type, model_name=model_name, write_type=write_type, spider_num=spider_num)
-                    st.success(f"文章已自动保存到历史记录中，可在\"历史记录\"标签页查看")
+                    custom_style = st.session_state.get('custom_style', '')
+                    original_record = add_history_record(
+                        current_user, 
+                        outline_summary_json['title'], 
+                        article_content, 
+                        summary=outline_summary_json.get('summary', ''), 
+                        model_type=model_type, 
+                        model_name=model_name, 
+                        write_type=write_type, 
+                        spider_num=spider_num, 
+                        custom_style=custom_style,
+                        is_transformed=False
+                    )
+                    original_article_id = original_record.get('id')
+                    st.success(f"原始文章已自动保存到历史记录中。")
+
+            # *************************** 转换白话文并保存 *************************
+            if st.session_state.get('convert_to_simple', False) and article_content.strip() and original_article_id is not None:
+                transformed_article_content = ""
+                with st.status("正在转换白话文..."):
+                    try:
+                        transformed_article_content = chat(article_content, pt.CONVERT_2_SIMPLE, model_type=model_type, model_name=model_name)
+                        st.success("白话文转换完成！")
+                    except ConnectionError as e:
+                        st.error(f"白话文转换错误: {str(e)}")
+                    except Exception as e:
+                        st.error(f"白话文转换发生未知错误: {str(e)}")
+                
+                if transformed_article_content.strip(): # Save only if transformation was successful
+                    current_user = get_current_user() # Re-get user just in case
+                    if current_user:
+                        custom_style = st.session_state.get('custom_style', '')
+                        # Find the transformation name for CONVERT_2_SIMPLE from settings
+                        transformation_name_for_simple = "白话文" # Default fallback
+                        for name, prompt_template in ARTICLE_TRANSFORMATIONS.items():
+                            if prompt_template == pt.CONVERT_2_SIMPLE:
+                                transformation_name_for_simple = name
+                                break
+                        
+                        add_history_record(
+                            current_user, 
+                            f"{outline_summary_json['title']} ({transformation_name_for_simple})", 
+                            transformed_article_content, 
+                            summary=f"{outline_summary_json.get('summary', '')} ({transformation_name_for_simple} 版本)", 
+                            model_type=model_type, 
+                            model_name=model_name, 
+                            write_type=write_type, 
+                            spider_num=spider_num, 
+                            custom_style=custom_style,
+                            is_transformed=True,
+                            original_article_id=original_article_id
+                        )
+                        article_content = transformed_article_content # Update article_content to the transformed version for download
+                        st.success(f"{transformation_name_for_simple} 版本已自动保存到历史记录中。")
+            elif st.session_state.get('convert_to_simple', False) and not article_content.strip():
+                st.warning("原始文章内容为空，无法进行白话文转换。")
+            elif st.session_state.get('convert_to_simple', False) and original_article_id is None:
+                st.warning("未能保存原始文章，无法进行白话文转换并关联。")
             
                 # *************************** 点击下载文章 *************************
                 st.download_button(
                     label="下载文章",
                     data=article_content,
-                    file_name=f'{text_input}.md',
+                    file_name=f"{outline_summary_json['title']}.md",
                     mime="text/markdown",
                     key="download_generated_article"
                 )
@@ -211,6 +282,9 @@ def main():
                         # 显示配置信息
                         st.markdown(f"**模型供应商**: {record.get('model_type', '-')}")
                         st.markdown(f"**模型名称**: {record.get('model_name', '-')}")
+                        # 显示自定义风格信息（如果有）
+                        if record.get('custom_style'):
+                            st.markdown(f"**自定义书写风格**: {record.get('custom_style')}")
                         st.markdown(f"**写作模式**: {record.get('write_type', '-')}")
                         st.markdown(f"**爬取数量**: {record.get('spider_num', '-')}")
                         st.markdown("### 文章内容")

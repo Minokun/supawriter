@@ -31,7 +31,7 @@ def save_user_history(username, history):
     with open(history_file, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-def add_history_record(username, topic, article_content, model_type=None, model_name=None, write_type=None, spider_num=None):
+def add_history_record(username, topic, article_content, summary=None, model_type=None, model_name=None, write_type=None, spider_num=None, custom_style=None, is_transformed=False, original_article_id=None):
     """
     Add a new record to the user's history, with configurable parameters.
     """
@@ -46,7 +46,11 @@ def add_history_record(username, topic, article_content, model_type=None, model_
         "model_type": model_type,
         "model_name": model_name,
         "write_type": write_type,
-        "spider_num": spider_num
+        "spider_num": spider_num,
+        "custom_style": custom_style,
+        "summary": summary,
+        "is_transformed": is_transformed,
+        "original_article_id": original_article_id
     }
     history.append(record)
     save_user_history(username, history)
