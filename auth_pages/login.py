@@ -2,12 +2,21 @@ import streamlit as st
 from utils.auth import register_user, authenticate_user, is_authenticated, logout
 
 def app():
+    # Initialize session state for login page rerun trigger if not exists
+    if "login_trigger_rerun" not in st.session_state:
+        st.session_state.login_trigger_rerun = False
+        
     if is_authenticated():
         st.success(f"已登录为: {st.session_state.user}")
         if st.button("退出登录"):
             logout()
-            st.rerun()
+            st.session_state.login_trigger_rerun = True
         return True
+        
+    # Check if we need to rerun
+    if st.session_state.login_trigger_rerun:
+        st.session_state.login_trigger_rerun = False
+        st.rerun()
     
     st.title("欢迎使用 SupaWriter")
     
@@ -28,6 +37,7 @@ def app():
                     if success:
                         st.session_state.user = username
                         st.success(message)
+                        # Directly rerun for immediate redirect after form submission
                         st.rerun()
                     else:
                         st.error(message)

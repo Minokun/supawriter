@@ -3,12 +3,18 @@ import os
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import asyncio
 import aiohttp
+import hashlib
 import logging
+import json
 from bs4 import BeautifulSoup
 from bs4.element import Comment
 from playwright.async_api import async_playwright
+from pathlib import Path
 from io import BytesIO
 from PIL import Image
+from typing import List, Dict, Set
+from urllib.parse import urljoin, urlparse
+from utils.image_url_mapper import ImageUrlMapper
 import uuid
 import random
 import re
@@ -113,6 +119,14 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
             # 保存图片 - 使用同步文件操作
             with open(file_path, 'wb') as f:
                 f.write(content)
+            
+            # 保存图片URL映射
+            try:
+                url_mapper = ImageUrlMapper(IMAGES_DIR)
+                url_mapper.save_url_mapping(task_id, file_name, img_src)
+                logger.info(f"Saved URL mapping: {file_name} -> {img_src}")
+            except Exception as e:
+                logger.error(f"Failed to save URL mapping: {str(e)}")
                 
             image_hash_cache[img_src] = str(file_path)
             logger.info(f"Successfully downloaded image: {file_path}")
@@ -215,7 +229,7 @@ async def get_main_content(url_list: List[str], task_id: str = None) -> List[Dic
             
             tasks = [fetch(browser, url, task_id) for url in url_list]
             results = await asyncio.gather(*tasks)
-            return results
+            return results, task_id
         finally:
             await browser.close()
 

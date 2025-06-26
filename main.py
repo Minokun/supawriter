@@ -44,4 +44,4 @@ def index():
     return "<h1>Hello World!</h1>"
 
 if __name__ == '__main__':
-    uvicorn.run(app, host='0.0.0.0', port=settings.SERVER_PORT)
+    uvicorn.run(app, host='0.0.0.0', port=settings.WEB_SERVER_PORT)

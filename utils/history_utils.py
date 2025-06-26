@@ -31,9 +31,26 @@ def save_user_history(username, history):
     with open(history_file, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-def add_history_record(username, topic, article_content, summary=None, model_type=None, model_name=None, write_type=None, spider_num=None, custom_style=None, is_transformed=False, original_article_id=None):
+def add_history_record(username, topic, article_content, summary=None, model_type=None, model_name=None, write_type=None, spider_num=None, custom_style=None, is_transformed=False, original_article_id=None, image_task_id=None, image_enabled=False, image_similarity_threshold=None, image_max_count=None):
     """
     Add a new record to the user's history, with configurable parameters.
+    
+    Args:
+        username: The username of the user
+        topic: The topic of the article
+        article_content: The content of the article
+        summary: Optional summary of the article
+        model_type: The type of model used
+        model_name: The name of the model used
+        write_type: The type of writing (simple, detailed)
+        spider_num: The number of websites crawled
+        custom_style: Custom writing style
+        is_transformed: Whether this is a transformed article
+        original_article_id: ID of the original article if this is transformed
+        image_task_id: The task ID for images used in the article
+        image_enabled: Whether images were enabled for this article
+        image_similarity_threshold: The similarity threshold used for image matching
+        image_max_count: The maximum number of images to analyze
     """
     history = load_user_history(username)
     # 生成唯一ID（避免删除后ID重复）
@@ -50,7 +67,11 @@ def add_history_record(username, topic, article_content, summary=None, model_typ
         "custom_style": custom_style,
         "summary": summary,
         "is_transformed": is_transformed,
-        "original_article_id": original_article_id
+        "original_article_id": original_article_id,
+        "image_task_id": image_task_id,
+        "image_enabled": image_enabled,
+        "image_similarity_threshold": image_similarity_threshold,
+        "image_max_count": image_max_count
     }
     history.append(record)
     save_user_history(username, history)

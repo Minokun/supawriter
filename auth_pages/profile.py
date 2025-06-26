@@ -2,6 +2,15 @@ import streamlit as st
 from utils.auth import get_current_user, load_users, save_users, hash_password
 
 def app():
+    # Initialize session state for profile page rerun trigger if not exists
+    if "profile_trigger_rerun" not in st.session_state:
+        st.session_state.profile_trigger_rerun = False
+        
+    # Check if we need to rerun
+    if st.session_state.profile_trigger_rerun:
+        st.session_state.profile_trigger_rerun = False
+        st.rerun()
+        
     user = get_current_user()
     if not user:
         st.warning("请先登录")
@@ -48,4 +57,4 @@ def app():
                 users[user] = current_user
                 save_users(users)
                 st.success("个人信息已更新")
-                st.rerun()
+                st.session_state.profile_trigger_rerun = True

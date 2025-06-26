@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import hashlib
 import base64
 import json
+import extra_streamlit_components as stx
 
 # Path to the user database file
 USER_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'users.pkl')
@@ -53,6 +54,15 @@ def register_user(username, password, email=None):
     save_users(users)
     return True, "注册成功"
 
+# Create a cookie manager instance with a unique key
+_cookie_manager = None
+
+def get_cookie_manager():
+    global _cookie_manager
+    if _cookie_manager is None:
+        _cookie_manager = stx.CookieManager(key="supawriter_auth_cookies")
+    return _cookie_manager
+
 def authenticate_user(username, password, remember_me=False):
     """Authenticate a user."""
     users = load_users()
@@ -73,7 +83,7 @@ def authenticate_user(username, password, remember_me=False):
         # Set expiry to 30 days from now
         expiry = datetime.now() + timedelta(days=30)
         
-        # Create auth token and store in query params
+        # Create auth token
         auth_data = {
             "username": username,
             "expiry": expiry.isoformat()
@@ -82,8 +92,12 @@ def authenticate_user(username, password, remember_me=False):
         # Encode auth data as base64
         auth_token = base64.b64encode(json.dumps(auth_data).encode("utf-8")).decode("utf-8")
         
-        # Set query param
-        st.query_params["auth_token"] = auth_token
+        # Set cookie with auth token
+        cookie_manager = get_cookie_manager()
+        cookie_manager.set("auth_token", auth_token, expires_at=expiry)
+    
+    # Set user in session state
+    st.session_state.user = username
     
     return True, "登录成功"
 
@@ -93,11 +107,12 @@ def is_authenticated():
     if "user" in st.session_state and st.session_state.user is not None:
         return True
     
-    # If not in session state, try to load from query params
+    # If not in session state, try to load from cookie
     try:
-        query_params = st.query_params
-        if "auth_token" in query_params:
-            auth_token = query_params["auth_token"]
+        cookie_manager = get_cookie_manager()
+        auth_token = cookie_manager.get("auth_token")
+        
+        if auth_token:
             # Decode the auth token
             auth_data = json.loads(base64.b64decode(auth_token).decode("utf-8"))
             username = auth_data.get("username")
@@ -125,6 +140,10 @@ def logout():
     if "user" in st.session_state:
         st.session_state.user = None
     
-    # Clear auth token from query params
-    if "auth_token" in st.query_params:
-        del st.query_params["auth_token"]
+    # Clear auth token from cookie
+    try:
+        cookie_manager = get_cookie_manager()
+        cookie_manager.delete("auth_token")
+    except Exception as e:
+        # If there's any error deleting the cookie, ignore it
+        pass

@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{title}}</title>
+    <style>
+        /* Dark Theme Base Styles */
+        :root {
+            --bg-color: #121212;
+            --card-bg: #1e1e1e;
+            --text-color: #e0e0e0;
+            --accent-color: #bb86fc;
+            --secondary-accent: #03dac6;
+            --muted-color: #8e8e8e;
+            --border-color: #333333;
+            --header-bg: #1a1a1a;
+            --shadow-color: rgba(0, 0, 0, 0.5);
+        }
+        
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background-color: var(--header-bg);
+            padding: 20px 0;
+            box-shadow: 0 2px 10px var(--shadow-color);
+            margin-bottom: 30px;
+        }
+        
+        h1, h2, h3, h4, h5, h6 {
+            color: var(--accent-color);
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            text-align: center;
+        }
+        
+        h2 {
+            font-size: 2rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 10px;
+        }
+        
+        h3 {
+            font-size: 1.5rem;
+        }
+        
+        p {
+            margin-bottom: 1.5em;
+        }
+        
+        a {
+            color: var(--secondary-accent);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        
+        a:hover {
+            color: var(--accent-color);
+            text-decoration: underline;
+        }
+        
+        code {
+            background-color: #2d2d2d;
+            color: #e0e0e0;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        
+        pre {
+            background-color: #2d2d2d;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+        
+        blockquote {
+            border-left: 4px solid var(--accent-color);
+            padding-left: 20px;
+            margin-left: 0;
+            color: var(--muted-color);
+        }
+        
+        img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        
+        th, td {
+            padding: 12px 15px;
+            border: 1px solid var(--border-color);
+        }
+        
+        th {
+            background-color: var(--header-bg);
+        }
+        
+        tr:nth-child(even) {
+            background-color: #1a1a1a;
+        }
+        
+        .card {
+            background-color: var(--card-bg);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px var(--shadow-color);
+        }
+        
+        .btn {
+            display: inline-block;
+            background-color: var(--accent-color);
+            color: #000;
+            padding: 10px 20px;
+            border-radius: 5px;
+            text-decoration: none;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+        
+        .btn:hover {
+            background-color: var(--secondary-accent);
+            text-decoration: none;
+        }
+        
+        /* Gradient Text - Fixed for Screenshots */
+        .gradient-text {
+            background-image: linear-gradient(45deg, #bb86fc, #03dac6);
+            background-clip: text;
+            -webkit-background-clip: text;
+            color: transparent;
+            /* Fallback for screenshot compatibility */
+            position: relative;
+        }
+        
+        /* Add a pseudo-element with the same text but solid color for screenshots */
+        .gradient-text::after {
+            content: attr(data-text);
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: -1;
+            color: #bb86fc; /* Fallback color for screenshots */
+            opacity: 0; /* Hidden normally */
+        }
+        
+        /* For print/screenshot media */
+        @media print {
+            .gradient-text {
+                color: #bb86fc; /* Solid color for print/screenshots */
+                background-image: none;
+            }
+            
+            .gradient-text::after {
+                display: none;
+            }
+        }
+        
+        /* Animations */
+        .fade-in {
+            animation: fadeIn 1s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            h1 {
+                font-size: 2rem;
+            }
+            
+            h2 {
+                font-size: 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1 class="gradient-text" data-text="{{title}}">{{title}}</h1>
+        </div>
+    </header>
+    
+    <div class="container">
+        {{content}}
+    </div>
+    
+    <footer>
+        <div class="container" style="text-align: center; margin-top: 50px; padding: 20px; border-top: 1px solid var(--border-color);">
+            <p class="muted">©2025坤塔超自然研究中心</p>
+        </div>
+    </footer>
+</body>
+</html>
