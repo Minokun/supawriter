@@ -3,8 +3,9 @@ import sys
 import logging
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
-from utils.history_utils import load_user_history
-from settings import ARTICLE_TRANSFORMATIONS, HISTORY_FILTER_BASE_OPTIONS
+from utils.history_utils import load_user_history, save_html_to_user_dir
+from settings import ARTICLE_TRANSFORMATIONS, HISTORY_FILTER_BASE_OPTIONS, HTML_NGINX_BASE_URL
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -63,57 +64,115 @@ def main():
     # Display history in reverse chronological order (newest first)
     for record in reversed(filtered_history):
         with st.expander(f"📝 {record['topic']} - {record['timestamp'][:16].replace('T', ' ')}"):
-            # 展示配置信息
-            st.markdown(f"**模型供应商**: {record.get('model_type', '-')}")
-            st.markdown(f"**模型名称**: {record.get('model_name', '-')}")
-            st.markdown(f"**写作模式**: {record.get('write_type', '-')}")
-            st.markdown(f"**爬取数量**: {record.get('spider_num', '-')}")
-            st.markdown(f"**文章摘要**: {record.get('summary', '-')}")
+            # 展示配置信息，单行显示并加粗类别
+            st.markdown(f"**模型供应商**: {record.get('model_type', '-')} &nbsp;&nbsp;&nbsp; **模型名称**: {record.get('model_name', '-')} &nbsp;&nbsp;&nbsp; **写作模式**: {record.get('write_type', '-')} &nbsp;&nbsp;&nbsp; **爬取数量**: {record.get('spider_num', '-')} &nbsp;&nbsp;&nbsp; **写作风格**: {record.get('custom_style', '-')}")
+            
             if record.get('is_transformed') and record.get('original_article_id') is not None:
                 st.markdown(f"**源文章ID**: {record.get('original_article_id')}")
-            st.markdown("### 文章内容")
-            # 检查内容是否为HTML
-            content = record["article_content"]
-            is_html = content.strip().startswith('<') and content.strip().endswith('>')
+                
+            # 判断内容是Markdown还是HTML
+            content = record["article_content"].strip()
+            is_html = content.startswith('<') and content.endswith('>')
             topic_indicates_html = any(keyword in record.get('topic', '').lower() for keyword in ['bento', '网页', 'html', 'web'])
 
             if is_html or topic_indicates_html:
-                st.info(f"这是一个{'Bento风格' if 'Bento' in record.get('topic', '') or '网页' in record.get('topic', '') else ''}网页内容，点击下方按钮查看效果")
-                def on_run_button_click(rec_id):
-                    logger.info(f"Run button clicked for record ID: {rec_id}")
-                    st.session_state.record_id_for_viewer = rec_id
-                    logger.info(f"Set session_state.record_id_for_viewer to: {rec_id}")
-                    logger.info(f"Session state before switch_page: {list(st.session_state.keys())}")
-                    st.switch_page("page/html_viewer.py")
-                st.button("🖥️ 运行网页", 
-                          key=f"run_{record['id']}", 
-                          on_click=on_run_button_click, 
-                          args=(record['id'],))
-
-                # 下载按钮
-                st.download_button(
-                    label="下载网页",
-                    data=content,
-                    file_name=f"{record['topic']}.html",
-                    mime="text/html",
-                    key=f"download_html_{record['id']}"
-                )
+                # 对于HTML内容，不直接显示，而是提供预览链接
+                is_bento = "Bento" in record.get('topic', '') or "网页" in record.get('topic', '')
+                st.info(f"这是一个{'Bento风格' if is_bento else ''}网页内容，点击下方链接查看效果")
+                
+                # 获取HTML内容
+                html_content = record["article_content"]
+                
+                # 确保内容是完整的HTML文档
+                if not html_content.strip().startswith('<!DOCTYPE html>') and not html_content.strip().startswith('<html'):
+                    # 如果不是完整的HTML文档，添加必要的HTML标签
+                    wrapped_content = f"""<!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <title>{record.get('topic', '无标题')}</title>
+                    </head>
+                    <body>
+                    {html_content}
+                    </body>
+                    </html>"""
+                    html_content = wrapped_content
+                
+                # 生成唯一文件名
+                html_filename = f"{record.get('topic', 'article').replace(' ', '_')}_{record['id']}.html"
+                
+                # 检查文件是否已经存在
+                user_html_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'html', current_user)
+                file_path = os.path.join(user_html_dir, html_filename)
+                
+                # 如果文件不存在，才保存HTML内容到文件
+                if not os.path.exists(file_path):
+                    _, url_path = save_html_to_user_dir(current_user, html_content, html_filename)
+                else:
+                    # 如果文件已存在，只生成URL路径
+                    url_path = f"{current_user}/{html_filename}"
+                
+                # 生成可访问的URL
+                base_url = HTML_NGINX_BASE_URL  # 根据nginx配置调整
+                article_url = f"{base_url}{url_path}"
+                
+                # 创建三列布局，分别放置预览链接、下载按钮和删除按钮
+                col1, col2, col3 = st.columns([1, 1, 1])
+                
+                with col1:
+                    # 使用Streamlit的按钮来打开预览链接
+                    if st.button("👁️ 预览网页", key=f"history_preview_{record['id']}", type="primary", use_container_width=True):
+                        # 使用JavaScript打开新标签页
+                        js = f"window.open('{article_url}', '_blank').focus();"
+                        st.components.v1.html(f"<script>{js}</script>", height=0)
+                
+                with col2:
+                    # 下载按钮
+                    st.download_button(
+                        label="📥 下载网页",
+                        data=record["article_content"],
+                        file_name=f"{record['topic']}.html",
+                        mime="text/html",
+                        key=f"download_html_{record['id']}",
+                        use_container_width=True,
+                        type="secondary"
+                    )
+                with col3:
+                    # 删除按钮
+                    delete_button = st.button("🗑️ 删除记录", key=f"delete_html_{record['id']}", type="secondary", use_container_width=True)
+                    if delete_button:
+                        from utils.history_utils import delete_history_record
+                        delete_history_record(current_user, record['id'])
+                        # 使用session_state来触发重新加载
+                        st.session_state['history_trigger_rerun'] = True
             else:
-                st.markdown(content)
-                # 下载按钮
-                st.download_button(
-                    label="下载文章",
-                    data=content,
-                    file_name=f"{record['topic']}.md",
-                    mime="text/markdown",
-                    key=f"download_md_{record['id']}"
-                )
-            # 删除按钮
-            if st.button("删除此条记录", key=f"delete_{record['id']}"):
-                from utils.history_utils import delete_history_record
-                delete_history_record(current_user, record['id'])
-                # 使用session_state来触发重新加载
-                st.session_state['history_trigger_rerun'] = True
+                # 对于MD内容，使用popover显示
+                with st.popover("点击查看文章内容"):
+                    st.markdown(content)
+                
+                # 创建两列布局，分别放置下载按钮和删除按钮
+                col1, col2 = st.columns([1, 1])
+                
+                with col1:
+                    # 下载按钮
+                    st.download_button(
+                        label="📥 下载文章",
+                        data=content,
+                        file_name=f"{record['topic']}.md",
+                        mime="text/markdown",
+                        key=f"download_{record['id']}",
+                        use_container_width=True,
+                        type="secondary"
+                    )
+                with col2:
+                    # 删除按钮
+                    delete_button = st.button("🗑️ 删除记录", key=f"delete_md_{record['id']}", type="secondary", use_container_width=True)
+                    if delete_button:
+                        from utils.history_utils import delete_history_record
+                        delete_history_record(current_user, record['id'])
+                        # 使用session_state来触发重新加载
+                        st.session_state['history_trigger_rerun'] = True
                 
     # 检查是否需要重新加载页面
     if st.session_state.get('history_trigger_rerun', False):

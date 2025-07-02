@@ -3,13 +3,23 @@ import sys
 import logging
 import os
 import base64
+import uuid
+import asyncio
 from PIL import Image
 from io import BytesIO
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
-from utils.history_utils import load_user_history
+from utils.history_utils import load_user_history, save_html_to_user_dir, save_image_to_user_dir
 from utils.html_generator import wrap_with_dark_theme, fix_gradient_text_for_screenshots
 import page_settings
+
+# Import playwright for screenshot functionality
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    logging.warning("Playwright not available. Screenshot functionality will be disabled.")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -71,8 +81,8 @@ def main():
     
     st.subheader(f"网页预览: {topic}")
     
-    # 下载按钮
-    col1, col2, col3 = st.columns([1, 1, 4])
+    # 下载按钮和转换为图片按钮
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 3])
     with col1:
         if st.download_button(
             label="下载 HTML",
@@ -93,6 +103,48 @@ def main():
             mime="text/html",
         ):
             st.success("深色版文件下载成功!")
+            
+    with col3:
+        # 转换为图片按钮
+        if PLAYWRIGHT_AVAILABLE:
+            if st.button("转换为图片", key="convert_to_image"):
+                try:
+                    # 使用工具函数保存HTML到临时文件
+                    html_path, _ = save_html_to_user_dir(current_user, content)
+                    
+                    # 生成图片文件名
+                    img_filename = f"{uuid.uuid4().hex}.png"
+                    img_path = os.path.join(os.path.dirname(html_path), img_filename)
+                    
+                    # 使用Playwright截图
+                    with st.spinner("正在使用Playwright转换为图片..."):
+                        with sync_playwright() as p:
+                            browser = p.chromium.launch()
+                            page = browser.new_page(viewport={"width": 1200, "height": 800})
+                            page.goto(f"file://{html_path}")
+                            # 等待页面加载完成
+                            page.wait_for_load_state("networkidle")
+                            # 截取整个页面
+                            page.screenshot(path=img_path, full_page=True)
+                            browser.close()
+                    
+                    # 生成可访问的URL
+                    # 读取生成的图片数据
+                    with open(img_path, 'rb') as f:
+                        img_data = f.read()
+                    
+                    # 使用工具函数保存图片并获取URL
+                    _, img_url = save_image_to_user_dir(current_user, img_data, img_filename)
+                    
+                    st.success("文章已成功转换为图片！")
+                    st.markdown(f"![文章图片]({img_url})")
+                    st.markdown(f"[点击查看完整图片]({img_url})")
+                    
+                except Exception as e:
+                    st.error(f"转换图片时出错: {str(e)}")
+                    logger.error(f"Error converting to image: {str(e)}")
+        else:
+            st.warning("Playwright未安装，无法使用截图功能。请安装playwright包。")
     
     # 返回按钮
     st.button("返回", on_click=lambda: st.switch_page(page_settings.PAGE_HOME))
@@ -162,6 +214,23 @@ def main():
         if len(content) > 100:
             st.text("内容开头: " + content[:100])
             st.text("内容结尾: " + content[-100:])
+
+def install_playwright_if_needed():
+    """安装Playwright及其依赖"""
+    try:
+        import playwright
+        return True
+    except ImportError:
+        try:
+            import subprocess
+            st.info("正在安装Playwright，这可能需要几分钟时间...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "playwright"])
+            subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
+            st.success("Playwright安装成功！请刷新页面。")
+            return True
+        except Exception as e:
+            st.error(f"安装Playwright失败: {str(e)}")
+            return False
 
 if __name__ == "__main__":
     main()

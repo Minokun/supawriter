@@ -4,14 +4,14 @@ import os
 import json
 API_URL = "http://localhost:1234/v1/chat/completions"
 sample_prompt = """
-Analyze this image. If it is a promotional image, advertisement, icon, or any other type of image that does not convey specific information, mark its status as deleted with `is_deleted` set to `True`.  
-For other images, provide a detailed description of the image content in `describe` in Chinese. Then, compare it with the theme '{theme}' to determine relevance. If relevant, mark `is_related` as `True`; otherwise, mark it as `False`.
+Analyze this image. If it is a promotional image, advertisement, icon, or any other type of image that does not convey specific information, mark its status as deleted with `is_deleted` set to `true`.  
+For other images, provide a detailed description of the image content in `describe` in Chinese. Then, compare it with the theme '{theme}' to determine relevance. If relevant, mark `is_related` as `true`; otherwise, mark it as `false`.
 
-Respond ONLY with a valid JSON object in this exact format (use True/False):
+Respond ONLY with a valid JSON object in this exact format (use true/false):
 {
-    "is_deleted": False,
+    "is_deleted": false,
     "describe": "Description of the image in Chinese",
-    "is_related": False
+    "is_related": false
 }
 """
 def call_gemma3_api(prompt=sample_prompt, image_path: str = None, image_url: str = None, image_content: bytes = None):
@@ -125,9 +125,12 @@ def call_gemma3_api(prompt=sample_prompt, image_path: str = None, image_url: str
                 return result
             except json.JSONDecodeError as e:
                 print(f"Failed to parse JSON from API response: {e}")
-                # Try a more lenient approach - replace single quotes with double quotes
+                # Try a more lenient approach - handle Python style booleans and quotes
                 try:
                     import re
+                    # Replace Python True/False with JSON true/false
+                    content = re.sub(r"True", "true", content)
+                    content = re.sub(r"False", "false", content)
                     # Replace 'true' and 'false' with true and false (without quotes)
                     content = re.sub(r"'true'", "true", content)
                     content = re.sub(r"'false'", "false", content)

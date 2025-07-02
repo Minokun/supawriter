@@ -1,10 +1,14 @@
 import os
 import json
+import uuid
 from datetime import datetime
 import streamlit as st
 
 # Path to the history database file
 HISTORY_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'history')
+
+# Path to the user HTML files
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
 
 # Ensure the history directory exists
 os.makedirs(HISTORY_DIR, exist_ok=True)
@@ -85,4 +89,72 @@ def delete_history_record(username, record_id):
     new_history = [r for r in history if r.get("id") != record_id]
     save_user_history(username, new_history)
     return True
+
+def save_html_to_user_dir(username, html_content, filename=None):
+    """
+    Save HTML content to the user's HTML directory.
+    
+    Args:
+        username (str): The username of the user
+        html_content (str): The HTML content to save
+        filename (str, optional): Filename to use. If None, a UUID will be generated
+        
+    Returns:
+        tuple: (file_path, url_path) - The file path and URL path to access the HTML
+    """
+    # Create user HTML directory if it doesn't exist
+    user_html_dir = os.path.join(DATA_DIR, 'html', username)
+    os.makedirs(user_html_dir, exist_ok=True)
+    
+    # Generate filename if not provided
+    if not filename:
+        filename = f"{uuid.uuid4().hex}.html"
+    elif not filename.endswith('.html'):
+        filename = f"{filename}.html"
+    
+    # Full path to save the file
+    file_path = os.path.join(user_html_dir, filename)
+    
+    # Save the HTML content
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+    
+    # URL path for nginx to serve
+    url_path = f"{username}/{filename}"
+    
+    return file_path, url_path
+
+def save_image_to_user_dir(username, image_data, filename=None):
+    """
+    Save image data to the user's HTML directory.
+    
+    Args:
+        username (str): The username of the user
+        image_data (bytes): The image data to save
+        filename (str, optional): Filename to use. If None, a UUID will be generated
+        
+    Returns:
+        tuple: (file_path, url_path) - The file path and URL path to access the image
+    """
+    # Create user HTML directory if it doesn't exist
+    user_html_dir = os.path.join(DATA_DIR, 'html', username)
+    os.makedirs(user_html_dir, exist_ok=True)
+    
+    # Generate filename if not provided
+    if not filename:
+        filename = f"{uuid.uuid4().hex}.png"
+    elif not filename.endswith(('.png', '.jpg', '.jpeg', '.gif')):
+        filename = f"{filename}.png"
+    
+    # Full path to save the file
+    file_path = os.path.join(user_html_dir, filename)
+    
+    # Save the image data
+    with open(file_path, 'wb') as f:
+        f.write(image_data)
+    
+    # URL path for nginx to serve
+    url_path = f"/html/{username}/{filename}"
+    
+    return file_path, url_path
 

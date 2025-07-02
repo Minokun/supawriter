@@ -2,8 +2,8 @@ import os
 import json
 import re
 import logging
-from utils.gemmar3_client import call_gemma3_api
-from utils.embedding_utils import TextMatcher
+from utils.gemma3_client import call_gemma3_api
+from utils.embedding_utils import search_similar_text, add_to_faiss_index, get_embedding_instance
 from utils.image_url_mapper import ImageUrlMapper
 
 # Configure logging
@@ -21,7 +21,7 @@ class ImageManager:
         """
         self.image_base_dir = image_base_dir
         self.task_id = task_id
-        self.text_matcher = TextMatcher()
+        self.embedding_instance = get_embedding_instance()
         self.url_mapper = ImageUrlMapper(image_base_dir)
         
     def _get_image_dirs(self):
@@ -192,30 +192,73 @@ class ImageManager:
         
         logger.info(f"Matching {len(image_descriptions)} images to {len(paragraphs)} paragraphs")
         
-        # Find best matching paragraph for each image
-        matches = self.text_matcher.find_best_matches(
-            image_descriptions, 
-            paragraphs,
-            top_k=1
-        )
-        
-        # Format results: [(paragraph_index, image_info, similarity_score)]
+        # Find best matching paragraph for each image using embedding-based similarity
         results = []
-        for img_idx, paragraph_matches in matches:
-            if paragraph_matches:  # Should always be true with top_k=1
-                paragraph_idx, similarity = paragraph_matches[0]
-                # Only include matches that exceed the similarity threshold
-                if similarity >= similarity_threshold:
-                    results.append((
-                        paragraph_idx,
-                        related_images[img_idx],
-                        similarity
-                    ))
-                    logger.info(f"Matched image to paragraph {paragraph_idx} with score {similarity:.4f}")
-                else:
-                    logger.info(f"Image match below threshold: {similarity:.4f} < {similarity_threshold}")
         
-        # Sort by similarity score
+        # 使用全局FAISS索引
+        from utils.embedding_utils import get_faiss_index
+        faiss_index = get_faiss_index()
+        
+        # 检查索引是否为空
+        if faiss_index.get_size() == 0:
+            logger.warning("FAISS索引为空，无法匹配图片")
+            return []
+        
+        # 为段落创建嵌入向量
+        embedding_instance = self.embedding_instance
+        paragraph_data = []
+        paragraph_embeddings = []
+        
+        for i, paragraph in enumerate(paragraphs):
+            try:
+                # 获取段落的嵌入向量
+                paragraph_embedding = embedding_instance.get_embedding(paragraph)
+                if paragraph_embedding is not None:
+                    paragraph_embeddings.append(paragraph_embedding)
+                    paragraph_data.append({'id': i, 'text': paragraph})
+            except Exception as e:
+                logger.error(f"Error embedding paragraph {i}: {str(e)}")
+        
+        if not paragraph_embeddings:
+            logger.warning("No paragraph embeddings were created, cannot match images to paragraphs")
+            return []
+        
+        # 对每个段落，在FAISS索引中搜索相似的图片
+        for para_idx, (para_embedding, para_data) in enumerate(zip(paragraph_embeddings, paragraph_data)):
+            try:
+                # 在FAISS索引中搜索相似的图片描述
+                indices, distances, matched_data = faiss_index.search(para_embedding, k=3)
+                
+                if matched_data and len(matched_data) > 0:
+                    for i, (distance, data) in enumerate(zip(distances, matched_data)):
+                        # 检查是否是图片数据
+                        if 'image_url' in data and 'description' in data:
+                            # 转换距离为相似度分数
+                            similarity = 1.0 - min(distance / 2.0, 0.99)  # 归一化并反转
+                            
+                            # 只包含超过相似度阈值的匹配
+                            if similarity >= similarity_threshold:
+                                # 创建图片信息对象
+                                image_info = {
+                                    'path': data['image_url'],
+                                    'description': data['description'],
+                                    'is_related': data.get('is_related', True),
+                                    'task_id': data.get('task_id', '')
+                                }
+                                
+                                results.append((
+                                    para_data['id'],
+                                    image_info,
+                                    similarity
+                                ))
+                                logger.info(f"Matched image to paragraph {para_data['id']} with score {similarity:.4f}")
+                            else:
+                                logger.info(f"Image match below threshold: {similarity:.4f} < {similarity_threshold}")
+            except Exception as e:
+                logger.error(f"Error searching for images for paragraph {para_idx}: {str(e)}")
+                continue
+        
+        # 按相似度分数排序
         results.sort(key=lambda x: x[2], reverse=True)
         
         return results
@@ -235,7 +278,17 @@ class ImageManager:
         """
         logger.info(f"Starting image insertion process for theme: {article_theme}")
         
-        # Step 1: Analyze available images
+        # 首先检查全局FAISS索引中是否有图片数据
+        from utils.embedding_utils import get_faiss_index
+        faiss_index = get_faiss_index()
+        index_size = faiss_index.get_size()
+        logger.info(f"当前FAISS索引大小: {index_size}")
+        
+        if index_size == 0:
+            logger.warning("FAISS索引中没有图片数据，无法进行图片匹配")
+            return markdown_content
+        
+        # Step 1: 如果有图片数据，继续分析图片
         analyzed_images = self.analyze_images(article_theme, max_images=max_images)
         
         if not analyzed_images:

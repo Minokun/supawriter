@@ -1,18 +1,22 @@
-from utils.searxng_utils import auto_run
 import streamlit as st
 import sys
+import logging
 from utils.searxng_utils import Search, llm_task, chat, parse_outline_json
 import utils.prompt_template as pt
 import concurrent.futures
 import asyncio
 import nest_asyncio
-from settings import LLM_MODEL, ARTICLE_TRANSFORMATIONS
+from settings import LLM_MODEL, ARTICLE_TRANSFORMATIONS, HTML_NGINX_BASE_URL
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
 from utils.history_utils import add_history_record, load_user_history
-from utils.image_manager import ImageManager
-import os
 from page import transform_article
+from utils.embedding_utils import create_faiss_index, get_embedding_instance
+import streamlit.components.v1 as components
+import os
+
+# 配置日志
+logger = logging.getLogger(__name__)
 
 @require_auth
 def main():
@@ -26,6 +30,93 @@ def main():
 
     if "run_status" not in st.session_state:
         st.session_state.run_status = False
+        
+    # 使用st.cache_resource装饰器来缓存FAISS索引和Embedding实例
+    # 添加TTL=10秒，确保索引每10秒刷新一次
+    @st.cache_resource(show_spinner="加载FAISS索引和Embedding模型...", ttl=10)
+    def get_cached_resources(force_refresh=False):
+        """获取缓存的FAISS索引和Embedding实例，优先从磁盘加载
+        
+        Args:
+            force_refresh: 是否强制从磁盘重新加载索引，即使缓存有效
+        """
+        try:
+            # 导入函数放在这里，确保它们在使用前已经被正确导入
+            from utils.embedding_utils import create_faiss_index, get_embedding_instance
+            import time
+            
+            # 定义索引目录 - 与grab_html_content.py中使用同一目录
+            index_dir = 'data/faiss'
+            index_path = f"{index_dir}/index.faiss"
+            data_path = f"{index_dir}/index_data.pkl"
+            
+            # 确保目录存在
+            import os
+            os.makedirs(index_dir, exist_ok=True)
+            
+            # 第一次加载时，设置清除标志
+            if 'first_load' not in st.session_state:
+                st.session_state.first_load = True
+                st.session_state.should_clear_index = True
+                logger.info("首次加载，设置清除索引标志")
+            
+            # 在以下情况下清除索引：
+            # 1. 强制刷新且should_clear_index标志为True
+            # 2. 首次加载
+            should_delete_files = (force_refresh and st.session_state.get('should_clear_index', False)) or st.session_state.get('first_load', False)
+            
+            if should_delete_files:
+                # 清除当前函数的缓存
+                get_cached_resources.clear()
+                logger.info("清除FAISS索引缓存")
+                
+                # 删除磁盘上的索引文件
+                if os.path.exists(index_path):
+                    logger.info(f"删除现有索引文件: {index_path}")
+                    try:
+                        os.remove(index_path)
+                    except Exception as e:
+                        logger.error(f"删除索引文件失败: {str(e)}")
+                        
+                if os.path.exists(data_path):
+                    logger.info(f"删除现有数据文件: {data_path}")
+                    try:
+                        os.remove(data_path)
+                    except Exception as e:
+                        logger.error(f"删除数据文件失败: {str(e)}")
+                
+                # 重置状态标志
+                st.session_state.should_clear_index = False
+                st.session_state.first_load = False
+                logger.info("重置清空索引状态标志")
+            elif force_refresh:
+                logger.info("请求强制刷新，但should_clear_index标志未设置，仅刷新缓存")
+                get_cached_resources.clear()  # 仍然清除缓存，但不删除文件
+                
+            # 记录当前时间，用于调试缓存刷新机制
+            current_time = time.strftime("%H:%M:%S", time.localtime())
+            logger.info(f"在 {current_time} 加载FAISS索引")
+            
+            # 尝试从磁盘加载FAISS索引，或创建新的空索引
+            faiss_index = create_faiss_index(load_from_disk=True, index_dir=index_dir)
+            embedding_instance = get_embedding_instance()
+            
+            # 如果索引为空，记录一个警告但仍然使用它
+            if faiss_index.get_size() == 0:
+                logger.warning("FAISS索引为空，可能没有图片数据或未正确加载")
+            else:
+                logger.info(f"从磁盘成功加载FAISS索引，包含 {faiss_index.get_size()} 条图片数据")
+                
+            return faiss_index, embedding_instance
+        except Exception as e:
+            logger.error(f"初始化FAISS索引失败: {str(e)}")
+            st.error(f"初始化FAISS索引失败: {str(e)}")
+            return None, None
+    
+    # 获取缓存的资源
+    # 将get_cached_resources函数存储在session_state中，以侾grab_html_content.py可以使用
+    st.session_state.get_cached_resources = get_cached_resources
+    faiss_index, embedding_instance = get_cached_resources()
 
     with st.sidebar:
         st.title("超级写手配置项：")
@@ -42,12 +133,9 @@ def main():
                 height=100,
                 key='custom_style'
             )
-            col1, col2 = st.columns(2)
-            with col1:
-                write_type = st.selectbox('写作模式', ['简易', '详细'], key=2)
-            with col2:
-                spider_num = st.slider(label='爬取网页数量', help='（默认5，数量越多时间越长！)', min_value=1, max_value=25, key=3,
-                                   value=15)
+            # 去掉写作模式选项，始终使用详细模式
+            spider_num = st.slider(label='爬取网页数量', help='（默认5，数量越多时间越长！)', min_value=1, max_value=25, key=3,
+                               value=15)
             # Use the checkbox directly without assigning to session_state
             convert_to_simple = st.checkbox("转换白话文", key="convert_to_simple", value=False)
             convert_to_webpage = st.checkbox("转换为Bento风格网页", key="convert_to_webpage", value=False)
@@ -56,56 +144,42 @@ def main():
             st.subheader("图片设置")
             st.session_state['enable_images'] = st.checkbox("自动插入相关图片", value=False)
             if st.session_state.get('enable_images', False):
-                st.session_state['similarity_threshold'] = st.slider(
-                    "相似度阈值", 
-                    min_value=0.3, 
-                    max_value=0.9, 
-                    value=0.5, 
-                    step=0.05,
-                    help="设置图片与段落的最小相似度要求，越高表示要求越严格"
-                )
-                st.session_state['max_images'] = st.slider(
-                    "最大扫描图片数量", 
-                    min_value=5, 
-                    max_value=30, 
-                    value=10,
-                    help="设置要分析的图片数量上限，实际插入数量取决于相似度阈值"
-                )
-                
-                # 获取当前可用的task_id目录
-                image_base_dir = "images"
-                if not os.path.exists(image_base_dir):
-                    os.makedirs(image_base_dir)
-                task_dirs = [d for d in os.listdir(image_base_dir) 
-                            if os.path.isdir(os.path.join(image_base_dir, d)) and d.startswith("task_")]
-                
-                if task_dirs:
-                    st.session_state['image_task_id'] = st.selectbox(
-                        "选择图片目录", 
-                        options=task_dirs,
-                        format_func=lambda x: x.replace("task_", "任务 "),
-                        index=0 if len(task_dirs) > 0 else None
-                    )
-                    st.info(f"将从 {os.path.join(image_base_dir, st.session_state.get('image_task_id', ''))} 目录中分析图片")
-                else:
-                    st.warning("未找到图片目录，请先执行搜索以抓取图片")
+                st.info("使用多模态模式自动插入相关图片，无需额外设置")
             submit_button = st.form_submit_button(label='执行', disabled=st.session_state.run_status)
 
     st.caption('SuperWriter by WuXiaokun. ')
     st.subheader("超级写手🤖", divider='rainbow')
     
-    # Create tabs for main functionality and history
-    main_tab, transform_tab, history_tab = st.tabs(["写作", "文章再创作", "文章列表"])
+    # 初始化标签页索引，如果不存在则默认为0（main_tab）
+    if 'tab_index' not in st.session_state:
+        st.session_state.tab_index = 0
     
-    # Create placeholders only for the main tab content
-    with main_tab:
-        placeholder_status = st.container()
-
-    with transform_tab:
+    # 定义标签页切换回调函数
+    def tab_callback():
+        # 更新session_state中的tab_index
+        st.session_state.tab_index = st.session_state.tabs
+    
+    # 使用radio组件模拟tabs，因为它可以保持状态
+    # 使用水平排列和最小化样式使其看起来像tabs
+    st.session_state.tabs = st.radio(
+        "选择功能",
+        options=[0, 1],
+        format_func=lambda x: "写作" if x == 0 else "文章再创作",
+        index=st.session_state.tab_index,
+        on_change=tab_callback,
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+    
+    # 根据选择的标签页显示相应内容
+    if st.session_state.tabs != 0:
+        # 转换标签页内容
         transform_article.main()
+        # 提前返回，不显示主标签页内容
+        return
 
-    with main_tab:
-        st.info("""
+    # 主标签页内容，现在直接放在这里
+    st.info("""
 
             🆕简介：本应用是利用LLM+搜索引擎+爬虫开发的自动撰写文章的机器人，只需要填写文章主题,程序会自动书写大纲并逐一撰写文章。
 
@@ -113,72 +187,159 @@ def main():
 
             1. 模型默认deepseek，效果最好，速度最快，该选项可以不用修改。
             2. 填写文章主题为你想要撰写的文章主题
-            3. 写作模式，简易模式将只搜索，不爬取网页内容。详细模式将搜索并爬取网页内容，爬取网页数量为默认15，数量越多时间越长！
+            3. 爬取网页数量默认为15，数量越多时间越长！系统会自动搜索并爬取网页内容。
 
             """)
 
-        # Initialize variables
-        search_result = []
-        outline_summary = ""
-        outline_summary_json = {"title": "", "summary": "", "content_outline": []}
-        outlines = ""
-        article_content = ''
+    # Initialize variables
+    search_result = []
+    outline_summary = ""
+    outline_summary_json = {"title": "", "summary": "", "content_outline": []}
+    outlines = ""
+    article_content = ''
 
-        if submit_button:
-            # Container for progress and process details
-            progress_container = st.container()
-            col_left, col_right = progress_container.columns(2)
-            # Left column: crawling, search details, outline generation, outline merging
-            with col_left:
-                st.caption("当前进度：")
-                progress_bar = st.progress(0, text="Operation in progress. Please wait.")
-                # Crawl web content
-                progress_bar.progress(10, text="Spider in progress. Please wait...")
-                with st.status("抓取网页内容"):
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(Search(result_num=spider_num).get_search_result, text_input, write_type != '简易')
-                        for future in concurrent.futures.as_completed([future]):
-                            search_result = future.result()
-                with st.popover("查看搜索详细..."):
-                    for item in search_result:
-                        st.markdown(f"标题：{item.get('title')}  链接：{item.get('url')}")
+    if submit_button:
+        # 使用单独的容器来显示进度信息，避免与其他元素重叠
+        st.markdown("### 处理进度")
+        progress_container = st.container()
+        
+        # 初始化已使用图片的集合，用于跟踪已插入的图片
+        if 'used_images' not in st.session_state:
+            st.session_state.used_images = set()
+        else:
+            # 每次执行时重置已使用图片集合
+            st.session_state.used_images = set()
+        
+        # 设置强制清空索引的标志
+        st.session_state.should_clear_index = True
+        
+        # 清除缓存并重新创建空索引
+        try:
+            # 获取新的空索引 - 这将触发get_cached_resources中的清除逻辑
+            cached_faiss_index, _ = get_cached_resources(force_refresh=True)
+            
+            # 确保索引为空
+            if cached_faiss_index:
+                cached_faiss_index.clear()
+                logger.info("执行按钮点击：成功清空FAISS索引")
+                
+                # 验证索引是否真的为空
+                index_size = cached_faiss_index.get_size()
+                logger.info(f"清空后验证索引大小: {index_size}")
+        except Exception as e:
+            logger.error(f"清空FAISS索引失败: {str(e)}")
+        
+        # 先显示进度条，然后再显示其他内容
+        progress_bar = progress_container.progress(0, text="Operation in progress. Please wait.")
+        
+        # 使用更清晰的布局分割
+        col_left, col_right = st.columns([3, 2])
+        
+        # Left column: crawling, search details, outline generation, outline merging
+        with col_left:
+            st.subheader("处理过程")
+            # Crawl web content
+            progress_bar.progress(10, text="Spider in progress. Please wait...")
+            with st.status("抓取网页内容"):
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    # 检查是否启用图片功能，如果启用则使用多模态模式
+                    is_multimodal = st.session_state.get('enable_images', False)
+                    future = executor.submit(Search(result_num=spider_num).get_search_result, text_input, is_multimodal=is_multimodal, theme=text_input)
+                    for future in concurrent.futures.as_completed([future]):
+                        search_result = future.result()
+            with st.popover("查看搜索详细..."):
+                for item in search_result:
+                    st.markdown(f"标题：{item.get('title')}  链接：{item.get('url')}")
+            
+            # 显示当前FAISS索引中的所有图片
+            if st.session_state.get('enable_images', False):
+                # 使用缓存的FAISS索引实例，但不强制刷新以避免删除索引
+                cached_faiss_index, _ = get_cached_resources(force_refresh=False)
+                index_size = cached_faiss_index.get_size()
+                
+                with st.popover(f"查看已抓取的图片 ({index_size})"):
+                    if index_size == 0:
+                        st.warning("当前没有可用的图片数据")
+                    else:
+                        # 从FAISS索引获取所有的图片数据
+                        all_data = cached_faiss_index.get_all_data()
+                        
+                        # 创建三列布局显示图片
+                        cols = st.columns(3)
+                        for i, item in enumerate(all_data):
+                            # 检查数据格式，处理字典结构
+                            if isinstance(item, dict):
+                                img_url = item.get('image_url', '')
+                                description = item.get('description', '')
+                            else:
+                                # 假设公司可能不一定用完全一样的数据结构
+                                # 尝试兼容旧格式
+                                try:
+                                    img_url, description = item
+                                except:
+                                    st.warning(f"\u8df3过不兼容的图片数据格式: {str(item)[:100]}")
+                                    continue
+                            
+                            # 用于调试
+                            # st.write(f"\u56fe片索引 {i}: {img_url}")
+                            
+                            # 轮流使用不同列显示图片
+                            with cols[i % 3]:
+                                try:
+                                    # 显示图片
+                                    st.image(img_url, width=150)
+                                    # 显示描述（截断过长的描述）
+                                    max_desc_len = 100
+                                    short_desc = description if len(description) <= max_desc_len else f"{description[:max_desc_len]}..."
+                                    st.caption(short_desc)
+                                except Exception as e:
+                                    st.error(f"无法加载图片: {str(e)}")
 
-                # Generate outline
-                progress_bar.progress(30, text="Spider Down! Now generate the outline...")
-                with st.status("生成大纲"):
-                    try:
-                        outlines = llm_task(search_result, text_input, pt.ARTICLE_OUTLINE_GEN, model_type=model_type, model_name=model_name)
-                    except ConnectionError as e:
-                        st.error(f"错误: {str(e)}")
-                        st.stop()
+            # Generate outline
+            progress_bar.progress(30, text="Spider Down! Now generate the outline...")
+            with st.status("生成大纲"):
+                try:
+                    outlines = llm_task(search_result, text_input, pt.ARTICLE_OUTLINE_GEN, model_type=model_type, model_name=model_name)
+                except ConnectionError as e:
+                    st.error(f"错误: {str(e)}")
+                    st.stop()
 
-                # Merge outline
-                progress_bar.progress(60, text="Integrate article outline...")
-                with st.status("融合大纲"):
-                    try:
-                        outline_summary = chat(f'<topic>{text_input}</topic> <content>{outlines}</content>', pt.ARTICLE_OUTLINE_SUMMARY, model_type=model_type, model_name=model_name)
-                    except ConnectionError as e:
-                        st.error(f"错误: {str(e)}")
-                        st.stop()
+            # Merge outline if needed
+            progress_bar.progress(60, text="Integrate article outline...")
+            with st.status("融合大纲"):
+                try:
+                    # 检查是否只有一条大纲数据
+                    if isinstance(outlines, str) and outlines.count("title") <= 1:
+                        # 只有一条大纲数据，直接使用
+                        outline_summary = outlines
+                    else:
+                        # 有多条大纲数据，进行融合
+                        outline_summary = chat(f'<topic>{text_input}</topic> <content>{outlines}</content>', 
+                                                pt.ARTICLE_OUTLINE_SUMMARY, 
+                                                model_type=model_type, 
+                                                model_name=model_name)
+                except ConnectionError as e:
+                    st.error(f"错误: {str(e)}")
+                    st.stop()
 
-                # Parse outline JSON
-                outline_summary_json = parse_outline_json(outline_summary, text_input)
-                outline_summary_json.setdefault('title', text_input)
-                outline_summary_json.setdefault('summary', "")
-                outline_summary_json.setdefault('content_outline', [])
+            # Parse outline JSON
+            outline_summary_json = parse_outline_json(outline_summary, text_input)
+            outline_summary_json.setdefault('title', text_input)
+            outline_summary_json.setdefault('summary', "")
+            outline_summary_json.setdefault('content_outline', [])
 
-            # Right column: outline preview
-            with col_right:
-                st.caption("大纲预览")
-                if outline_summary_json.get('content_outline'):
-                    with st.popover("查看大纲"):
-                        st.json(outline_summary_json)
-                    st.markdown(f"""
-                    #### {outline_summary_json['title']}
-
-                    > {outline_summary_json['summary']}
-                    --------------------------
-                    """)
+        # Right column: outline preview
+        with col_right:
+            st.subheader("大纲预览")
+            if outline_summary_json.get('content_outline'):
+                with st.popover("查看大纲"):
+                    st.json(outline_summary_json)
+                
+                # 使用更清晰的格式显示标题和摘要
+                st.markdown(f"### {outline_summary_json['title']}")
+                st.markdown(f"> {outline_summary_json['summary']}")
+                    
+                    
 
         # *************************** 书写文章 *************************
         if 'content_outline' in outline_summary_json and outline_summary_json['content_outline']:
@@ -224,12 +385,105 @@ def main():
                             f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{outline_block}',
                             custom_prompt, model_type=model_type, model_name=model_name)
             
-                    with st.popover(f'{outline_block["h1"]} {n}/{repeat_num}', use_container_width=True):
-                        st.markdown(f"""
-                        {outline_block_content_final}
-                        """)
+                    # 使用单独的容器来显示内容块，避免重叠
+                    content_container = st.container()
+                    with content_container:
+                        with st.expander(f'{outline_block["h1"]} {n}/{repeat_num}', expanded=True):
+                            st.markdown(f"""
+                            {outline_block_content_final}
+                            """)
                     n += 1
+                    # 添加分隔线来区分内容块
+                    st.markdown("---")
                 
+                    # 如果启用了多模态图像处理，尝试为当前内容块找到相关图片
+                    if st.session_state.get('enable_images', False):
+                        try:
+                            from utils.embedding_utils import search_similar_text
+                            
+                            # 使用文章内容块查找相关图片
+                            similarity_threshold = 0.1  # 降低阈值以增加匹配成功率
+                            
+                            # 使用缓存的FAISS索引实例，但不强制刷新以避免删除索引
+                            cached_faiss_index, _ = get_cached_resources(force_refresh=False)
+                            
+                            # 输出索引大小，帮助调试
+                            index_size = cached_faiss_index.get_size()
+                            logger.info(f"当前FAISS索引大小: {index_size}")
+                            
+                            if index_size == 0:
+                                # 再尝试一次加载，可能在运行过程中有新的图片被处理
+                                import time
+                                logger.warning("等待3秒并重试加载FAISS索引...")
+                                time.sleep(3)  # 等待几秒钟，确保任何正在进行的保存操作都已完成
+                                # 仍然不使用force_refresh=True，因为这可能删除索引
+                                cached_faiss_index, _ = get_cached_resources(force_refresh=False)
+                                index_size = cached_faiss_index.get_size()
+                                logger.info(f"重试后的FAISS索引大小: {index_size}")
+                                
+                                if index_size == 0:
+                                    st.warning("FAISS索引中没有图片数据，无法进行图片匹配")
+                                    continue
+                                
+                            # 搜索相似的图片描述
+                            # 增加搜索结果数量，提高匹配成功率
+                            # 增加k值以获取更多候选图片，因为部分图片可能已被使用
+                            # 获取当前大纲的h1和h2组装成字符串进行搜索
+                            outline_block_str = outline_block['h1'] + "".join([h2 for h2 in outline_block['h2']]) + outline_block_content_final
+                            _, distances, matched_data = search_similar_text(outline_block_str, cached_faiss_index, k=10)
+                            
+                            # 检查是否找到相关图片
+                            if matched_data and len(matched_data) > 0:
+                                image_inserted = False
+                                inserted_image_count = 0  # 初始化已插入图片计数器
+                                
+                                # 遍历所有匹配结果，找到第一个有效且未使用的图片
+                                for i, (distance, data) in enumerate(zip(distances, matched_data)):
+                                    # 检查是否是图片数据
+                                    if isinstance(data, dict) and 'image_url' in data:
+                                        # 获取图片URL
+                                        image_url = data['image_url']
+                                        
+                                        # 检查图片是否已被使用
+                                        if image_url in st.session_state.used_images:
+                                            logger.info(f"跳过已使用的图片: {image_url[:50]}...")
+                                            continue
+                                            
+                                        # 计算相似度分数 (1 - 标准化距离)
+                                        similarity = 1.0 - min(distance / 2.0, 0.99)  # 标准化并反转
+                                        
+                                        # 只在相似度超过阈值时插入图片
+                                        if similarity >= similarity_threshold:
+                                            # 将图片URL添加到已使用集合
+                                            st.session_state.used_images.add(image_url)
+                                            
+                                            # 使用Markdown格式插入图片
+                                            image_markdown = f"![图片]({image_url})\n\n"
+                                            # 将图片插入到内容块前
+                                            outline_block_content_final = image_markdown + outline_block_content_final
+                                            logger.info(f"成功匹配图片，相似度: {similarity:.4f}，已使用图片数: {len(st.session_state.used_images)}")
+                                            
+                                            # 使用一个小的容器来显示信息，避免影响主要内容布局
+                                            with st.container():
+                                                st.info(f"为当前内容块插入了相关图片 (相似度: {similarity:.2f})")
+                                                st.image(image_url)
+                                                
+                                            image_inserted = True
+                                            
+                                            # 计数已插入的图片数量
+                                            inserted_image_count += 1
+                                            
+                                            # 如果已经插入了2张图片，则跳出循环
+                                            if inserted_image_count >= 2:
+                                                logger.info(f"已为当前内容块插入2张图片，停止搜索更多图片")
+                                                break
+                                            
+                                if not image_inserted:
+                                    logger.warning(f"未找到合适的未使用图片，已使用图片数: {len(st.session_state.used_images)}")
+                                    # 可以选择在这里添加一个提示，告知用户未找到合适的图片
+                        except Exception as e:
+                            st.warning(f"查找相关图片时出错: {str(e)}")
+                    
                     # 添加换行符，确保每个部分之间有适当的分隔
                     article_content += outline_block_content_final + '\n\n'
             # *************************** 自动保存原始文章到历史记录 *************************
@@ -240,9 +494,10 @@ def main():
                     custom_style = st.session_state.get('custom_style', '')
                     # Record image parameters if enabled
                     image_enabled = st.session_state.get('enable_images', False)
-                    image_task_id = st.session_state.get('image_task_id', None) if image_enabled else None
-                    image_similarity_threshold = st.session_state.get('similarity_threshold', None) if image_enabled else None
-                    image_max_count = st.session_state.get('max_images', None) if image_enabled else None
+                    # 不再需要记录task_id和阈值，使用默认值
+                    image_task_id = None
+                    image_similarity_threshold = 0.5 if image_enabled else None
+                    image_max_count = 10 if image_enabled else None
                     
                     original_record = add_history_record(
                         current_user, 
@@ -251,7 +506,7 @@ def main():
                         summary=outline_summary_json.get('summary', ''), 
                         model_type=model_type, 
                         model_name=model_name, 
-                        write_type=write_type, 
+                        write_type="详细",  # 始终使用详细模式
                         spider_num=spider_num, 
                         custom_style=custom_style,
                         is_transformed=False,
@@ -263,32 +518,8 @@ def main():
                     original_article_id = original_record.get('id')
                     st.success(f"原始文章已自动保存到历史记录中。")
                     
-                    # 如果启用图片分析与插入，处理文章
-                    if st.session_state.get('enable_images', False) and article_content.strip():
-                        with st.status("正在分析并插入相关图片..."):
-                            try:
-                                # 初始化图片管理器
-                                image_manager = ImageManager(
-                                    image_base_dir="images",
-                                    task_id=st.session_state.get('image_task_id')
-                                )
-                                
-                                # 插入图片到文章
-                                article_with_images = image_manager.insert_images_into_article(
-                                    article_content,
-                                    similarity_threshold=st.session_state.get('similarity_threshold', 0.5),
-                                    max_images=st.session_state.get('max_images', 10),
-                                    article_theme=outline_summary_json['title']
-                                )
-                                
-                                if article_with_images != article_content:
-                                    article_content = article_with_images
-                                    st.success("已成功插入相关图片！")
-                                else:
-                                    st.info("未找到相关图片，文章保持原样。")
-                            except Exception as e:
-                                st.error(f"图片处理过程中发生错误: {str(e)}")
-                                st.error("图片处理失败，继续使用原始文章。")
+                    # 如果启用了多模态图像处理，已在生成内容时插入了图片
+                    # 不需要再使用ImageManager进行处理
 
             # *************************** 转换白话文并保存 *************************
             if convert_to_simple and article_content.strip() and original_article_id is not None:
@@ -372,9 +603,10 @@ def main():
                         
                         # 获取原始文章的图片参数
                         image_enabled = original_record.get('image_enabled', False) if original_record else False
-                        image_task_id = original_record.get('image_task_id', None) if original_record else None
-                        image_similarity_threshold = original_record.get('image_similarity_threshold', None) if original_record else None
-                        image_max_count = original_record.get('image_max_count', None) if original_record else None
+                        # 不再需要记录task_id和阈值，使用默认值
+                        image_task_id = None
+                        image_similarity_threshold = 0.5 if image_enabled else None
+                        image_max_count = 10 if image_enabled else None
                         
                         add_history_record(
                             current_user, 
@@ -395,9 +627,24 @@ def main():
                         )
                         st.success(f"{transformation_name_for_webpage} 版本已自动保存到历史记录中。")
 
-                        # 预览生成的网页
-                        st.subheader("网页预览")
-                        st.markdown(webpage_content, unsafe_allow_html=True)
+                        # 生成唯一文件名
+                        html_filename = f"{outline_summary_json['title'].replace(' ', '_')}.html"
+                        
+                        # 导入保存HTML的函数
+                        from utils.history_utils import save_html_to_user_dir
+                        
+                        # 获取当前用户
+                        current_user = get_current_user()
+                        
+                        # 保存HTML内容到文件并获取URL路径
+                        _, url_path = save_html_to_user_dir(current_user, webpage_content, html_filename)
+                        
+                        # 生成可访问的URL
+                        base_url = HTML_NGINX_BASE_URL  # 根据nginx配置调整
+                        article_url = f"{base_url}{url_path}"
+
+                        # 显示预览链接
+                        st.markdown(f"[点击预览网页效果]({article_url})")
 
                         # 提供HTML文件下载
                         st.download_button(
@@ -412,96 +659,6 @@ def main():
                 st.warning("原始文章内容为空，无法进行网页转换。")
             elif st.session_state.get('convert_to_webpage', False) and original_article_id is None:
                 st.warning("未能保存原始文章，无法进行网页转换并关联。")
-
-    # Display history records in the history tab
-    with history_tab:
-        # Get current user
-        current_user = get_current_user()
-        if not current_user:
-            st.error("无法获取当前用户信息")
-        else:
-            # Load user history
-            history = load_user_history(current_user)
-            
-            if not history:
-                st.info("暂无历史记录")
-            else:
-                # Display history in reverse chronological order (newest first)
-                for record in reversed(history):
-                    with st.expander(f"📝 {record['topic']} - {record['timestamp'][:16].replace('T', ' ')}"):
-                        # 显示配置信息
-                        st.markdown(f"**模型供应商**: {record.get('model_type', '-')}")
-                        st.markdown(f"**模型名称**: {record.get('model_name', '-')}")
-                        # 显示自定义风格信息（如果有）
-                        if record.get('custom_style'):
-                            st.markdown(f"**自定义书写风格**: {record.get('custom_style')}")
-                        st.markdown(f"**写作模式**: {record.get('write_type', '-')}")
-                        st.markdown(f"**爬取数量**: {record.get('spider_num', '-')}")
-                        
-                        # 显示图片相关参数（如果有）
-                        if record.get('image_enabled'):
-                            st.markdown("---")
-                            st.markdown("**图片参数**")
-                            st.markdown(f"**图片目录**: {record.get('image_task_id', '-')}")
-                            st.markdown(f"**相似度阈值**: {record.get('image_similarity_threshold', '-')}")
-                            st.markdown(f"**最大图片数量**: {record.get('image_max_count', '-')}")
-                            st.markdown("---")
-                        st.markdown("### 文章内容")
-                        # 判断内容是Markdown还是HTML
-                        # 检查内容是否为HTML，使用更完善的检测方法
-                        content = record["article_content"].strip()
-                        is_html = False
-                        
-                        # 检查内容是否为HTML
-                        if content.startswith('<!DOCTYPE html>') or content.startswith('<html') or \
-                           (content.startswith('<') and ('<html' in content[:100] or '<body' in content[:500])):
-                            is_html = True
-                        
-                        # 检查记录标题是否包含网页相关关键词
-                        topic_indicates_html = any(keyword in record.get('topic', '').lower() for keyword in ['bento', '网页', 'html', 'web'])
-                        
-                        # 如果内容是HTML或者标题指示这是HTML，则显示运行按钮
-                        if is_html or topic_indicates_html:
-                            # 对于HTML内容，不直接显示，而是提供运行按钮
-                            is_bento = "Bento" in record.get('topic', '') or "网页" in record.get('topic', '')
-                            st.info(f"这是一个{'Bento风格' if is_bento else ''}网页内容，点击下方按钮查看效果")
-                            
-                            # 添加运行按钮
-                            def on_run_button_click(rec_id):
-                                st.session_state.record_id_for_viewer = rec_id
-                                st.switch_page("page/html_viewer.py")
-
-                            st.button("🖥️ 运行网页", 
-                                      key=f"run_{record['id']}", 
-                                      on_click=on_run_button_click, 
-                                      args=(record['id'],))
-                                
-                            # 保留下载按钮
-                            st.download_button(
-                                label="下载网页",
-                                data=record["article_content"],
-                                file_name=f"{record['topic']}.html",
-                                mime="text/html",
-                                key=f"download_history_{record['id']}"
-                            )
-                        else:
-                            st.markdown(record["article_content"])
-                            st.download_button(
-                                label="下载文章",
-                                data=record["article_content"],
-                                file_name=f"{record['topic']}.md",
-                                mime="text/markdown",
-                                key=f"download_history_{record['id']}"
-                            )
-                        # 删除按钮
-                        if st.button("删除此条记录", key=f"delete_{record['id']}"):
-                            from utils.history_utils import delete_history_record
-                            delete_history_record(current_user, record['id'])
-                            # 使用session_state来触发重新加载
-                            st.session_state['trigger_rerun'] = True
-                            
-                        # 删除后不需要在这里检查重新加载
-                        pass
 
 # Check if we need to rerun
 if st.session_state.get('trigger_rerun', False):

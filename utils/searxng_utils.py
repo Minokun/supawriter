@@ -6,8 +6,12 @@ sys.path.append(current_dir)
 
 from settings import base_path, LLM_MODEL
 import json
+import time
 import requests
+import random
+import re
 import urllib3
+from urllib.parse import urlparse  # 添加urlparse的导入
 urllib3.disable_warnings()  # 禁用SSL警告
 from grab_html_content import get_main_content # 用于获取网页主要内容的函数
 from llm_chat import chat  # 对话生成函数
@@ -15,6 +19,13 @@ import asyncio
 import prompt_template  # 提示模板模块
 import concurrent.futures  # 并发执行任务
 import threading  # 多线程
+import logging
+from utils.sougou_search import query_search as sougou_query_search  # 导入搜狗搜索函数
+from utils.embedding_utils import Embedding
+
+# 配置日志
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 max_workers = 20
 search_result_num = 30
@@ -34,7 +45,9 @@ def process_result(content, question, output_type=prompt_template.ARTICLE, model
         html_content = content[:20000]
     # 创建对话提示
     # 这里不捕获异常，让它向上传播
+    logger.info(f"处理任务: 模型={model_type}/{model_name}, 内容长度={len(html_content)}")
     chat_result = chat(f'## 参考的上下文资料：<content>{html_content}</content> ## 请严格依据topic完成相关任务：<topic>{question}</topic> ', output_type, model_type, model_name)
+    logger.info(f"任务完成: 结果长度={len(chat_result)}")
     # print(f'总结后的字数统计：{len(chat_result)}')
     return chat_result
 
@@ -52,7 +65,65 @@ def llm_task(search_result, question, output_type, model_type, model_name, max_w
     """
     if model_type == 'glm':
         max_workers = 10
+    
+    # 提取任务类型中的"---任务---"部分
+    task_description = ""
+    if "---任务---" in output_type:
+        task_parts = output_type.split("---任务---")
+        if len(task_parts) > 1:
+            task_description = task_parts[1].split("---")[0].strip()
+    
+    logger.info(f"开始处理LLM任务: 模型={model_type}/{model_name}, 任务类型=---任务---{task_description}---, 搜索结果数量={len(search_result)}")
+    
+    # 重新组装search_result，将html_content组合成不超过2万字符的块
+    MAX_CONTENT_LENGTH = 20000
+    optimized_search_result = []
+    current_chunk = ""
+    current_titles = []
+    
+    # 按照内容长度排序，优先处理较短的内容
+    sorted_results = sorted(search_result, key=lambda x: len(x.get('html_content', ''))) 
+    
+    for item in sorted_results:
+        content = item.get('html_content', '')
+        title = item.get('title', 'Untitled')
         
+        # 如果当前内容本身就超过了最大长度，单独处理
+        if len(content) >= MAX_CONTENT_LENGTH:
+            optimized_search_result.append({
+                'title': title,
+                'html_content': content[:MAX_CONTENT_LENGTH],
+                'url': item.get('url', '')
+            })
+            continue
+        
+        # 如果添加当前内容后会超过最大长度，先保存当前块，再开始新块
+        if len(current_chunk) + len(content) > MAX_CONTENT_LENGTH:
+            if current_chunk:  # 确保不添加空块
+                optimized_search_result.append({
+                    'title': ' | '.join(current_titles),
+                    'html_content': current_chunk,
+                    'url': 'combined'
+                })
+            current_chunk = content
+            current_titles = [title]
+        else:
+            # 添加分隔符
+            if current_chunk:
+                current_chunk += "\n\n---\n\n"
+            current_chunk += content
+            current_titles.append(title)
+    
+    # 添加最后一个块（如果有）
+    if current_chunk:
+        optimized_search_result.append({
+            'title': ' | '.join(current_titles),
+            'html_content': current_chunk,
+            'url': 'combined'
+        })
+    
+    logger.info(f"搜索结果优化: 原始数量={len(search_result)}, 优化后数量={len(optimized_search_result)}")
+    
     # 创建一个线程安全的标志，用于标记是否发生了连接错误
     connection_error = None
     
@@ -63,31 +134,44 @@ def llm_task(search_result, question, output_type, model_type, model_name, max_w
             return process_result(content, question, output_type, model_type, model_name)
         except ConnectionError as e:
             connection_error = e
+            logger.error(f"连接错误: {str(e)}")
             # 返回一个占位符，这个结果不会被使用
             return "CONNECTION_ERROR"
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(process_result_wrapper, i['html_content'], question, output_type, model_type, model_name) for i in search_result]
+        # 使用优化后的搜索结果
+        futures = [executor.submit(process_result_wrapper, item['html_content'], question, output_type, model_type, model_name) 
+                  for item in optimized_search_result]
         
         # 等待所有任务完成
+        logger.info(f"已提交{len(futures)}个任务到线程池，等待完成...")
         concurrent.futures.wait(futures)
         
         # 检查是否有连接错误
         if connection_error:
+            logger.error(f"任务执行失败: {str(connection_error)}")
             raise connection_error
+        
+        logger.info(f"所有任务已完成")
     
     if output_type == prompt_template.ARTICLE_OUTLINE_GEN:
         # 获取结果
-        outlines = '\n'.join([future.result().replace('\n', '').replace('```json', '').replace('```', '') for future in
-                              concurrent.futures.as_completed(futures)])
+        results = [future.result() for future in futures]
+        logger.info(f"获取到{len(results)}个大纲结果")
+        # 处理结果
+        outlines = '\n'.join([result.replace('\n', '').replace('```json', '').replace('```', '') for result in results])
+        logger.info(f"大纲结果合并完成，总长度={len(outlines)}")
+        return outlines
     else:
         # 获取结果
-        outlines = '\n'.join([future.result() for future in concurrent.futures.as_completed(futures)])
-    
-    if len(outlines) > 16000:
-        outlines = outlines[:16000]
-    
-    return outlines
+        results = [future.result() for future in futures]
+        logger.info(f"获取到{len(results)}个结果")
+        # 处理结果
+        outlines = '\n'.join(results)
+        if len(outlines) > 25000:
+            logger.info(f"结果过长({len(outlines)}字符)，截断至25000字符")
+            outlines = outlines[:25000]
+        return outlines
 
 class Search:
     def __init__(self, result_num=5):
@@ -97,6 +181,7 @@ class Search:
         """
         self.search_url = "HTTP://searxng.sevnday.top"  # 搜索引擎URL
         self.result_num = result_num  # 结果数量
+        self.search_query = ""
 
     def query_search(self, question: str):
         """
@@ -104,32 +189,137 @@ class Search:
         :param question: 查询问题
         :return: JSON数据
         """
-        # 优化询问的问题
-        # question = chat(question, "根据我的问题重新整理格式并梳理成搜索引擎的查询问题，要求保留原文语意。使用中文。")
-        url = self.search_url
+        # 使用LLM优化查询问题，专门针对搜索引擎进行优化
+        try:
+            # 使用格式化字符串正确插入时间
+            current_time = time.strftime("%H:%M:%S", time.localtime())
+            
+            print(f"\原始查询: {question}")
+            self.search_query = question
+        except Exception as e:
+            print(f"LLM查询优化失败: {e}")
+            self.search_query = question
+            
+        # 发送请求到SearXNG搜索引擎
         params = {
-            "q": question,
+            "q": self.search_query,
             "format": "json",
             "pageno": 1,
-            "engines": ','.join(["google", "bing", "yahoo", "duckduckgo", "qwant"]),
-            # "categories_exclude": "social",
-            # "categories_include": "general",
-            # "categories_include_exclude": "include",
-            # "categories_exclude_exclude": "exclude",
-            # "categories_include_exclude_exclude": "exclude",
+            "engines": ','.join(["google", "bing", "duckduckgo", "yahoo", "qwant"]),  # 减少搜索引擎数量，提高相关性
+            "time_range": "",  # 不限制时间范围
+            "safesearch": 0,  # 关闭安全搜索
+            "categories": "general",  # 只搜索一般类别
         }
         try:
-            response = requests.get(url, params=params, verify=False)
+            response = requests.get(self.search_url, params=params, verify=False)
             data = response.json()
+            
+            # 同时获取搜狗搜索结果
+            try:
+                sogou_results = sougou_query_search(self.search_query)
+                print(f"搜狗搜索返回 {len(sogou_results)} 条结果")
+                
+                # 将搜狗结果转换为与SearXNG相同的格式并添加到结果中
+                if sogou_results and isinstance(sogou_results, list):
+                    # 确保数据中有results字段
+                    if 'results' not in data:
+                        data['results'] = []
+                    
+                    # 只取10条搜狗结果
+                    sogou_count = 0
+                    embedding = Embedding()
+                    
+                    # 预先计算查询词的向量
+                    query_vector = embedding.get_embedding(self.search_query)
+                    
+                    # 存储搜狗结果及其相似度分数
+                    scored_sogou_results = []
+                    
+                    for result in sogou_results[:10]:
+                        # 检查是否是字典格式并包含标题和URL
+                        if isinstance(result, dict) and 'title' in result and 'url' in result:
+                            title = result['title']
+                            url = result['url']
+                            
+                            # 计算标题与查询词的相似度
+                            try:
+                                similarity = embedding.cosine_similarity(title, self.search_query)
+                                
+                                # 将结果与相似度分数一起存储
+                                scored_sogou_results.append((result, similarity))
+                                print(f"Sogou result: {title[:30]}... - 相似度: {similarity:.4f}")
+                            except Exception as e:
+                                print(f"Error calculating similarity for sogou result: {str(e)}")
+                    
+                    # 按相似度降序排序
+                    scored_sogou_results.sort(key=lambda x: x[1], reverse=True)
+                    
+                    # 收集所有相似度分数以便分析
+                    all_scores = [score for _, score in scored_sogou_results]
+                    if all_scores:
+                        min_score = min(all_scores)
+                        max_score = max(all_scores)
+                        avg_score = sum(all_scores) / len(all_scores)
+                        print(f"搜狗结果相似度统计: 最小={min_score:.4f}, 最大={max_score:.4f}, 平均={avg_score:.4f}")
+                        
+                        # 使用标准阈值，因为相似度分数实际上很好
+                        SIMILARITY_THRESHOLD = 0.2  # 相似度阈值
+                        filtered_results = [(result, score) for result, score in scored_sogou_results if score >= SIMILARITY_THRESHOLD]
+                        
+                        print(f"搜狗结果相似度过滤: {len(filtered_results)}/{len(scored_sogou_results)} 结果通过阈值 {SIMILARITY_THRESHOLD}")
+                    
+                    # 处理过滤后的搜狗结果
+                    for result, similarity in filtered_results:
+                        title = result['title']
+                        url = result['url']
+                        
+                        # 确保URL是完整的并且有效
+                        if not url:
+                            print(f"跳过无效URL的搜狗结果: {title[:30]}...")
+                            continue
+                            
+                        if not url.startswith(('http://', 'https://')):
+                            # 如果是相对路径，添加域名
+                            if url.startswith('/'):
+                                url = 'https://weixin.sogou.com' + url
+                            else:
+                                url = 'https://' + url
+                            print(f"修正URL: {url}")
+                        
+                        data['results'].append({
+                            'title': title,
+                            'url': url,  # 使用实际的URL，允许重定向
+                            'content': f"Sogou Search Result: {title}",
+                            'score': similarity,  # 使用计算出的相似度作为分数
+                            'engine': 'sogou',
+                            'sogou_result': True  # 标记为搜狗结果，方便后续处理
+                        })
+                        sogou_count += 1
+                        print(f"添加搜狗结果: {title[:30]}... - URL: {url}")
+                    
+                    print(f"成功添加 {sogou_count} 条搜狗搜索结果 (相似度阈值: {SIMILARITY_THRESHOLD}), 总计{len(data['results'])}条结果")
+                    
+                    # 如果没有添加任何搜狗结果，检查可能的原因
+                    if sogou_count == 0 and len(filtered_results) > 0:
+                        print("警告: 有符合相似度阈值的搜狗结果，但没有被添加。可能是URL格式问题或其他条件限制。")
+                        for result, similarity in filtered_results[:3]:  # 只打印前3个作为示例
+                            title = result.get('title', 'No Title')
+                            url = result.get('url', 'No URL')
+                            print(f"未添加的结果示例: {title[:30]}... - URL: {url} - 相似度: {similarity:.4f}")
+            except Exception as e:
+                print(f"搜狗搜索失败: {e}")
+                
             return data
         except Exception as e:
-            print(e)
+            print(f"SearXNG搜索失败: {e}")
             return None
 
-    def get_search_result(self, question: str, spider_mode=False):
+    def get_search_result(self, question: str, is_multimodal=False, theme=""):
         """
         根据问题获取搜索结果
         :param question: 查询问题
+        :param is_multimodal: 是否使用多模态模式处理图片
+        :param theme: 主题，用于图片相关性判断
         :return: 搜索结果列表
         """
         data = self.query_search(question)
@@ -137,21 +327,117 @@ class Search:
             # 过滤并提取合适的搜索结果URL
             search_result = []
             search_engine_urls = []
-            for i in data['results'][:self.result_num]:
-                if i['url'].split('.')[-1] not in ['xlsx', 'pdf'] and 'bbc' not in i['url'] and i['score'] > 0.1:
-                    search_result.append(
-                        {'title': i['title'], 'url': i['url'], 'html_content': i['content'] if 'content' in i else ''}
-                    )
-                    search_engine_urls.append(i['url'])
-                    print(i['url'], i['score'], i['title'])
-            if spider_mode:
-                # 获取网页主要内容
-                if len(search_engine_urls) > 0:
-                    result = asyncio.run(get_main_content(search_engine_urls))
-                    html_content_dict = {i['url']: i['content'].replace('\n', '').replace(' ', '') for i in result}
-                    # 构建结果列表
-                    for i in search_result:
-                        i['html_content'] += html_content_dict[i['url']]
+            
+            # 从原始查询文本中提取关键词，用于相关性过滤
+            original_keywords = set(re.findall(r'\w+', question))
+            optimized_keywords = set(re.findall(r'\w+', self.search_query))
+            important_keywords = original_keywords.union(optimized_keywords)
+            
+            # 将结果按相关性评分排序
+            scored_results = []
+            for i in data['results']:
+                # 跳过特定文件类型和低分结果
+                if i['url'].split('.')[-1] in ['xlsx', 'pdf', 'doc', 'docx', 'xls', 'ppt', 'pptx']:
+                    continue
+                if i['score'] < 0.15:
+                    continue
+                    
+                # 计算关键词匹配度
+                title_keywords = set(re.findall(r'\w+', i.get('title', '').lower()))
+                content_keywords = set(re.findall(r'\w+', i.get('content', '').lower()))
+                
+                # 获取标题和内容中与查询关键词的重叠数
+                title_match = len(title_keywords.intersection(important_keywords))
+                content_match = len(content_keywords.intersection(important_keywords))
+                
+                # 基于原始分数和关键词匹配度的综合分数
+                relevance_score = (i['score'] * 0.4) + (title_match * 0.4) + (content_match * 0.2)
+                    
+                scored_results.append((i, relevance_score))
+                
+            # 按相关性分数降序排序
+            scored_results.sort(key=lambda x: x[1], reverse=True)
+            
+            # 提取排序后的结果
+            for i, score in scored_results:
+                url_display = i['url'][:37] + '...' if len(i['url']) > 40 else i['url']
+                print(f"{url_display} - 相关度: {score:.2f} - {i['title']}")
+                search_result.append({
+                    'title': i['title'], 
+                    'url': i['url'], 
+                    'html_content': i['content'] if 'content' in i else '',
+                    'relevance_score': score
+                })
+                search_engine_urls.append(i['url'])
+            # 获取网页主要内容 - 始终爬取所有URL
+            if len(search_engine_urls) > 0:
+                result, task_id = asyncio.run(get_main_content(search_engine_urls, is_multimodal=is_multimodal, theme=theme))
+                
+                # 创建字典，存储爬取到的内容和图片
+                html_content_dict = {}
+                image_dict = {}  # 存储每个URL对应的图片
+                
+                # 先处理爬取结果，将内容和图片映射到URL
+                for item in result:
+                    content = item.get('content', '').replace('\n', '').replace(' ', '')
+                    url = item.get('url', '')
+                    original_url = item.get('original_url', url)
+                    images = item.get('images', [])
+                    
+                    # 存储内容和图片
+                    if content:
+                        html_content_dict[url] = content
+                        if original_url != url:
+                            html_content_dict[original_url] = content
+                    
+                    # 存储图片
+                    if images:
+                        image_dict[url] = images
+                        if original_url != url:
+                            image_dict[original_url] = images
+                
+                # 然后更新搜索结果中的每一项
+                for item in search_result:
+                    url = item['url']
+                    
+                    # 添加HTML内容
+                    if url in html_content_dict:
+                        item['html_content'] += html_content_dict[url]
+                        logger.debug(f"Added content for URL: {url}")
+                    else:
+                        # 尝试匹配部分URL
+                        matched = False
+                        for crawled_url in html_content_dict.keys():
+                            # 检查URL是否为子字符串或域名匹配
+                            if url in crawled_url or crawled_url in url or \
+                               urlparse(url).netloc == urlparse(crawled_url).netloc:
+                                item['html_content'] += html_content_dict[crawled_url]
+                                logger.info(f"Found partial match for content: {url} -> {crawled_url}")
+                                matched = True
+                                break
+                        if not matched:
+                            logger.warning(f"No content found for URL: {url}")
+                    
+                    # 添加图片
+                    if 'images' not in item:
+                        item['images'] = []
+                        
+                    # 直接匹配
+                    if url in image_dict:
+                        item['images'] = image_dict[url]
+                    else:
+                        # 尝试部分匹配
+                        matched = False
+                        for crawled_url, images in image_dict.items():
+                            if url in crawled_url or crawled_url in url or \
+                               urlparse(url).netloc == urlparse(crawled_url).netloc:
+                                item['images'] = images
+                                logger.info(f"Found partial match for images: {url} -> {crawled_url}")
+                                matched = True
+                                break
+                        
+                        if not matched and url not in image_dict:
+                            logger.debug(f"No images found for URL: {url}")
             return search_result
         else:
             return None
@@ -168,9 +454,9 @@ class Search:
         # 创建Search实例并获取搜索结果
         if return_type == 'search':
             return self.get_search_result(question)
-        # 爬取搜索结果 中英结合
+        # 获取搜索结果
         # 中文查询
-        search_result = self.get_search_result(question, spider_mode=True)
+        search_result = self.get_search_result(question, is_multimodal=False, theme=question)
         print('抓取完成开始形成摘要......')
         # 使用线程池并发处理结果
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:

@@ -63,8 +63,8 @@ def text_from_html(body):
 
     # 使用筛选后的数据
     data = recent_data
-    # 返回链接而不是时间
-    return [item[0] for item in data]
+    # 返回标题和链接的列表
+    return [{'title': item[0], 'url': item[1]} for item in data if item[1]]
 
 def query_search(question: str):
     # 优化询问的问题

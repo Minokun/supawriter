@@ -4,6 +4,8 @@ import time
 import json
 from settings import LLM_MODEL
 
+openai.log_level = "warning"
+
 def chat(prompt, system_prompt, model_type='deepseek', model_name='deepseek-chat', max_retries=3):
     """
     与LLM模型进行对话

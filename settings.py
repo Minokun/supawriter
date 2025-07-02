@@ -60,3 +60,6 @@ EMBEDDING_TIMEOUT_gitee = 5
 EMBEDDING_MODEL_xinference = 'Qwen3-Embedding-8B'
 EMBEDDING_HOST_xinference = 'http://localhost:9997/v1'
 EMBEDDING_TIMEOUT_xinference = 5
+
+# 网页显示设置
+HTML_NGINX_BASE_URL = 'http://localhost:80/'
