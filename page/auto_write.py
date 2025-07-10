@@ -1,8 +1,13 @@
 import streamlit as st
 import sys
 import logging
+import os
+import requests
+import uuid
+from pathlib import Path
 from utils.searxng_utils import Search, llm_task, chat, parse_outline_json
 import utils.prompt_template as pt
+from utils.image_utils import download_image, get_image_save_directory
 import concurrent.futures
 import asyncio
 import nest_asyncio
@@ -28,18 +33,24 @@ def main():
     if st.runtime.exists() and sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
+    # 初始化或重置运行状态
     if "run_status" not in st.session_state:
+        st.session_state.run_status = False
+    
+    # 检查是否需要重置run_status（当页面刷新但不是通过rerun触发时）
+    if not st.session_state.get('_is_rerun', False):
         st.session_state.run_status = False
         
     # 使用st.cache_resource装饰器来缓存FAISS索引和Embedding实例
     # 添加TTL=10秒，确保索引每10秒刷新一次
-    @st.cache_resource(show_spinner="加载FAISS索引和Embedding模型...", ttl=10)
+    @st.cache_resource(show_spinner="加载FAISS索引和Embedding模型...")
     def get_cached_resources(force_refresh=False):
         """获取缓存的FAISS索引和Embedding实例，优先从磁盘加载
         
         Args:
             force_refresh: 是否强制从磁盘重新加载索引，即使缓存有效
         """
+        logger.info(f"调用get_cached_resources，force_refresh={force_refresh}")
         try:
             # 导入函数放在这里，确保它们在使用前已经被正确导入
             from utils.embedding_utils import create_faiss_index, get_embedding_instance
@@ -125,6 +136,10 @@ def main():
         with st.form(key='my_form'):
             text_input = st.text_input(label='请填写文章的主题', help='文章将全部围绕该主题撰写，主题越细，文章也越详细',
                                        value='')
+            # 存储文章主题作为标题，用于图片下载目录
+            if text_input:
+                st.session_state['article_title'] = text_input
+                
             # 添加自定义书写风格的输入框
             custom_style = st.text_area(
                 label='自定义书写风格和要求', 
@@ -140,11 +155,16 @@ def main():
             convert_to_simple = st.checkbox("转换白话文", key="convert_to_simple", value=False)
             convert_to_webpage = st.checkbox("转换为Bento风格网页", key="convert_to_webpage", value=False)
 
-            # 图片分析与插入选项
+            # 图片分析与插入选项放在表单内最下方
             st.subheader("图片设置")
-            st.session_state['enable_images'] = st.checkbox("自动插入相关图片", value=False)
-            if st.session_state.get('enable_images', False):
-                st.info("使用多模态模式自动插入相关图片，无需额外设置")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.session_state['enable_images'] = st.checkbox("自动插入相关图片", value=False)
+            
+            # 只有当启用图片时才显示下载选项
+            with col2:
+                st.session_state['download_images'] = st.checkbox("图片下载至本地", value=False)
+            st.info("使用多模态模式自动插入相关图片，无需额外设置")
             submit_button = st.form_submit_button(label='执行', disabled=st.session_state.run_status)
 
     st.caption('SuperWriter by WuXiaokun. ')
@@ -199,6 +219,8 @@ def main():
     article_content = ''
 
     if submit_button:
+        # 设置运行状态为True，防止重复提交
+        st.session_state.run_status = True
         # 使用单独的容器来显示进度信息，避免与其他元素重叠
         st.markdown("### 处理进度")
         progress_container = st.container()
@@ -210,11 +232,25 @@ def main():
             # 每次执行时重置已使用图片集合
             st.session_state.used_images = set()
         
+        # 首先删除磁盘上的FAISS索引文件
+        try:
+            if os.path.exists('data/faiss/index.faiss'):
+                os.remove('data/faiss/index.faiss')
+                logger.info("已删除FAISS索引文件")
+            if os.path.exists('data/faiss/index_data.pkl'):
+                os.remove('data/faiss/index_data.pkl')
+                logger.info("已删除FAISS数据文件")
+        except Exception as e:
+            logger.error(f"删除FAISS索引文件失败: {str(e)}")
+        
         # 设置强制清空索引的标志
         st.session_state.should_clear_index = True
         
         # 清除缓存并重新创建空索引
         try:
+            # 强制清除缓存
+            get_cached_resources.clear()
+            
             # 获取新的空索引 - 这将触发get_cached_resources中的清除逻辑
             cached_faiss_index, _ = get_cached_resources(force_refresh=True)
             
@@ -226,6 +262,9 @@ def main():
                 # 验证索引是否真的为空
                 index_size = cached_faiss_index.get_size()
                 logger.info(f"清空后验证索引大小: {index_size}")
+                
+                if index_size > 0:
+                    logger.warning(f"警告：FAISS索引清空后仍有 {index_size} 个项目")
         except Exception as e:
             logger.error(f"清空FAISS索引失败: {str(e)}")
         
@@ -355,35 +394,28 @@ def main():
                     progress_bar.progress(my_bar_article_start + n*2, text=f"正在撰写  {outline_block['h1']}  {n}/{repeat_num}")
                 
                     # 根据抓取的内容资料生成内容
-                    if n == 1:
-                        # 第一章不要包含h1和h2标题
-                        question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {outline_block} <<<，注意不要包含任何标题，直接开始正文内容',
-                        outline_block_content = llm_task(search_result, question=question,
-                                                      output_type=pt.ARTICLE_OUTLINE_BLOCK, model_type=model_type, model_name=model_name)
-                        
-                        # 获取自定义风格并应用到prompt中
-                        custom_prompt = pt.ARTICLE_OUTLINE_BLOCK
-                        if 'custom_style' in st.session_state and st.session_state.custom_style.strip():
-                            # 在原有prompt基础上添加自定义风格要求
-                            custom_prompt = custom_prompt.replace('---要求---', f'---要求---\n        - {st.session_state.custom_style}')
-                            
-                        outline_block_content_final = chat(
-                            f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{outline_block}，注意不要包含任何标题（不要包含h1和h2标题），直接开始正文内容',
-                            custom_prompt, model_type=model_type, model_name=model_name)
-                    else:
-                        question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {outline_block} <<<',
-                        outline_block_content = llm_task(search_result, question=question,
-                                                      output_type=pt.ARTICLE_OUTLINE_BLOCK, model_type=model_type, model_name=model_name)
-                        
-                        # 获取自定义风格并应用到prompt中
-                        custom_prompt = pt.ARTICLE_OUTLINE_BLOCK
-                        if 'custom_style' in st.session_state and st.session_state.custom_style.strip():
-                            # 在原有prompt基础上添加自定义风格要求
-                            custom_prompt = custom_prompt.replace('---要求---', f'---要求---\n        - {st.session_state.custom_style}')
-                            
-                        outline_block_content_final = chat(
-                            f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{outline_block}',
-                            custom_prompt, model_type=model_type, model_name=model_name)
+                    # 确定是否需要特殊处理第一章（不包含标题）
+                    is_first_chapter = n == 1
+                    
+                    # 构建问题，第一章特殊处理
+                    title_instruction = '，注意不要包含任何标题，直接开始正文内容，有吸引力开头（痛点/悬念），生动形象，风趣幽默！' if is_first_chapter else ''
+                    question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {outline_block} <<<{title_instruction}'
+                    
+                    # 获取内容块
+                    outline_block_content = llm_task(search_result, question=question,
+                                                  output_type=pt.ARTICLE_OUTLINE_BLOCK, model_type=model_type, model_name=model_name)
+                    
+                    # 获取自定义风格并应用到prompt中
+                    custom_prompt = pt.ARTICLE_OUTLINE_BLOCK
+                    if 'custom_style' in st.session_state and st.session_state.custom_style.strip():
+                        # 在原有prompt基础上添加自定义风格要求
+                        custom_prompt = custom_prompt.replace('---要求---', f'---要求---\n        - {st.session_state.custom_style}')
+                    
+                    # 构建最终提示，第一章特殊处理
+                    final_instruction = '，注意不要包含任何标题（不要包含h1和h2标题），直接开始正文内容' if is_first_chapter else ''
+                    outline_block_content_final = chat(
+                        f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{outline_block}{final_instruction}',
+                        custom_prompt, model_type=model_type, model_name=model_name)
             
                     # 使用单独的容器来显示内容块，避免重叠
                     content_container = st.container()
@@ -402,7 +434,7 @@ def main():
                             from utils.embedding_utils import search_similar_text
                             
                             # 使用文章内容块查找相关图片
-                            similarity_threshold = 0.1  # 降低阈值以增加匹配成功率
+                            similarity_threshold = 0.15  # 降低阈值以增加匹配成功率
                             
                             # 使用缓存的FAISS索引实例，但不强制刷新以避免删除索引
                             cached_faiss_index, _ = get_cached_resources(force_refresh=False)
@@ -457,8 +489,18 @@ def main():
                                             # 将图片URL添加到已使用集合
                                             st.session_state.used_images.add(image_url)
                                             
-                                            # 使用Markdown格式插入图片
+                                            # 检查是否需要下载图片到本地
+                                            local_image_path = None
+                                            if st.session_state.get('download_images', False):
+                                                # 获取文章标题作为目录名
+                                                article_title = st.session_state.get('article_title', 'untitled')
+                                                save_dir = get_image_save_directory(article_title)
+                                                
+                                                # 下载图片
+                                                local_image_path = download_image(image_url, save_dir)
+                                           
                                             image_markdown = f"![图片]({image_url})\n\n"
+                                            
                                             # 将图片插入到内容块前
                                             outline_block_content_final = image_markdown + outline_block_content_final
                                             logger.info(f"成功匹配图片，相似度: {similarity:.4f}，已使用图片数: {len(st.session_state.used_images)}")
@@ -487,17 +529,18 @@ def main():
                     # 添加换行符，确保每个部分之间有适当的分隔
                     article_content += outline_block_content_final + '\n\n'
             # *************************** 自动保存原始文章到历史记录 *************************
+            # 更新进度条到100%，表示文章已完成
+            progress_bar.progress(100, text="文章生成完成！")
+            
             original_article_id = None
             if article_content.strip():
+                # 文章生成完成后，重置运行状态，允许再次提交
+                st.session_state.run_status = False
                 current_user = get_current_user()
                 if current_user:
                     custom_style = st.session_state.get('custom_style', '')
                     # Record image parameters if enabled
                     image_enabled = st.session_state.get('enable_images', False)
-                    # 不再需要记录task_id和阈值，使用默认值
-                    image_task_id = None
-                    image_similarity_threshold = 0.5 if image_enabled else None
-                    image_max_count = 10 if image_enabled else None
                     
                     original_record = add_history_record(
                         current_user, 
@@ -506,20 +549,22 @@ def main():
                         summary=outline_summary_json.get('summary', ''), 
                         model_type=model_type, 
                         model_name=model_name, 
-                        write_type="详细",  # 始终使用详细模式
                         spider_num=spider_num, 
                         custom_style=custom_style,
                         is_transformed=False,
-                        image_task_id=image_task_id,
                         image_enabled=image_enabled,
-                        image_similarity_threshold=image_similarity_threshold,
-                        image_max_count=image_max_count
                     )
                     original_article_id = original_record.get('id')
                     st.success(f"原始文章已自动保存到历史记录中。")
-                    
-                    # 如果启用了多模态图像处理，已在生成内容时插入了图片
-                    # 不需要再使用ImageManager进行处理
+                    # 删除faiss索引
+                    try:
+                        if os.path.exists('data/faiss/index.faiss'):
+                            os.remove('data/faiss/index.faiss')
+                        if os.path.exists('data/faiss/index_data.pkl'):
+                            os.remove('data/faiss/index_data.pkl')
+                        logger.info("文章生成完成后成功删除FAISS索引文件")
+                    except Exception as e:
+                        logger.error(f"删除FAISS索引文件失败: {str(e)}")
 
             # *************************** 转换白话文并保存 *************************
             if convert_to_simple and article_content.strip() and original_article_id is not None:
@@ -551,7 +596,6 @@ def main():
                             summary=f"{outline_summary_json.get('summary', '')} ({transformation_name_for_simple} 版本)", 
                             model_type=model_type, 
                             model_name=model_name, 
-                            write_type=write_type, 
                             spider_num=spider_num, 
                             custom_style=custom_style,
                             is_transformed=True,
@@ -564,14 +608,14 @@ def main():
             elif convert_to_simple and original_article_id is None:
                 st.warning("未能保存原始文章，无法进行白话文转换并关联。")
             
-                # *************************** 点击下载文章 *************************
-                st.download_button(
-                    label="下载文章",
-                    data=article_content,
-                    file_name=f"{outline_summary_json['title']}.md",
-                    mime="text/markdown",
-                    key="download_generated_article"
-                )
+            # *************************** 点击下载文章 *************************
+            st.download_button(
+                label="下载文章",
+                data=article_content,
+                file_name=f"{outline_summary_json['title']}.md",
+                mime="text/markdown",
+                key="download_generated_article"
+            )
             
             # *************************** 转换为Bento风格网页并保存 *************************
             if st.session_state.get('convert_to_webpage', False) and article_content.strip() and original_article_id is not None:
@@ -615,7 +659,6 @@ def main():
                             summary=f"{outline_summary_json.get('summary', '')} ({transformation_name_for_webpage} 版本)", 
                             model_type=model_type, 
                             model_name=model_name, 
-                            write_type=write_type, 
                             spider_num=spider_num, 
                             custom_style=custom_style,
                             is_transformed=True,
@@ -664,7 +707,11 @@ def main():
 if st.session_state.get('trigger_rerun', False):
     # Reset the flag
     st.session_state['trigger_rerun'] = False
+    # 设置rerun标志，用于区分正常页面加载和rerun
+    st.session_state['_is_rerun'] = True
     st.rerun()
 else:
+    # 重置rerun标志
+    st.session_state['_is_rerun'] = False
     # Call the main function
     main()

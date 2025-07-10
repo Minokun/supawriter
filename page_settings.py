@@ -62,6 +62,9 @@ PAGE_HISTORY = st.Page(
     icon=":material/history:"
 )
 
+# Chatbot functionality has been integrated into the home page
+# PAGE_CHATBOT definition removed
+
 # HTML查看器页面，但不显示在菜单中
 PAGE_HTML_VIEWER = st.Page(
     "page/html_viewer.py",
@@ -71,7 +74,7 @@ PAGE_HTML_VIEWER = st.Page(
 
 # ******************菜单配置********************
 PAGES = {
-    "APP": [PAGE_HOME],
+    "APP": [PAGE_HOME],  # Chatbot functionality integrated into home page
     "GPTS": [PAGE_GPTS, PAGE_GPTS_AUTOWITER],
         "Toolkits": [PAGE_DOCUMENT_UTIL, PAGE_ASR, PAGE_TTS, PAGE_TRANSFORM_ARTICLE],
     "用户": [PAGE_PROFILE, PAGE_HISTORY, PAGE_HTML_VIEWER]

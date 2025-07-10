@@ -8,3 +8,4 @@ output/*
 .streamlit/secrets.toml
 images/*
 .DS_Store
+data/*

@@ -3,6 +3,7 @@
 import os
 import sys
 import streamlit as st
+from openai import OpenAI
 
 base_path = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(base_path)
@@ -12,8 +13,13 @@ WEB_SERVER_PORT = 90
 # llm settings
 MODEL_LIST = st.secrets['model_list']
 
+# OpenAI client initialization
+# Default to the first provider in LLM_PROVIDERS
+default_provider = 'openai'  # Will be overridden if available in LLM_PROVIDERS
+openai_model = None  # Will be set after LLM_MODEL is defined
+
 # List of supported LLM models
-LLM_PROVIDERS = ['deepseek', 'hs-deepseek', 'qwen', 'openai', 'yi', 'glm', 'fastgpt', 'xinference']
+LLM_PROVIDERS = ['deepseek', 'qwen', 'openai', 'yi', 'glm', 'fastgpt', 'xinference']
 
 LLM_MODEL: dict[str, dict[str, str]] = {
     # ... (existing content)
@@ -31,6 +37,14 @@ LLM_MODEL: dict[str, dict[str, str]] = {
     }
     for provider in LLM_PROVIDERS
 }
+
+# Initialize OpenAI client with default provider (first available)
+default_provider = LLM_PROVIDERS[0] if LLM_PROVIDERS else 'openai'
+client = OpenAI(
+    api_key=LLM_MODEL[default_provider]['api_key'],
+    base_url=LLM_MODEL[default_provider]['base_url']
+)
+openai_model = LLM_MODEL[default_provider]['model'][0] if isinstance(LLM_MODEL[default_provider]['model'], list) else LLM_MODEL[default_provider]['model']
 
 # Article Transformation Options
 # Maps display name to prompt template
@@ -52,7 +66,8 @@ HISTORY_FILTER_BASE_OPTIONS = [
 # Embedding settings 三种选项 gitee, xinference, local
 EMBEDDING_TYPE = 'gitee'
 # 模力方舟embedding设置
-EMBEDDING_MODEL_gitee = 'Qwen3-Embedding-8B'
+# EMBEDDING_MODEL_gitee = 'Qwen3-Embedding-8B'
+EMBEDDING_MODEL_gitee = 'jina-embeddings-v4'
 EMBEDDING_HOST_gitee = 'https://ai.gitee.com/v1'
 EMBEDDING_API_KEY_gitee = 'U2PS8VI0XDMTMRAHB5XVMDGOTTD7H4KKSM6EQRN9'
 EMBEDDING_TIMEOUT_gitee = 5
@@ -60,6 +75,17 @@ EMBEDDING_TIMEOUT_gitee = 5
 EMBEDDING_MODEL_xinference = 'Qwen3-Embedding-8B'
 EMBEDDING_HOST_xinference = 'http://localhost:9997/v1'
 EMBEDDING_TIMEOUT_xinference = 5
+# jina-embedding-v4
+EMBEDDING_MODEL_jina = 'jina-embeddings-v4'
+EMBEDDING_HOST_jina = 'https://api.jina.ai/v1/embeddings'
+EMBEDDING_API_KEY_jina = 'jina_78bd66d1a7194ff8bf7942ae59779dac-ScGeQdHO_3OmFzHcLClLC_DFE0R'
+EMBEDDING_TIMEOUT_jina = 5
 
 # 网页显示设置
 HTML_NGINX_BASE_URL = 'http://localhost:80/'
+
+# openai vl设置
+PROCESS_IMAGE_TYPE = "qwen" # 2种选项 gemma3, qwen
+OPENAI_VL_MODEL = 'qwen-vl-plus-2025-05-07'
+OPENAI_VL_API_KEY = 'sk-cabc155d7d094825b2b1f0e9ffea35dd'
+OPENAI_VL_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'

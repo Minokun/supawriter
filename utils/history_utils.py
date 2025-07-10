@@ -10,8 +10,12 @@ HISTORY_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 # Path to the user HTML files
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
 
-# Ensure the history directory exists
+# Path to the chat history directory
+CHAT_HISTORY_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'chat_history')
+
+# Ensure the directories exist
 os.makedirs(HISTORY_DIR, exist_ok=True)
+os.makedirs(CHAT_HISTORY_DIR, exist_ok=True)
 
 def get_user_history_file(username):
     """Get the path to the user's history file."""
@@ -154,7 +158,215 @@ def save_image_to_user_dir(username, image_data, filename=None):
         f.write(image_data)
     
     # URL path for nginx to serve
-    url_path = f"/html/{username}/{filename}"
+    url_path = f"{username}/{filename}"
     
     return file_path, url_path
+
+# ================ Chat History Functions ================
+
+def get_user_chat_history_dir(username):
+    """
+    Get the directory path for a user's chat history.
+    
+    Args:
+        username (str): The username of the user
+        
+    Returns:
+        str: Path to the user's chat history directory
+    """
+    user_chat_dir = os.path.join(CHAT_HISTORY_DIR, username)
+    os.makedirs(user_chat_dir, exist_ok=True)
+    return user_chat_dir
+
+def list_chat_sessions(username):
+    """
+    List all chat sessions for a user.
+    
+    Args:
+        username (str): The username of the user
+        
+    Returns:
+        list: List of chat session metadata dictionaries
+    """
+    user_chat_dir = get_user_chat_history_dir(username)
+    sessions = []
+    
+    # Get all JSON files in the user's chat directory
+    for filename in os.listdir(user_chat_dir):
+        if filename.endswith('.json'):
+            file_path = os.path.join(user_chat_dir, filename)
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    chat_data = json.load(f)
+                    # Extract metadata from the chat data
+                    session_id = os.path.splitext(filename)[0]
+                    title = chat_data.get('title', 'Untitled Chat')
+                    created_at = chat_data.get('created_at', '')
+                    updated_at = chat_data.get('updated_at', '')
+                    message_count = len(chat_data.get('messages', []))
+                    
+                    sessions.append({
+                        'id': session_id,
+                        'title': title,
+                        'created_at': created_at,
+                        'updated_at': updated_at,
+                        'message_count': message_count
+                    })
+            except Exception as e:
+                print(f"Error loading chat session {filename}: {str(e)}")
+    
+    # Sort sessions by updated_at (most recent first)
+    sessions.sort(key=lambda x: x.get('updated_at', ''), reverse=True)
+    return sessions
+
+def create_chat_session(username, title=None):
+    """
+    Create a new chat session for a user.
+    
+    Args:
+        username (str): The username of the user
+        title (str, optional): Title for the chat session
+        
+    Returns:
+        dict: The newly created chat session data
+    """
+    user_chat_dir = get_user_chat_history_dir(username)
+    
+    # Generate a unique session ID
+    session_id = str(uuid.uuid4())
+    
+    # Create initial chat data
+    timestamp = datetime.now().isoformat()
+    chat_data = {
+        'title': title or 'New Chat',
+        'created_at': timestamp,
+        'updated_at': timestamp,
+        'messages': []
+    }
+    
+    # Save the chat data
+    file_path = os.path.join(user_chat_dir, f"{session_id}.json")
+    with open(file_path, 'w', encoding='utf-8') as f:
+        json.dump(chat_data, f, ensure_ascii=False, indent=2)
+    
+    return {'id': session_id, **chat_data}
+
+def load_chat_session(username, session_id):
+    """
+    Load a chat session for a user.
+    
+    Args:
+        username (str): The username of the user
+        session_id (str): ID of the chat session to load
+        
+    Returns:
+        dict: The chat session data or None if not found
+    """
+    user_chat_dir = get_user_chat_history_dir(username)
+    file_path = os.path.join(user_chat_dir, f"{session_id}.json")
+    
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                chat_data = json.load(f)
+                return {'id': session_id, **chat_data}
+        except Exception as e:
+            print(f"Error loading chat session {session_id}: {str(e)}")
+    
+    return None
+
+def save_chat_session(username, session_id, messages, title=None):
+    """
+    Save or update a chat session for a user.
+    
+    Args:
+        username (str): The username of the user
+        session_id (str): ID of the chat session to save
+        messages (list): List of message dictionaries
+        title (str, optional): Title for the chat session
+        
+    Returns:
+        dict: The updated chat session data
+    """
+    user_chat_dir = get_user_chat_history_dir(username)
+    file_path = os.path.join(user_chat_dir, f"{session_id}.json")
+    
+    # Check if the session exists
+    existing_data = {}
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                existing_data = json.load(f)
+        except Exception:
+            pass
+    
+    # Update the chat data
+    timestamp = datetime.now().isoformat()
+    chat_data = {
+        'title': title or existing_data.get('title', 'New Chat'),
+        'created_at': existing_data.get('created_at', timestamp),
+        'updated_at': timestamp,
+        'messages': messages
+    }
+    
+    # Save the updated chat data
+    with open(file_path, 'w', encoding='utf-8') as f:
+        json.dump(chat_data, f, ensure_ascii=False, indent=2)
+    
+    return {'id': session_id, **chat_data}
+
+def update_chat_title(username, session_id, title):
+    """
+    Update the title of a chat session.
+    
+    Args:
+        username (str): The username of the user
+        session_id (str): ID of the chat session
+        title (str): New title for the chat session
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    user_chat_dir = get_user_chat_history_dir(username)
+    file_path = os.path.join(user_chat_dir, f"{session_id}.json")
+    
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                chat_data = json.load(f)
+            
+            chat_data['title'] = title
+            chat_data['updated_at'] = datetime.now().isoformat()
+            
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(chat_data, f, ensure_ascii=False, indent=2)
+            
+            return True
+        except Exception as e:
+            print(f"Error updating chat title for {session_id}: {str(e)}")
+    
+    return False
+
+def delete_chat_session(username, session_id):
+    """
+    Delete a chat session for a user.
+    
+    Args:
+        username (str): The username of the user
+        session_id (str): ID of the chat session to delete
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    user_chat_dir = get_user_chat_history_dir(username)
+    file_path = os.path.join(user_chat_dir, f"{session_id}.json")
+    
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+            return True
+        except Exception as e:
+            print(f"Error deleting chat session {session_id}: {str(e)}")
+    
+    return False
 

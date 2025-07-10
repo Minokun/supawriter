@@ -2,6 +2,7 @@ import os
 os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 import sys
 import logging
+import time
 import numpy as np
 import faiss
 from typing import List, Dict, Any, Tuple, Optional
@@ -12,15 +13,19 @@ from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
+# 根据实际响应时间统计数据调整超时时间
+# 平均响应时间在600ms-1800ms之间，设置为3秒应足够大部分请求
+EMBEDDING_TIMEOUT = 3
+
 gitee_client = OpenAI(
     base_url=EMBEDDING_HOST_gitee,
     api_key=EMBEDDING_API_KEY_gitee,
-    timeout=EMBEDDING_TIMEOUT_gitee
+    timeout=EMBEDDING_TIMEOUT
 )
 xinference_client = OpenAI(
     base_url=f"{EMBEDDING_HOST_xinference}",
     api_key="not-needed",
-    timeout=EMBEDDING_TIMEOUT_xinference
+    timeout=EMBEDDING_TIMEOUT
 )
 
 # 全局Embedding实例，避免重复创建
@@ -68,26 +73,49 @@ class Embedding:
                 self.model = SentenceTransformer(self.local_model_name, trust_remote_code=False)
     
     def get_embedding(self, text):
-        try:
-            if self.embedding_type == 'gitee':
-                response = self.client.embeddings.create(
-                    model=self.embedding_model,
-                    input=text,
-                    encoding_format="float"
-                )
-                return response.data[0].embedding
-            elif self.embedding_type == 'xinference':
-                response = self.client.embeddings.create(
-                    model=self.embedding_model,
-                    input=text,
-                    encoding_format="float"
-                )
-                return response.data[0].embedding
-            else:
-                return self.model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
-        except Exception as e:
-            logger.error(f"Error getting embedding: {e}")
-            return None
+        # 最大重试次数
+        max_retries = 3
+        retry_delay = 1  # 初始重试延迟（秒）
+        
+        for attempt in range(max_retries):
+            try:
+                if self.embedding_type == 'gitee':
+                    logger.info(f"Getting embedding from gitee (attempt {attempt+1}/{max_retries})")
+                    response = self.client.embeddings.create(
+                        model=self.embedding_model,
+                        input=text,
+                        encoding_format="float"
+                    )
+                    return response.data[0].embedding
+                elif self.embedding_type == 'xinference':
+                    logger.info(f"Getting embedding from xinference (attempt {attempt+1}/{max_retries})")
+                    response = self.client.embeddings.create(
+                        model=self.embedding_model,
+                        input=text,
+                        encoding_format="float"
+                    )
+                    return response.data[0].embedding
+                else:
+                    logger.info(f"Getting embedding from local model (attempt {attempt+1}/{max_retries})")
+                    return self.model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
+            except Exception as e:
+                logger.error(f"Error getting embedding (attempt {attempt+1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:  # 如果不是最后一次尝试
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # 指数退避策略
+                else:
+                    # 如果是最后一次尝试且失败，尝试切换到本地模型
+                    if self.embedding_type != 'local':
+                        logger.warning(f"All {max_retries} attempts failed. Trying to fall back to local model...")
+                        try:
+                            if not hasattr(self, 'model'):
+                                logger.info("Initializing local embedding model for fallback")
+                                self.model = SentenceTransformer(self.local_model_name, trust_remote_code=True)
+                            return self.model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
+                        except Exception as local_error:
+                            logger.error(f"Local model fallback also failed: {local_error}")
+                    return None
             
     def cosine_similarity(self, text1, text2):
         """

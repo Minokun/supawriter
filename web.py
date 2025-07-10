@@ -50,6 +50,16 @@ else:
     # User is authenticated
     # Display username in sidebar
     with st.sidebar:
+        # 添加CSS样式确保退出登录按钮文字颜色正确
+        st.markdown("""
+        <style>
+        /* 退出登录按钮文字颜色 */
+        button:has(div:contains("退出登录")) {
+            color: black !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
         st.write(f"**当前用户**: {st.session_state.user}")
         if st.button("退出登录"):
             logout()

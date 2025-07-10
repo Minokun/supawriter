@@ -21,7 +21,7 @@ import re
 import hashlib
 from typing import List, Dict
 from pathlib import Path
-from utils.gemma3_client import call_gemma3_api, sample_prompt
+from utils.openai_vl_process import process_image
 from utils.embedding_utils import add_to_faiss_index, create_faiss_index
 
 # 配置日志
@@ -50,10 +50,14 @@ def get_streamlit_faiss_index():
     return faiss_index
 
 # 常量配置
-MIN_IMAGE_SIZE = 50 * 1024  # 50KB
-VALID_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif'}
+MIN_IMAGE_SIZE = 20 * 1024  # 降低到20KB以捕获更多图片
+VALID_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'}  # 增加更多图片格式
 IMAGES_DIR = Path('images')
 IMAGES_DIR.mkdir(exist_ok=True)
+
+# 重试配置
+MAX_RETRIES = 3  # 最大重试次数
+RETRY_DELAY = 1  # 重试延迟（秒）
 
 def tag_visible(element) -> bool:
     """
@@ -65,7 +69,7 @@ def tag_visible(element) -> bool:
         return False
     return True
 
-async def download_image(session: aiohttp.ClientSession, img_src: str, image_hash_cache: dict, task_id: str, is_multimodal: bool = False, theme: str = "", stats: dict = None) -> Union[str, dict]:
+async def download_image(session: aiohttp.ClientSession, img_src: str, image_hash_cache: dict, task_id: str, is_multimodal: bool = False, theme: str = "", stats: dict = None, base_url: str = None) -> Union[str, dict]:
     """
     异步下载图片，使用MD5哈希确保每张图片只下载一次
     
@@ -77,6 +81,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
         is_multimodal: 是否使用多模态模型处理图片，默认为False
         theme: 主题，用于多模态模型判断图片相关性
         stats: 统计字典，用于记录成功和失败的下载数量
+        base_url: 页面基础URL，用于设置Referer
         
     Returns:
         如果is_multimodal为False，返回下载的图片路径字符串
@@ -97,225 +102,400 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
         logger.info(f"Using cached image: {img_src}")
         return image_hash_cache[img_src]
     
+    # 处理并规范化图片URL
+    img_src = normalize_image_url(img_src, base_url)
+    if not img_src:
+        stats['skipped'] += 1 if stats else 0
+        return '' if not is_multimodal else None
+    
+    # 提取域名用于特殊处理
+    parsed_url = urllib.parse.urlparse(img_src)
+    domain = parsed_url.netloc
+        
     try:
-        # 设置请求头，模拟浏览器行为
+        # 设置基础请求头，模拟浏览器行为
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+            'Mozilla/5.0 (iPad; CPU OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+        ]
+        
+        # 默认请求头
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Referer': 'https://www.163.com/',  # 对于网易图片，添加合适的Referer
+            'User-Agent': random.choice(user_agents),
             'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
             'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache'
+            'Pragma': 'no-cache',
+            'sec-ch-ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"macOS"',
+            'sec-fetch-dest': 'image',
+            'sec-fetch-mode': 'no-cors',
+            'sec-fetch-site': 'cross-site'
         }
         
-        # 特殊处理网易图片URL
-        if 'nimg.ws.126.net' in img_src or '126.net' in img_src:
+        # 设置合适的Referer
+        if base_url:
+            headers['Referer'] = base_url
+        else:
+            # 使用图片所在域名作为Referer
+            headers['Referer'] = f"{parsed_url.scheme}://{domain}/"
+        
+        # 针对特定网站的特殊处理
+        if 'csdnimg.cn' in domain:
+            # CSDN图片特殊处理
+            headers.update({
+                'Referer': 'https://blog.csdn.net/',
+                'Origin': 'https://blog.csdn.net',
+                'Host': domain
+            })
+        elif 'zhihu.com' in domain or 'zhimg.com' in domain:
+            # 知乎图片特殊处理
+            headers.update({
+                'Referer': 'https://www.zhihu.com/',
+                'Origin': 'https://www.zhihu.com'
+            })
+        elif 'jianshu' in domain:
+            # 简书图片特殊处理
+            headers.update({
+                'Referer': 'https://www.jianshu.com/',
+                'Origin': 'https://www.jianshu.com'
+            })
+        elif '126.net' in domain:
+            # 网易图片特殊处理
             logger.info(f"处理网易图片URL: {img_src}")
             # 如果是网易的URL，尝试提取实际图片URL
             if 'url=' in img_src:
                 try:
                     # 提取实际的图片URL
-                    from urllib.parse import urlparse, parse_qs
-                    parsed_url = urlparse(img_src)
                     query_params = parse_qs(parsed_url.query)
                     if 'url' in query_params:
                         actual_img_url = query_params['url'][0]
-                        # logger.info(f"提取到实际图片URL: {actual_img_url}")
-                        # 使用实际的图片URL替代原始URL
                         img_src = actual_img_url
+                        # 更新解析后的URL
+                        parsed_url = urllib.parse.urlparse(img_src)
+                        domain = parsed_url.netloc
                 except Exception as e:
-                    # logger.warning(f"提取网易实际图片URL失败: {str(e)}")
                     pass
+            headers.update({
+                'Referer': 'https://www.163.com/',
+                'Origin': 'https://www.163.com'
+            })
         
-        async with session.get(img_src, ssl=False, headers=headers) as response:
-            if response.status != 200:
-                # logger.warning(f"Failed to download image {img_src}, status: {response.status}")
-                # 如果是403错误，尝试其他方法
-                if response.status == 403:
-                    # logger.info(f"尝试使用不同的请求头重新下载图片: {img_src}")
-                    # 尝试使用不同的User-Agent和Referer
-                    alt_headers = {
-                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15',
-                        'Referer': urllib.parse.urljoin(img_src, '/'),  # 使用图片URL的域名作为Referer
-                    }
-                    try:
-                        async with session.get(img_src, ssl=False, headers=alt_headers) as alt_response:
-                            if alt_response.status == 200:
-                                response = alt_response
-                            else:
-                                # logger.warning(f"备用请求头也无法下载图片: {img_src}, 状态码: {alt_response.status}")
-                                return '' if not is_multimodal else None
-                    except Exception as e:
-                        # logger.warning(f"备用请求头下载图片失败: {str(e)}")
-                        return '' if not is_multimodal else None
-                else:
-                    return '' if not is_multimodal else None
+        # 实现重试机制
+        retry_count = 0
+        max_retries = MAX_RETRIES + 1  # 增加一次重试次数
+        success = False
+        last_error = None
+        content = None
+        
+        while retry_count <= max_retries and not success:
+            try:
+                # 每次重试使用不同的User-Agent
+                headers['User-Agent'] = random.choice(user_agents)
                 
-            content = await response.read()
-            content_size = len(content)
+                # 设置超时，随重试次数增加
+                timeout = aiohttp.ClientTimeout(total=10 + retry_count * 5)
+                
+                # 尝试使用不同的请求方式
+                if retry_count > 0:
+                    # 尝试不同的Referer策略
+                    if retry_count % 3 == 1:
+                        # 使用Google作为Referer
+                        headers['Referer'] = 'https://www.google.com/'
+                    elif retry_count % 3 == 2:
+                        # 使用图片直接URL作为Referer
+                        headers['Referer'] = img_src
+                    
+                    # 针对CSDN的特殊处理
+                    if 'csdnimg.cn' in domain and retry_count > 1:
+                        # 尝试不同的CSDN Referer格式
+                        csdn_referers = [
+                            'https://blog.csdn.net/article/details',
+                            'https://blog.csdn.net/weixin_44621343/article/details',
+                            'https://download.csdn.net/download'
+                        ]
+                        headers['Referer'] = csdn_referers[retry_count % len(csdn_referers)]
+                
+                # 尝试下载图片
+                async with session.get(img_src, ssl=False, headers=headers, timeout=timeout) as response:
+                    if response.status == 200:
+                        content = await response.read()
+                        success = True
+                        break
+                    else:
+                        logger.warning(f"Failed to download image {img_src}, status: {response.status}, retry: {retry_count+1}/{max_retries+1}")
+                        last_error = f"HTTP status {response.status}"
+                        
+            except Exception as e:
+                logger.warning(f"Error downloading image {img_src}: {str(e)}, retry: {retry_count+1}/{max_retries+1}")
+                last_error = str(e)
             
-            # 检查图片大小和尺寸
-            def should_skip_image():
-                """Helper function to determine if image should be skipped"""
-                # 1. 检查文件大小
-                if content_size < MIN_IMAGE_SIZE:
-                    # logger.info(f"Skipping small file: {img_src} ({content_size/1024:.1f}KB < {MIN_IMAGE_SIZE/1024:.1f}KB)")
+            # 如果失败，等待后重试
+            retry_count += 1
+            if retry_count <= max_retries:
+                await asyncio.sleep(RETRY_DELAY * retry_count)  # 指数退避
+        
+        if not success:
+            logger.error(f"Failed to download image after {max_retries+1} attempts: {img_src}, last error: {last_error}")
+            stats['failed'] += 1 if stats else 0
+            return '' if not is_multimodal else None
+            
+        # 成功获取响应
+        if not content:  # 如果内容还没有读取，则读取
+            content = await response.read()
+        content_size = len(content)
+        
+        # 检查图片大小和尺寸
+        def should_skip_image():
+            """Helper function to determine if image should be skipped"""
+            # 1. 检查文件大小
+            if content_size < MIN_IMAGE_SIZE:
+                # logger.info(f"Skipping small file: {img_src} ({content_size/1024:.1f}KB < {MIN_IMAGE_SIZE/1024:.1f}KB)")
+                return True
+                
+            # 2. 检查图片尺寸
+            try:
+                img = Image.open(BytesIO(content))
+                width, height = img.size
+                
+                # 常见图标尺寸列表
+                ICON_SIZES = {
+                    (480, 480), 
+                    (226, 226), 
+                    (300, 300), 
+                    (656, 656)
+                }
+                
+                # 检查是否为常见图标尺寸
+                if (width, height) in ICON_SIZES:
+                    logger.info(f"Skipping common icon size: {img_src} ({width}x{height})")
                     return True
                     
-                # 2. 检查图片尺寸
-                try:
-                    img = Image.open(BytesIO(content))
-                    width, height = img.size
+                # 检查是否为小图片 - 降低尺寸限制
+                if width < 150 and height < 150:
+                    logger.info(f"Skipping small image: {img_src} ({width}x{height})")
+                    return True
                     
-                    # 常见图标尺寸列表
-                    ICON_SIZES = {
-                        (480, 480), 
-                        (226, 226), 
-                        (300, 300), 
-                        (656, 656)
-                    }
+                # 检查宽高比例 - 放宽比例限制
+                ratio = width / height
+                if ratio > 8 or ratio < 0.125:  # 更宽容的比例限制
+                    logger.info(f"Skipping abnormal aspect ratio: {img_src} (ratio: {ratio:.2f})")
+                    return True
                     
-                    # 检查是否为常见图标尺寸
-                    if (width, height) in ICON_SIZES:
-                        logger.info(f"Skipping common icon size: {img_src} ({width}x{height})")
-                        return True
-                        
-                    # 检查是否为小图片
-                    if width < 200 and height < 200:
-                        logger.info(f"Skipping small image: {img_src} ({width}x{height})")
-                        return True
-                        
-                    # 检查宽高比例
-                    ratio = width / height
-                    if ratio > 5 or ratio < 0.2:
-                        logger.info(f"Skipping abnormal aspect ratio: {img_src} (ratio: {ratio:.2f})")
-                        return True
-                        
-                    # 图片通过所有检查
-                    return False
-                    
-                except Exception as e:
-                    # logger.warning(f"Failed to check image dimensions for {img_src}: {str(e)}")
-                    return True  # 出错时跳过图片
-            
-            # 如果应该跳过该图片
-            if should_skip_image():
-                stats['skipped'] += 1
-                image_hash_cache[img_src] = '' if not is_multimodal else None
-                return '' if not is_multimodal else None
-            
-            # 如果是多模态处理模式，在通过大小和尺寸检查后再进行多模态处理
-            if is_multimodal:
-                logger.info(f"Processing image with multimodal model: {img_src}")
-                # 构建提示词，替换主题
-                prompt = sample_prompt.replace("{theme}", theme) if theme else sample_prompt
+                # 图片通过所有检查
+                return False
                 
-                # 调用gemma3 API进行图片识别
-                try:
-                    result = call_gemma3_api(prompt=prompt, image_url=img_src)
-                    
-                    if result and isinstance(result, dict) and "describe" in result:
-                        # 将图片描述添加到FAISS索引
-                        description = result.get("describe", "")
-                        if description and len(description) > 10:  # 确保描述有足够的内容
-                            # 准备要存储的数据
-                            data = {
-                                "image_url": img_src,
-                                "task_id": task_id,
-                                "description": description,
-                                "is_related": result.get("is_related", False),
-                                "is_deleted": result.get("is_deleted", False)
-                            }
-                            
-                            # 添加到FAISS索引
-                            try:
-                                # 获取FAISS索引实例
-                                current_faiss_index = get_streamlit_faiss_index()
-                                add_to_faiss_index(description, data, current_faiss_index)
-                                logger.info(f"Added image description to FAISS index: {img_src}")
-                                
-                                # 保存更新后的索引到磁盘
-                                from utils.embedding_utils import save_faiss_index
-                                save_faiss_index(current_faiss_index, INDEX_DIR)
-                                logger.info(f"Saved updated FAISS index to disk with {current_faiss_index.get_size()} items")
-                            except Exception as e:
-                                # logger.error(f"Failed to add to FAISS index: {str(e)}")
-                                pass
+            except Exception as e:
+                # logger.warning(f"Failed to check image dimensions for {img_src}: {str(e)}")
+                return True  # 出错时跳过图片
+        
+        # 如果应该跳过该图片
+        if should_skip_image():
+            stats['skipped'] += 1
+            image_hash_cache[img_src] = '' if not is_multimodal else None
+            return '' if not is_multimodal else None
+        
+        # 如果是多模态处理模式，在通过大小和尺寸检查后再进行多模态处理
+        if is_multimodal:
+            logger.info(f"Processing image with multimodal model: {img_src}")
+            
+            # 调用gemma3 API进行图片识别
+            try:
+                result = process_image(image_url=img_src, theme=theme)
+                
+                if result and isinstance(result, dict) and "describe" in result:
+                    # 将图片描述添加到FAISS索引
+                    description = result.get("describe", "")
+                    if description and len(description) > 10:  # 确保描述有足够的内容
+                        # 准备要存储的数据
+                        data = {
+                            "image_url": img_src,
+                            "task_id": task_id,
+                            "description": description,
+                            "is_related": result.get("is_related", False),
+                            "is_deleted": result.get("is_deleted", False)
+                        }
                         
-                        # 缓存结果
-                        image_hash_cache[img_src] = result
-                        return result
-                    else:
-                        logger.warning(f"Invalid or empty result from gemma3 API for {img_src}")
-                        image_hash_cache[img_src] = None
-                        return None
-                except Exception as e:
-                    logger.error(f"Error calling gemma3 API: {str(e)}")
+                        # 添加到FAISS索引
+                        try:
+                            # 获取FAISS索引实例
+                            current_faiss_index = get_streamlit_faiss_index()
+                            add_to_faiss_index(description, data, current_faiss_index)
+                            logger.info(f"Added image description to FAISS index: {img_src}")
+                            
+                            # 保存更新后的索引到磁盘
+                            from utils.embedding_utils import save_faiss_index
+                            save_faiss_index(current_faiss_index, INDEX_DIR)
+                            logger.info(f"Saved updated FAISS index to disk with {current_faiss_index.get_size()} items")
+                        except Exception as e:
+                            # logger.error(f"Failed to add to FAISS index: {str(e)}")
+                            pass
+                    
+                    # 缓存结果
+                    image_hash_cache[img_src] = result
+                    return result
+                else:
+                    logger.warning(f"Invalid or empty result from gemma3 API for {img_src}")
                     image_hash_cache[img_src] = None
                     return None
-            
-            # 计算图片内容的MD5哈希值
-            content_hash = hashlib.md5(content).hexdigest()
-            
-            # 检查是否已经下载过相同内容的图片
-            for cached_url, cached_path in image_hash_cache.items():
-                if isinstance(cached_path, str) and cached_url != img_src and cached_path.startswith(str(IMAGES_DIR / task_id)) and Path(cached_path).exists():
-                    try:
-                        with open(cached_path, 'rb') as f:
-                            cached_content = f.read()
-                            cached_hash = hashlib.md5(cached_content).hexdigest()
-                            if cached_hash == content_hash:
-                                logger.info(f"Duplicate image content detected. Using existing file: {cached_path}")
-                                image_hash_cache[img_src] = cached_path
-                                stats['cached'] += 1
-                                return cached_path
-                    except Exception as e:
-                        logger.warning(f"Error checking cached file {cached_path}: {str(e)}")
-            
-            # 注意：图片尺寸检查已经在前面完成，这里不需要重复检查
-                
-            # 使用MD5哈希值作为文件名的一部分，确保唯一性
-            original_filename = Path(img_src).name
-            extension = ''.join(Path(original_filename).suffixes)
-            if not any(extension.lower().endswith(ext) for ext in VALID_IMAGE_EXTENSIONS):
-                extension = '.jpg'
-                
-            file_name = f"{content_hash}{extension}"
-                
-            # Create task-specific folder
-            task_folder = IMAGES_DIR / task_id
-            task_folder.mkdir(exist_ok=True)
-            file_path = task_folder / file_name
-            
-            # 检查文件是否已存在（基于哈希值的文件名）
-            if file_path.exists():
-                logger.info(f"File with same hash already exists: {file_path}")
-                image_hash_cache[img_src] = str(file_path)
-                stats['cached'] += 1
-                return str(file_path)
-            
-            # 保存图片 - 使用同步文件操作
-            with open(file_path, 'wb') as f:
-                f.write(content)
-            
-            # 保存图片URL映射
-            try:
-                url_mapper = ImageUrlMapper(IMAGES_DIR)
-                url_mapper.save_url_mapping(task_id, file_name, img_src)
-                logger.info(f"Saved URL mapping: {file_name} -> {img_src}")
             except Exception as e:
-                logger.error(f"Failed to save URL mapping: {str(e)}")
-                
-            image_hash_cache[img_src] = str(file_path)
-            stats['success'] += 1
-            return str(file_path)
+                logger.error(f"Error calling multimodal API: {str(e)}")
+                image_hash_cache[img_src] = None
+                return None
+        
+        # 计算图片内容的MD5哈希值
+        content_hash = hashlib.md5(content).hexdigest()
+        
+        # 检查是否已经下载过相同内容的图片
+        for cached_url, cached_path in image_hash_cache.items():
+            if isinstance(cached_path, str) and cached_url != img_src and cached_path.startswith(str(IMAGES_DIR / task_id)) and Path(cached_path).exists():
+                try:
+                    with open(cached_path, 'rb') as f:
+                        cached_content = f.read()
+                        cached_hash = hashlib.md5(cached_content).hexdigest()
+                        if cached_hash == content_hash:
+                            logger.info(f"Duplicate image content detected. Using existing file: {cached_path}")
+                            image_hash_cache[img_src] = cached_path
+                            stats['cached'] += 1
+                            return cached_path
+                except Exception as e:
+                    logger.warning(f"Error checking cached file {cached_path}: {str(e)}")
+        
+        # 注意：图片尺寸检查已经在前面完成，这里不需要重复检查
             
+        # 使用MD5哈希值作为文件名的一部分，确保唯一性
+        original_filename = Path(img_src).name
+        extension = ''.join(Path(original_filename).suffixes)
+        if not any(extension.lower().endswith(ext) for ext in VALID_IMAGE_EXTENSIONS):
+            extension = '.jpg'
+            
+        file_name = f"{content_hash}{extension}"
+            
+        # Create task-specific folder
+        task_folder = IMAGES_DIR / task_id
+        task_folder.mkdir(exist_ok=True)
+        file_path = task_folder / file_name
+        
+        # 检查文件是否已存在（基于哈希值的文件名）
+        if file_path.exists():
+            logger.info(f"File with same hash already exists: {file_path}")
+            image_hash_cache[img_src] = str(file_path)
+            stats['cached'] += 1
+            return str(file_path)
+        
+        # 保存图片 - 使用同步文件操作
+        with open(file_path, 'wb') as f:
+            f.write(content)
+        
+        # 保存图片URL映射
+        try:
+            url_mapper = ImageUrlMapper(IMAGES_DIR)
+            url_mapper.save_url_mapping(task_id, file_name, img_src)
+            logger.info(f"Saved URL mapping: {file_name} -> {img_src}")
+        except Exception as e:
+            logger.error(f"Failed to save URL mapping: {str(e)}")
+            
+        image_hash_cache[img_src] = str(file_path)
+        stats['success'] += 1
+        return str(file_path)
+        
     except Exception as e:
         stats['failed'] += 1
         image_hash_cache[img_src] = ''
         return ''
 
-async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str, is_multimodal: bool = False, theme: str = "") -> Dict[str, any]:
+def normalize_image_url(img_src: str, base_url: str = None) -> str:
+    """
+    规范化图片URL，处理相对路径和特殊情况
+    
+    Args:
+        img_src: 图片URL或路径
+        base_url: 页面基础URL，用于解析相对路径
+        
+    Returns:
+        规范化后的完整URL，如果无法解析则返回空字符串
+    """
+    if not img_src or img_src.strip() == '':
+        return ''
+        
+    # 跳过数据URL
+    if img_src.startswith('data:'):
+        return ''
+        
+    # 处理特殊URL格式
+    img_src = img_src.strip()
+    
+    # 处理相对路径
+    if img_src.startswith('//'):
+        # 协议相对URL
+        return f"https:{img_src}"
+    elif img_src.startswith('/'):
+        # 网站根相对路径
+        if base_url:
+            try:
+                return urllib.parse.urljoin(base_url, img_src)
+            except Exception as e:
+                logger.warning(f"Error joining URL {base_url} with {img_src}: {str(e)}")
+                # 尝试从base_url提取域名
+                try:
+                    parsed = urllib.parse.urlparse(base_url)
+                    return f"{parsed.scheme}://{parsed.netloc}{img_src}"
+                except:
+                    return ''
+        else:
+            return ''
+    elif not img_src.startswith(('http://', 'https://')):
+        # 其他相对路径
+        if base_url:
+            try:
+                return urllib.parse.urljoin(base_url, img_src)
+            except Exception as e:
+                logger.warning(f"Error joining URL {base_url} with {img_src}: {str(e)}")
+                return ''
+        else:
+            return ''
+            
+    # 处理特殊CDN URL
+    # 网易图片URL处理
+    if 'nimg.ws.126.net' in img_src or '126.net' in img_src:
+        if 'url=' in img_src:
+            try:
+                parsed_url = urllib.parse.urlparse(img_src)
+                query_params = urllib.parse.parse_qs(parsed_url.query)
+                if 'url' in query_params:
+                    actual_img_url = query_params['url'][0]
+                    return actual_img_url
+            except Exception:
+                pass
+                
+    # 处理新浪微博图片URL
+    if 'sinaimg.cn' in img_src and '/thumb' in img_src:
+        # 尝试获取原图而不是缩略图
+        try:
+            return img_src.replace('/thumb', '/large')
+        except:
+            pass
+            
+    # 处理百度图片URL
+    if 'bdimg.com' in img_src or 'bdstatic.com' in img_src:
+        # 尝试处理百度的图片URL
+        try:
+            if '&src=' in img_src:
+                parsed_url = urllib.parse.urlparse(img_src)
+                query_params = urllib.parse.parse_qs(parsed_url.query)
+                if 'src' in query_params:
+                    actual_img_url = query_params['src'][0]
+                    return urllib.parse.unquote(actual_img_url)
+        except:
+            pass
+            
+    return img_src
+
+async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str, is_multimodal: bool = False, theme: str = "", page_url: str = None) -> Dict[str, any]:
     """
     从HTML内容中提取文本和图片
     """
@@ -341,27 +521,44 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
             
             # 尝试提取基础URL，用于解析相对路径
             try:
-                # 从页面中提取基础URL
-                base_tag = soup.find('base', href=True)
-                if base_tag and base_tag.get('href'):
-                    base_url = base_tag['href']
-                    logger.info(f"Found base URL tag: {base_url}")
+                # 首先使用传入的页面URL
+                if page_url:
+                    base_url = page_url
+                    logger.info(f"Using provided page URL as base: {base_url}")
                 else:
-                    # 尝试从meta标签中提取URL
-                    meta_url = None
-                    for meta in soup.find_all('meta', property=['og:url', 'twitter:url']):
-                        meta_url = meta.get('content')
-                        if meta_url:
-                            base_url = meta_url
-                            logger.info(f"Found base URL from meta tag: {base_url}")
-                            break
-                    
-                    # 如果还是没有找到，尝试从canonical链接中提取
-                    if not base_url:
-                        canonical = soup.find('link', rel='canonical')
-                        if canonical and canonical.get('href'):
-                            base_url = canonical.get('href')
-                            logger.info(f"Found base URL from canonical link: {base_url}")
+                    # 从页面中提取基础URL
+                    base_tag = soup.find('base', href=True)
+                    if base_tag and base_tag.get('href'):
+                        base_url = base_tag['href']
+                        logger.info(f"Found base URL tag: {base_url}")
+                    else:
+                        # 尝试从meta标签中提取URL
+                        meta_url = None
+                        for meta in soup.find_all('meta', property=['og:url', 'twitter:url']):
+                            meta_url = meta.get('content')
+                            if meta_url:
+                                base_url = meta_url
+                                logger.info(f"Found base URL from meta tag: {base_url}")
+                                break
+                        
+                        # 尝试从canonical链接中提取
+                        if not base_url:
+                            canonical = soup.find('link', rel='canonical')
+                            if canonical and canonical.get('href'):
+                                base_url = canonical.get('href')
+                                logger.info(f"Found base URL from canonical link: {base_url}")
+                                
+                        # 尝试从页面头部提取
+                        if not base_url:
+                            head_links = soup.find_all('link')
+                            for link in head_links:
+                                if link.get('rel') and 'stylesheet' in link.get('rel') and link.get('href'):
+                                    href = link.get('href')
+                                    if href.startswith('http'):
+                                        parsed = urllib.parse.urlparse(href)
+                                        base_url = f"{parsed.scheme}://{parsed.netloc}"
+                                        logger.info(f"Extracted base URL from stylesheet: {base_url}")
+                                        break
             except Exception as e:
                 logger.warning(f"Error extracting base URL: {str(e)}")
                 
@@ -378,66 +575,22 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
             for img in img_tags:
                 img_src = img.get('src', '')
                 
-                # 跳过数据图片和空路径
-                if not img_src or img_src.startswith('data:'):
+                # 使用normalize_image_url处理图片URL
+                img_src = normalize_image_url(img_src, base_url)
+                if not img_src:
                     stats['skipped'] += 1
                     continue
-                    
-                # 处理相对路径
-                if img_src.startswith('//'):
-                    # 协议相对路径
-                    img_src = 'https:' + img_src
-                elif img_src.startswith('/'):
-                    # 绝对路径，需要基础URL
-                    if base_url:
-                        # 使用基础URL解析
-                        img_src = urllib.parse.urljoin(base_url, img_src)
-                    else:
-                        # 尝试从页面URL提取域名
-                        try:
-                            domain = urllib.parse.urlparse(soup.get('url', '')).netloc
-                            if domain:
-                                img_src = f"https://{domain}{img_src}"
-                        except:
-                            # 如果无法解析，跳过该图片
-                            logger.warning(f"Cannot resolve relative path: {img_src}")
-                            continue
                 elif not img_src.startswith(('http://', 'https://')):
                     # 其他相对路径
                     if base_url:
                         img_src = urllib.parse.urljoin(base_url, img_src)
                     else:
-                        # 尝试从页面的URL属性或其他属性中提取域名
-                        try:
-                            # 尝试从页面属性中获取URL
-                            page_url = None
-                            if hasattr(soup, 'url'):
-                                page_url = soup.url
-                            elif hasattr(soup, 'original_url'):
-                                page_url = soup.original_url
-                            
-                            # 检查搜狗特定域名
-                            if 'sogou' in img_src or 'soso' in img_src:
-                                if img_src.startswith('./'):
-                                    img_src = 'https://www.sogou.com/' + img_src[2:]
-                                else:
-                                    img_src = 'https://www.sogou.com/' + img_src
-                                logger.info(f"Fixed Sogou relative path: {img_src}")
-                            elif page_url:
-                                # 从页面URL提取域名
-                                parsed_url = urllib.parse.urlparse(page_url)
-                                domain = f"{parsed_url.scheme}://{parsed_url.netloc}"
-                                img_src = urllib.parse.urljoin(domain, img_src)
-                                logger.info(f"Resolved relative path using page URL: {img_src}")
-                            else:
-                                logger.warning(f"Cannot resolve relative path without base URL: {img_src}")
-                                continue
-                        except Exception as e:
-                            logger.warning(f"Error resolving relative path: {str(e)}, path: {img_src}")
-                            continue
+                        # 已经在normalize_image_url函数中处理了所有URL类型
+                        pass
                 
-                # 添加下载图片的异步任务
-                img_tasks.append(download_image(session, img_src, image_hash_cache, task_id, is_multimodal=is_multimodal, theme=theme, stats=stats))
+                # 创建异步任务，传递base_url
+                task = download_image(session, img_src, image_hash_cache, task_id, is_multimodal, theme, stats, base_url)
+                img_tasks.append(task)
             
             # 等待所有图片下载完成
             img_paths = await asyncio.gather(*img_tasks)
@@ -455,52 +608,79 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
         logger.error(f"Error processing HTML content: {str(e)}")
         return {'text': '', 'images': []}
 
-async def fetch(browser, url: str, task_id: str, is_multimodal: bool = False, theme: str = "") -> Dict[str, any]:
+async def fetch(browser, url: str, task_id: str, is_multimodal: bool = False, theme: str = "", retry_count: int = 0) -> Dict[str, any]:
     """
     获取页面内容
     """
-    await asyncio.sleep(random.uniform(1, 3))  # 随机延迟，避免被反爬
-    
     async with aiohttp.ClientSession() as session:
-        context = await browser.new_context(
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.182 Safari/537.36',
-            viewport={'width': 1920, 'height': 1080},
-            ignore_https_errors=True,
-            accept_downloads=True,
-            java_script_enabled=True,
-            bypass_csp=True,
-            extra_http_headers={'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8,ja;q=0.7'},
-            locale='zh-CN',
-            timezone_id='Asia/Shanghai',
-            geolocation={'latitude': 39.9042, 'longitude': 116.4074},
-        )
-        
-        page = await context.new_page()
+        # 创建一个新的浏览器上下文
         try:
-            # 设置请求拦截器来记录重定向
+            context = await browser.new_context(
+                viewport={'width': 1920, 'height': 1080},  # 更大的视口以加载更多内容
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            )
+            
+            # 创建一个新页面
+            page = await context.new_page()
+            
+            # 设置请求拦截器，允许所有请求通过
             await page.route("**/*", lambda route: route.continue_())
             
             # 访问 URL，并等待完成所有重定向
-            response = await page.goto(url, timeout=60000, wait_until="networkidle")
+            timeout = 30000 + retry_count * 10000  # 毫秒，随重试次数增加
+            response = await page.goto(url, timeout=timeout, wait_until="networkidle")
             
             # 获取最终 URL（重定向后）
             final_url = page.url
             
-            # 如果 URL 发生了变化，记录下来
             if final_url != url:
                 logger.info(f"URL redirected: {url} -> {final_url}")
                 
+            # 等待页面完全加载，包括动态内容
+            await asyncio.sleep(2)  # 给JavaScript一些时间来加载内容
+            
+            # 尝试滚动页面以加载懒加载图片
+            try:
+                await page.evaluate("""
+                    async () => {
+                        await new Promise((resolve) => {
+                            let totalHeight = 0;
+                            const distance = 300;
+                            const timer = setInterval(() => {
+                                const scrollHeight = document.body.scrollHeight;
+                                window.scrollBy(0, distance);
+                                totalHeight += distance;
+                                
+                                if(totalHeight >= scrollHeight){
+                                    clearInterval(timer);
+                                    resolve();
+                                }
+                            }, 100);
+                        });
+                    }
+                """)
+                await asyncio.sleep(1)  # 给懒加载图片一些时间来加载
+            except Exception as scroll_error:
+                logger.warning(f"Error during page scrolling: {str(scroll_error)}")
+            
+            # 获取页面内容
             content = await page.content()
-            result = await text_from_html(content, session, task_id, is_multimodal=is_multimodal, theme=theme)
-            return {
-                'url': final_url,  # 返回最终 URL，而不是原始 URL
-                'original_url': url,  # 保存原始 URL 以便跟踪
-                'content': result['text'],
-                'images': result['images']
-            }
+            
+            # 处理页面内容
+            result = await text_from_html(content, session, task_id, is_multimodal, theme, final_url)  # 使用最终URL
+            result['url'] = final_url  # 使用最终URL而不是原始URL
+            result['original_url'] = url  # 保存原始URL以便跟踪
+            return result
         except Exception as e:
             logger.error(f"Error fetching {url}: {str(e)}")
-            return {'url': url, 'content': '', 'images': []}
+            
+            # 重试逻辑
+            if retry_count < MAX_RETRIES:
+                logger.info(f"Retrying {url}, attempt {retry_count + 1}/{MAX_RETRIES}")
+                await asyncio.sleep(RETRY_DELAY * (retry_count + 1))  # 指数退避
+                return await fetch(browser, url, task_id, is_multimodal, theme, retry_count + 1)
+                
+            return {"url": url, "text": "", "images": [], "error": str(e)}
         finally:
             await page.close()
             await context.close()

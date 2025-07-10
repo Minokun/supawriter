@@ -4,8 +4,10 @@ import logging
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
 from utils.history_utils import load_user_history, save_html_to_user_dir
+from utils.playwright_utils import take_webpage_screenshot_sync
 from settings import ARTICLE_TRANSFORMATIONS, HISTORY_FILTER_BASE_OPTIONS, HTML_NGINX_BASE_URL
 import os
+import time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -117,8 +119,8 @@ def main():
                 base_url = HTML_NGINX_BASE_URL  # 根据nginx配置调整
                 article_url = f"{base_url}{url_path}"
                 
-                # 创建三列布局，分别放置预览链接、下载按钮和删除按钮
-                col1, col2, col3 = st.columns([1, 1, 1])
+                # 创建四列布局，分别放置预览链接、下载按钮、截图按钮和删除按钮
+                col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
                 
                 with col1:
                     # 使用Streamlit的按钮来打开预览链接
@@ -139,6 +141,40 @@ def main():
                         type="secondary"
                     )
                 with col3:
+                    # 截图按钮 - 仅对Bento风格网页显示
+                    if "Bento" in record.get('topic', '') or "网页" in record.get('topic', ''):
+                        screenshot_button = st.button("📸 截图下载", key=f"screenshot_{record['id']}", type="secondary", use_container_width=True)
+                        if screenshot_button:
+                            try:
+                                # 显示加载状态
+                                with st.spinner("正在生成网页截图..."):
+                                    # 生成截图文件名
+                                    screenshot_filename = f"{record.get('topic', 'article').replace(' ', '_')}_{record['id']}_screenshot.png"
+                                    
+                                    # 调用Playwright截图函数
+                                    _, screenshot_url_path = take_webpage_screenshot_sync(
+                                        article_url, 
+                                        current_user, 
+                                        filename=screenshot_filename,
+                                        full_page=True
+                                    )
+                                    
+                                    # 构建完整的截图URL
+                                    screenshot_full_url = f"{HTML_NGINX_BASE_URL}{screenshot_url_path}"
+                                    
+                                    # 显示成功消息和截图预览
+                                    st.success("截图生成成功！")
+                                    st.image(screenshot_full_url, caption="网页截图预览", use_container_width=True)
+                                    
+                                    # 提供下载链接
+                                    st.markdown(f"[点击下载截图]({screenshot_full_url})")
+                            except Exception as e:
+                                st.error(f"生成截图时出错: {str(e)}")
+                    else:
+                        # 对非Bento网页显示禁用的按钮
+                        st.button("📸 截图下载", key=f"screenshot_disabled_{record['id']}", type="secondary", disabled=True, use_container_width=True)
+                
+                with col4:
                     # 删除按钮
                     delete_button = st.button("🗑️ 删除记录", key=f"delete_html_{record['id']}", type="secondary", use_container_width=True)
                     if delete_button:
