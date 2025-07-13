@@ -23,6 +23,8 @@ from typing import List, Dict
 from pathlib import Path
 from utils.openai_vl_process import process_image
 from utils.embedding_utils import add_to_faiss_index, create_faiss_index
+import concurrent.futures
+import threading
 
 # 配置日志
 logging.basicConfig(
@@ -59,6 +61,34 @@ IMAGES_DIR.mkdir(exist_ok=True)
 MAX_RETRIES = 3  # 最大重试次数
 RETRY_DELAY = 1  # 重试延迟（秒）
 
+# 全局URL映射缓存 - 用于跨会话去重
+# 格式: {normalized_url: {content_hash: hash, path: file_path}}
+GLOBAL_URL_MAPPING = {}
+
+# 全局内容哈希映射 - 用于快速查找相同内容的图片
+# 格式: {content_hash: {path: file_path, urls: [url1, url2, ...]}}
+GLOBAL_CONTENT_HASH_MAPPING = {}
+
+# 创建一个全局的ThreadPoolExecutor，使用线程锁保护其访问
+_EXECUTOR_LOCK = threading.Lock()
+_EXECUTOR = None
+
+def get_executor():
+    """获取全局ThreadPoolExecutor实例，如果不存在则创建"""
+    global _EXECUTOR
+    with _EXECUTOR_LOCK:
+        if _EXECUTOR is None:
+            _EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=10)
+        return _EXECUTOR
+
+def shutdown_executor():
+    """安全关闭全局ThreadPoolExecutor"""
+    global _EXECUTOR
+    with _EXECUTOR_LOCK:
+        if _EXECUTOR is not None:
+            _EXECUTOR.shutdown(wait=True)
+            _EXECUTOR = None
+
 def tag_visible(element) -> bool:
     """
     判断HTML元素是否应该可见
@@ -76,7 +106,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
     Args:
         session: aiohttp客户端会话
         img_src: 图片URL
-        image_hash_cache: 图片哈希缓存字典
+        image_hash_cache: 图片哈希缓存字典，格式为 {url: path_or_result} 或 {content_hash: {path: path, urls: [url1, url2, ...]}}
         task_id: 任务ID
         is_multimodal: 是否使用多模态模型处理图片，默认为False
         theme: 主题，用于多模态模型判断图片相关性
@@ -94,23 +124,53 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
             'success': 0,
             'failed': 0,
             'cached': 0,
-            'skipped': 0
+            'skipped': 0,
+            'duplicate': 0
         }
     
-    if img_src in image_hash_cache:
-        stats['cached'] += 1
-        logger.info(f"Using cached image: {img_src}")
-        return image_hash_cache[img_src]
-    
     # 处理并规范化图片URL
-    img_src = normalize_image_url(img_src, base_url)
-    if not img_src:
+    normalized_img_src = normalize_image_url(img_src, base_url)
+    if not normalized_img_src:
         stats['skipped'] += 1 if stats else 0
         return '' if not is_multimodal else None
+        
+    # 检查URL是否已经在当前会话缓存中
+    if normalized_img_src in image_hash_cache:
+        stats['cached'] += 1
+        logger.info(f"Using cached image URL: {normalized_img_src}")
+        return image_hash_cache[normalized_img_src]
+        
+    # 检查URL是否在全局缓存中
+    global GLOBAL_URL_MAPPING
+    if normalized_img_src in GLOBAL_URL_MAPPING:
+        cached_info = GLOBAL_URL_MAPPING[normalized_img_src]
+        file_path = cached_info['path']
+        
+        if Path(file_path).exists():
+            # 将缓存信息添加到当前会话缓存
+            image_hash_cache[normalized_img_src] = file_path
+            stats['cached'] += 1
+            logger.info(f"Using globally cached image URL: {normalized_img_src}")
+            return file_path
     
     # 提取域名用于特殊处理
-    parsed_url = urllib.parse.urlparse(img_src)
+    parsed_url = urllib.parse.urlparse(normalized_img_src)
     domain = parsed_url.netloc
+    
+    # 检查是否有相同URL模式的图片已经下载过
+    # 例如：去除查询参数后的URL相同
+    base_img_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
+    for cached_url in image_hash_cache:
+        if isinstance(cached_url, str) and cached_url.startswith('http'):
+            parsed_cached = urllib.parse.urlparse(cached_url)
+            base_cached_url = f"{parsed_cached.scheme}://{parsed_cached.netloc}{parsed_cached.path}"
+            
+            # 如果基础URL相同（忽略查询参数），使用已缓存的图片
+            if base_img_url == base_cached_url and image_hash_cache[cached_url]:
+                stats['duplicate'] = stats.get('duplicate', 0) + 1
+                logger.info(f"Found similar URL pattern, using cached: {cached_url}")
+                image_hash_cache[normalized_img_src] = image_hash_cache[cached_url]
+                return image_hash_cache[cached_url]
         
     try:
         # 设置基础请求头，模拟浏览器行为
@@ -350,25 +410,82 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
         # 计算图片内容的MD5哈希值
         content_hash = hashlib.md5(content).hexdigest()
         
-        # 检查是否已经下载过相同内容的图片
-        for cached_url, cached_path in image_hash_cache.items():
-            if isinstance(cached_path, str) and cached_url != img_src and cached_path.startswith(str(IMAGES_DIR / task_id)) and Path(cached_path).exists():
+        # 检查全局内容哈希映射
+        global GLOBAL_CONTENT_HASH_MAPPING
+        if content_hash in GLOBAL_CONTENT_HASH_MAPPING:
+            # 已经有相同内容的图片
+            cached_info = GLOBAL_CONTENT_HASH_MAPPING[content_hash]
+            cached_path = cached_info['path']
+            
+            if Path(cached_path).exists():
+                # 将当前URL添加到该内容哈希的URL列表中
+                if normalized_img_src not in cached_info['urls']:
+                    cached_info['urls'].append(normalized_img_src)
+                
+                # 同时为当前URL创建直接映射到路径的缓存
+                image_hash_cache[normalized_img_src] = cached_path
+                GLOBAL_URL_MAPPING[normalized_img_src] = {'content_hash': content_hash, 'path': cached_path}
+                
+                logger.info(f"Duplicate image content detected. Using existing file: {cached_path}")
+                stats['duplicate'] = stats.get('duplicate', 0) + 1
+                return cached_path
+                
+        # 检查会话内容哈希缓存
+        # 使用内容哈希作为键，值为包含文件路径和URL列表的字典
+        content_hash_key = f"content_hash:{content_hash}"
+        
+        if content_hash_key in image_hash_cache:
+            # 已经有相同内容的图片
+            cached_info = image_hash_cache[content_hash_key]
+            cached_path = cached_info['path']
+            
+            if Path(cached_path).exists():
+                # 将当前URL添加到该内容哈希的URL列表中
+                if normalized_img_src not in cached_info['urls']:
+                    cached_info['urls'].append(normalized_img_src)
+                
+                # 同时为当前URL创建直接映射到路径的缓存
+                image_hash_cache[normalized_img_src] = cached_path
+                GLOBAL_URL_MAPPING[normalized_img_src] = {'content_hash': content_hash, 'path': cached_path}
+                
+                logger.info(f"Duplicate image content detected. Using existing file: {cached_path}")
+                stats['duplicate'] = stats.get('duplicate', 0) + 1
+                return cached_path
+        
+        # 检查是否有其他文件与此内容相同（遍历一次，后续使用缓存）
+        for key, value in list(image_hash_cache.items()):
+            # 只检查内容哈希缓存项
+            if not key.startswith("content_hash:") and isinstance(value, str) and value.startswith(str(IMAGES_DIR)) and Path(value).exists():
                 try:
-                    with open(cached_path, 'rb') as f:
+                    with open(value, 'rb') as f:
                         cached_content = f.read()
                         cached_hash = hashlib.md5(cached_content).hexdigest()
                         if cached_hash == content_hash:
-                            logger.info(f"Duplicate image content detected. Using existing file: {cached_path}")
-                            image_hash_cache[img_src] = cached_path
-                            stats['cached'] += 1
-                            return cached_path
+                            # 创建内容哈希缓存项
+                            image_hash_cache[content_hash_key] = {
+                                'path': value,
+                                'urls': [normalized_img_src, key] if key != normalized_img_src else [normalized_img_src]
+                            }
+                            # 为当前URL创建直接映射
+                            image_hash_cache[normalized_img_src] = value
+                            
+                            # 更新全局映射
+                            GLOBAL_URL_MAPPING[normalized_img_src] = {'content_hash': content_hash, 'path': value}
+                            GLOBAL_CONTENT_HASH_MAPPING[content_hash] = {
+                                'path': value,
+                                'urls': [normalized_img_src]
+                            }
+                            
+                            logger.info(f"Duplicate image content detected. Using existing file: {value}")
+                            stats['duplicate'] = stats.get('duplicate', 0) + 1
+                            return value
                 except Exception as e:
-                    logger.warning(f"Error checking cached file {cached_path}: {str(e)}")
+                    logger.warning(f"Error checking cached file {value}: {str(e)}")
         
         # 注意：图片尺寸检查已经在前面完成，这里不需要重复检查
             
         # 使用MD5哈希值作为文件名的一部分，确保唯一性
-        original_filename = Path(img_src).name
+        original_filename = Path(normalized_img_src).name
         extension = ''.join(Path(original_filename).suffixes)
         if not any(extension.lower().endswith(ext) for ext in VALID_IMAGE_EXTENSIONS):
             extension = '.jpg'
@@ -383,7 +500,27 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
         # 检查文件是否已存在（基于哈希值的文件名）
         if file_path.exists():
             logger.info(f"File with same hash already exists: {file_path}")
-            image_hash_cache[img_src] = str(file_path)
+            
+            # 创建内容哈希缓存项
+            content_hash_key = f"content_hash:{content_hash}"
+            if content_hash_key not in image_hash_cache:
+                image_hash_cache[content_hash_key] = {
+                    'path': str(file_path),
+                    'urls': [normalized_img_src]
+                }
+            else:
+                if normalized_img_src not in image_hash_cache[content_hash_key]['urls']:
+                    image_hash_cache[content_hash_key]['urls'].append(normalized_img_src)
+            
+            # 更新全局映射
+            GLOBAL_URL_MAPPING[normalized_img_src] = {'content_hash': content_hash, 'path': str(file_path)}
+            GLOBAL_CONTENT_HASH_MAPPING[content_hash] = {
+                'path': str(file_path),
+                'urls': [normalized_img_src]
+            }
+            
+            # 为当前URL创建直接映射
+            image_hash_cache[normalized_img_src] = str(file_path)
             stats['cached'] += 1
             return str(file_path)
         
@@ -399,13 +536,28 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
         except Exception as e:
             logger.error(f"Failed to save URL mapping: {str(e)}")
             
-        image_hash_cache[img_src] = str(file_path)
+        # 创建内容哈希缓存项
+        content_hash_key = f"content_hash:{content_hash}"
+        image_hash_cache[content_hash_key] = {
+            'path': str(file_path),
+            'urls': [normalized_img_src]
+        }
+        
+        # 更新全局映射
+        GLOBAL_URL_MAPPING[normalized_img_src] = {'content_hash': content_hash, 'path': str(file_path)}
+        GLOBAL_CONTENT_HASH_MAPPING[content_hash] = {
+            'path': str(file_path),
+            'urls': [normalized_img_src]
+        }
+        
+        # 为当前URL创建直接映射
+        image_hash_cache[normalized_img_src] = str(file_path)
         stats['success'] += 1
         return str(file_path)
         
     except Exception as e:
         stats['failed'] += 1
-        image_hash_cache[img_src] = ''
+        image_hash_cache[normalized_img_src] = ''
         return ''
 
 def normalize_image_url(img_src: str, base_url: str = None) -> str:
@@ -580,13 +732,6 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
                 if not img_src:
                     stats['skipped'] += 1
                     continue
-                elif not img_src.startswith(('http://', 'https://')):
-                    # 其他相对路径
-                    if base_url:
-                        img_src = urllib.parse.urljoin(base_url, img_src)
-                    else:
-                        # 已经在normalize_image_url函数中处理了所有URL类型
-                        pass
                 
                 # 创建异步任务，传递base_url
                 task = download_image(session, img_src, image_hash_cache, task_id, is_multimodal, theme, stats, base_url)
@@ -597,7 +742,10 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
             img_paths = [path for path in img_paths if path]  # 过滤空路径
             
             # 输出图片下载统计信息
-            logger.info(f"图片下载统计: 总计 {stats['total']} 张, 成功 {stats['success']} 张, 失败 {stats['failed']} 张, 使用缓存 {stats['cached']} 张, 跳过 {stats['skipped']} 张")
+            logger.info(f"图片下载统计: 总计 {stats['total']} 张, 成功 {stats['success']} 张, 失败 {stats['failed']} 张, 使用缓存 {stats['cached']} 张, 跳过 {stats['skipped']} 张, 去重 {stats.get('duplicate', 0)} 张")
+            
+            # 输出全局缓存统计信息
+            logger.info(f"全局URL映射缓存大小: {len(GLOBAL_URL_MAPPING)}, 全局内容哈希映射大小: {len(GLOBAL_CONTENT_HASH_MAPPING)}")
         
         return {
             'text': text_content,
@@ -691,6 +839,9 @@ async def get_main_content(url_list: List[str], task_id: str = None, is_multimod
     :param url_list: URL列表
     :param task_id: 任务ID，如果未提供则使用时间戳
     """
+    # 确保在开始新任务前获取一个新的executor
+    get_executor()
+    
     async with async_playwright() as p:
         browser = await p.firefox.launch()
         try:
@@ -702,12 +853,18 @@ async def get_main_content(url_list: List[str], task_id: str = None, is_multimod
             results = await asyncio.gather(*tasks)
             return results, task_id
         finally:
+            # 确保在关闭浏览器前所有图片下载任务都已完成
+            await asyncio.sleep(0.5)  # 给异步任务一点时间完成
             await browser.close()
 
 if __name__ == '__main__':
     url_list = ['http://news.china.com.cn/2024-11/18/content_117554263.shtml']
-    main_content = asyncio.run(get_main_content(url_list, task_id="test_task"))
-    if main_content:
-        print(main_content)
-    else:
-        print("Failed to retrieve the main content.")
+    try:
+        main_content = asyncio.run(get_main_content(url_list, task_id="test_task"))
+        if main_content:
+            print(main_content)
+        else:
+            print("Failed to retrieve the main content.")
+    finally:
+        # 确保在程序退出前关闭executor
+        shutdown_executor()

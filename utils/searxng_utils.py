@@ -4,31 +4,43 @@ import sys, os
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
-from settings import base_path, LLM_MODEL
+# 标准库
 import json
 import time
 import requests
 import random
 import re
 import urllib3
-from urllib.parse import urlparse  # 添加urlparse的导入
-urllib3.disable_warnings()  # 禁用SSL警告
-from grab_html_content import get_main_content # 用于获取网页主要内容的函数
-from llm_chat import chat  # 对话生成函数
-import asyncio
-import prompt_template  # 提示模板模块
-import concurrent.futures  # 并发执行任务
-import threading  # 多线程
 import logging
-from utils.sougou_search import query_search as sougou_query_search  # 导入搜狗搜索函数
-from utils.embedding_utils import Embedding
+import hashlib
+import threading
+import asyncio
+import concurrent.futures
+from urllib.parse import urlparse
 
 # 配置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# 禁用SSL警告
+urllib3.disable_warnings()
+
+# 本地导入
+from settings import base_path, LLM_MODEL
+from grab_html_content import get_main_content
+from llm_chat import chat
+import prompt_template
+from . import sougou_search
+from utils.embedding_utils import Embedding
 
 max_workers = 20
 search_result_num = 30
+
+# Global URL tracking for deduplication across search engines
+GLOBAL_PROCESSED_URLS = set()
 
 def process_result(content, question, output_type=prompt_template.ARTICLE, model_type='deepseek', model_name='deepseek-chat'):
     """
@@ -183,6 +195,53 @@ class Search:
         self.result_num = result_num  # 结果数量
         self.search_query = ""
 
+    def deduplicate_urls(self, urls_with_data, key='url'):
+        """
+        Deduplicate URLs using advanced URL normalization and similarity checking
+        
+        Args:
+            urls_with_data: List of dictionaries containing URLs and associated data
+            key: The dictionary key containing the URL
+            
+        Returns:
+            List of dictionaries with duplicate URLs removed
+        """
+        if not urls_with_data:
+            return []
+            
+        # Track processed URLs for this batch
+        processed_urls = set()
+        unique_results = []
+        
+        for item in urls_with_data:
+            if not item.get(key):
+                continue
+                
+            url = item[key]
+            normalized_url = sougou_search.normalize_url(url)
+            url_hash = sougou_search.calculate_url_hash(url)
+            
+            # Skip if URL has been processed globally
+            if normalized_url in GLOBAL_PROCESSED_URLS:
+                logger.info(f"Skipping globally processed URL: {url}")
+                continue
+                
+            # Skip if URL has been processed in this batch
+            is_duplicate = False
+            for processed_url in processed_urls:
+                if sougou_search.is_similar_url(normalized_url, processed_url):
+                    logger.info(f"Skipping similar URL in batch: {url} similar to {processed_url}")
+                    is_duplicate = True
+                    break
+                    
+            if not is_duplicate:
+                processed_urls.add(normalized_url)
+                GLOBAL_PROCESSED_URLS.add(normalized_url)
+                unique_results.append(item)
+                
+        logger.info(f"URL deduplication: Original={len(urls_with_data)}, After deduplication={len(unique_results)}")
+        return unique_results
+        
     def query_search(self, question: str):
         """
         发送请求到搜索引擎，获取JSON响应
@@ -216,11 +275,11 @@ class Search:
             
             # 同时获取搜狗搜索结果
             try:
-                sogou_results = sougou_query_search(self.search_query)
+                sogou_results = sougou_search.query_search(self.search_query)
                 print(f"搜狗搜索返回 {len(sogou_results)} 条结果")
                 
                 # 将搜狗结果转换为与SearXNG相同的格式并添加到结果中
-                if sogou_results and isinstance(sogou_results, list):
+                if sogou_results and isinstance(sogou_results, list) and len(sogou_results) > 0:
                     # 确保数据中有results字段
                     if 'results' not in data:
                         data['results'] = []
@@ -314,19 +373,51 @@ class Search:
             print(f"SearXNG搜索失败: {e}")
             return None
 
-    def get_search_result(self, question: str, is_multimodal=False, theme=""):
-        """
-        根据问题获取搜索结果
-        :param question: 查询问题
-        :param is_multimodal: 是否使用多模态模式处理图片
-        :param theme: 主题，用于图片相关性判断
-        :return: 搜索结果列表
-        """
+    def get_search_result(self, question: str, is_multimodal=False, theme="", spider_mode=False):
         data = self.query_search(question)
-        if data:
-            # 过滤并提取合适的搜索结果URL
-            search_result = []
-            search_engine_urls = []
+        search_result = []
+        search_engine_urls = []
+        
+        # 检查是否有搜索结果
+        if data and data.get('results'):
+            # 添加搜索引擎的结果
+            search_engine_items = []
+            for item in data['results']:
+                # 检查是否有URL
+                if 'url' in item:
+                    search_engine_urls.append(item['url'])
+                    search_engine_items.append({
+                        'title': item.get('title', ''),
+                        'url': item['url'],
+                        'html_content': '',
+                    })
+            
+            # Deduplicate search engine results
+            search_engine_items = self.deduplicate_urls(search_engine_items)
+            search_result.extend(search_engine_items)
+            logger.info(f"Added {len(search_engine_items)} deduplicated search engine results")
+            
+            # 添加搜狗搜索的结果（已在sougou_search模块中进行了初步去重）
+            sougou_result = sougou_search.query_search(question)
+            if sougou_result:
+                sougou_items = []
+                for item in sougou_result:
+                    if item['url'] not in search_engine_urls:
+                        search_engine_urls.append(item['url'])
+                        sougou_items.append({
+                            'title': item.get('title', ''),
+                            'url': item['url'],
+                            'html_content': '',
+                        })
+                
+                # Deduplicate Sogou results against global processed URLs
+                sougou_items = self.deduplicate_urls(sougou_items)
+                search_result.extend(sougou_items)
+                logger.info(f"Added {len(sougou_items)} deduplicated Sogou search results")
+                    
+            # Deduplicate search engine results
+            search_engine_items = self.deduplicate_urls(search_engine_items)
+            search_result.extend(search_engine_items)
             
             # 从原始查询文本中提取关键词，用于相关性过滤
             original_keywords = set(re.findall(r'\w+', question))
@@ -371,13 +462,30 @@ class Search:
                 search_engine_urls.append(i['url'])
             # 获取网页主要内容 - 始终爬取所有URL
             if len(search_engine_urls) > 0:
-                result, task_id = asyncio.run(get_main_content(search_engine_urls, is_multimodal=is_multimodal, theme=theme))
+                # 在爬取内容前，确保所有URL都已去重
+                final_urls = []
+                final_url_map = {}
+                
+                # 构建最终去重的URL列表
+                for item in search_result:
+                    url = item['url']
+                    normalized_url = sougou_search.normalize_url(url)
+                    
+                    # 如果URL还未被处理，添加到最终列表
+                    if normalized_url not in final_url_map:
+                        final_urls.append(url)
+                        final_url_map[normalized_url] = url
+                
+                logger.info(f"Final deduplicated URLs for content grabbing: {len(final_urls)}")
+                
+                # 爬取内容
+                result, task_id = asyncio.run(get_main_content(final_urls, is_multimodal=is_multimodal, theme=theme))
                 
                 # 创建字典，存储爬取到的内容和图片
                 html_content_dict = {}
                 image_dict = {}  # 存储每个URL对应的图片
                 
-                # 先处理爬取结果，将内容和图片映射到URL
+                # 处理爬取结果，将内容和图片映射到URL
                 for item in result:
                     content = item.get('content', '').replace('\n', '').replace(' ', '')
                     url = item.get('url', '')

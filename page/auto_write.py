@@ -11,7 +11,7 @@ from utils.image_utils import download_image, get_image_save_directory
 import concurrent.futures
 import asyncio
 import nest_asyncio
-from settings import LLM_MODEL, ARTICLE_TRANSFORMATIONS, HTML_NGINX_BASE_URL
+from settings import LLM_MODEL, ARTICLE_TRANSFORMATIONS, HTML_NGINX_BASE_URL, DEFAULT_SPIDER_NUM, DEFAULT_ENABLE_IMAGES, DEFAULT_DOWNLOAD_IMAGES
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
 from utils.history_utils import add_history_record, load_user_history
@@ -148,23 +148,10 @@ def main():
                 height=100,
                 key='custom_style'
             )
-            # 去掉写作模式选项，始终使用详细模式
-            spider_num = st.slider(label='爬取网页数量', help='（默认5，数量越多时间越长！)', min_value=1, max_value=25, key=3,
-                               value=15)
-            # Use the checkbox directly without assigning to session_state
-            convert_to_simple = st.checkbox("转换白话文", key="convert_to_simple", value=False)
-            convert_to_webpage = st.checkbox("转换为Bento风格网页", key="convert_to_webpage", value=False)
-
-            # 图片分析与插入选项放在表单内最下方
-            st.subheader("图片设置")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.session_state['enable_images'] = st.checkbox("自动插入相关图片", value=False)
-            
-            # 只有当启用图片时才显示下载选项
-            with col2:
-                st.session_state['download_images'] = st.checkbox("图片下载至本地", value=False)
-            st.info("使用多模态模式自动插入相关图片，无需额外设置")
+            # 使用settings.py中的默认值，不再显示在UI上
+            spider_num = DEFAULT_SPIDER_NUM
+            st.session_state['enable_images'] = DEFAULT_ENABLE_IMAGES
+            st.session_state['download_images'] = DEFAULT_DOWNLOAD_IMAGES
             submit_button = st.form_submit_button(label='执行', disabled=st.session_state.run_status)
 
     st.caption('SuperWriter by WuXiaokun. ')
@@ -542,20 +529,38 @@ def main():
                     # Record image parameters if enabled
                     image_enabled = st.session_state.get('enable_images', False)
                     
-                    original_record = add_history_record(
-                        current_user, 
-                        outline_summary_json['title'], 
-                        article_content, 
-                        summary=outline_summary_json.get('summary', ''), 
-                        model_type=model_type, 
-                        model_name=model_name, 
-                        spider_num=spider_num, 
-                        custom_style=custom_style,
-                        is_transformed=False,
-                        image_enabled=image_enabled,
-                    )
-                    original_article_id = original_record.get('id')
-                    st.success(f"原始文章已自动保存到历史记录中。")
+                    # 确保历史记录目录存在
+                    history_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'history')
+                    os.makedirs(history_dir, exist_ok=True)
+                    
+                    try:
+                        # 添加日志记录以便调试
+                        logger.info(f"尝试保存文章到历史记录，用户: {current_user}, 标题: {outline_summary_json['title']}")
+                        
+                        original_record = add_history_record(
+                            current_user, 
+                            outline_summary_json['title'], 
+                            article_content, 
+                            summary=outline_summary_json.get('summary', ''), 
+                            model_type=model_type, 
+                            model_name=model_name, 
+                            spider_num=spider_num, 
+                            custom_style=custom_style,
+                            is_transformed=False,
+                            image_enabled=image_enabled,
+                        )
+                        
+                        if original_record:
+                            original_article_id = original_record.get('id')
+                            logger.info(f"成功保存文章到历史记录，ID: {original_article_id}")
+                            st.success(f"原始文章已自动保存到历史记录中。")
+                        else:
+                            logger.error("保存文章到历史记录失败，返回值为空")
+                            st.error("保存文章到历史记录失败，请检查日志")
+                    except Exception as e:
+                        logger.error(f"保存文章到历史记录时出错: {str(e)}")
+                        st.error(f"保存文章到历史记录时出错: {str(e)}")
+                    
                     # 删除faiss索引
                     try:
                         if os.path.exists('data/faiss/index.faiss'):
@@ -566,47 +571,7 @@ def main():
                     except Exception as e:
                         logger.error(f"删除FAISS索引文件失败: {str(e)}")
 
-            # *************************** 转换白话文并保存 *************************
-            if convert_to_simple and article_content.strip() and original_article_id is not None:
-                transformed_article_content = ""
-                with st.status("正在转换白话文..."):
-                    try:
-                        transformed_article_content = chat(article_content, pt.CONVERT_2_SIMPLE, model_type=model_type, model_name=model_name)
-                        st.success("白话文转换完成！")
-                    except ConnectionError as e:
-                        st.error(f"白话文转换错误: {str(e)}")
-                    except Exception as e:
-                        st.error(f"白话文转换发生未知错误: {str(e)}")
-                
-                if transformed_article_content.strip(): # Save only if transformation was successful
-                    current_user = get_current_user() # Re-get user just in case
-                    if current_user:
-                        custom_style = st.session_state.get('custom_style', '')
-                        # Find the transformation name for CONVERT_2_SIMPLE from settings
-                        transformation_name_for_simple = "白话文" # Default fallback
-                        for name, prompt_template in ARTICLE_TRANSFORMATIONS.items():
-                            if prompt_template == pt.CONVERT_2_SIMPLE:
-                                transformation_name_for_simple = name
-                                break
-                        
-                        add_history_record(
-                            current_user, 
-                            f"{outline_summary_json['title']} ({transformation_name_for_simple})", 
-                            transformed_article_content, 
-                            summary=f"{outline_summary_json.get('summary', '')} ({transformation_name_for_simple} 版本)", 
-                            model_type=model_type, 
-                            model_name=model_name, 
-                            spider_num=spider_num, 
-                            custom_style=custom_style,
-                            is_transformed=True,
-                            original_article_id=original_article_id
-                        )
-                        article_content = transformed_article_content # Update article_content to the transformed version for download
-                        st.success(f"{transformation_name_for_simple} 版本已自动保存到历史记录中。")
-            elif convert_to_simple and not article_content.strip():
-                st.warning("原始文章内容为空，无法进行白话文转换。")
-            elif convert_to_simple and original_article_id is None:
-                st.warning("未能保存原始文章，无法进行白话文转换并关联。")
+            # 白话文转换功能已移至文章再创作页面
             
             # *************************** 点击下载文章 *************************
             st.download_button(
@@ -617,91 +582,7 @@ def main():
                 key="download_generated_article"
             )
             
-            # *************************** 转换为Bento风格网页并保存 *************************
-            if st.session_state.get('convert_to_webpage', False) and article_content.strip() and original_article_id is not None:
-                webpage_content = ""
-                with st.status("正在转换为Bento风格网页..."):
-                    try:
-                        # 使用新的Prompt模板生成网页内容
-                        webpage_content = chat(f"附件文档内容:\n\n{article_content}", pt.BENTO_WEB_PAGE, model_type=model_type, model_name=model_name)
-                        st.success("Bento风格网页转换完成！")
-                    except ConnectionError as e:
-                        st.error(f"网页转换错误: {str(e)}")
-                    except Exception as e:
-                        st.error(f"网页转换发生未知错误: {str(e)}")
-                
-                if webpage_content.strip(): # 仅在转换成功时执行
-                    current_user = get_current_user()
-                    if current_user:
-                        transformation_name_for_webpage = "Bento网页"
-                        
-                        # 保存到历史记录
-                        # 从原始文章记录中获取图片相关参数
-                        # 首先加载原始文章的记录
-                        history = load_user_history(current_user)
-                        original_record = None
-                        for record in history:
-                            if record.get('id') == original_article_id:
-                                original_record = record
-                                break
-                        
-                        # 获取原始文章的图片参数
-                        image_enabled = original_record.get('image_enabled', False) if original_record else False
-                        # 不再需要记录task_id和阈值，使用默认值
-                        image_task_id = None
-                        image_similarity_threshold = 0.5 if image_enabled else None
-                        image_max_count = 10 if image_enabled else None
-                        
-                        add_history_record(
-                            current_user, 
-                            f"{outline_summary_json['title']} ({transformation_name_for_webpage})", 
-                            webpage_content, 
-                            summary=f"{outline_summary_json.get('summary', '')} ({transformation_name_for_webpage} 版本)", 
-                            model_type=model_type, 
-                            model_name=model_name, 
-                            spider_num=spider_num, 
-                            custom_style=custom_style,
-                            is_transformed=True,
-                            original_article_id=original_article_id,
-                            image_task_id=image_task_id,
-                            image_enabled=image_enabled,
-                            image_similarity_threshold=image_similarity_threshold,
-                            image_max_count=image_max_count
-                        )
-                        st.success(f"{transformation_name_for_webpage} 版本已自动保存到历史记录中。")
-
-                        # 生成唯一文件名
-                        html_filename = f"{outline_summary_json['title'].replace(' ', '_')}.html"
-                        
-                        # 导入保存HTML的函数
-                        from utils.history_utils import save_html_to_user_dir
-                        
-                        # 获取当前用户
-                        current_user = get_current_user()
-                        
-                        # 保存HTML内容到文件并获取URL路径
-                        _, url_path = save_html_to_user_dir(current_user, webpage_content, html_filename)
-                        
-                        # 生成可访问的URL
-                        base_url = HTML_NGINX_BASE_URL  # 根据nginx配置调整
-                        article_url = f"{base_url}{url_path}"
-
-                        # 显示预览链接
-                        st.markdown(f"[点击预览网页效果]({article_url})")
-
-                        # 提供HTML文件下载
-                        st.download_button(
-                            label="下载网页文件",
-                            data=webpage_content,
-                            file_name=f"{outline_summary_json['title']}.html",
-                            mime="text/html",
-                            key="download_generated_webpage"
-                        )
-
-            elif st.session_state.get('convert_to_webpage', False) and not article_content.strip():
-                st.warning("原始文章内容为空，无法进行网页转换。")
-            elif st.session_state.get('convert_to_webpage', False) and original_article_id is None:
-                st.warning("未能保存原始文章，无法进行网页转换并关联。")
+            # Bento风格网页转换功能已移至文章再创作页面
 
 # Check if we need to rerun
 if st.session_state.get('trigger_rerun', False):

@@ -10,9 +10,6 @@ sys.path.append(base_path)
 
 WEB_SERVER_PORT = 90
 
-# llm settings
-MODEL_LIST = st.secrets['model_list']
-
 # OpenAI client initialization
 # Default to the first provider in LLM_PROVIDERS
 default_provider = 'openai'  # Will be overridden if available in LLM_PROVIDERS
@@ -89,3 +86,11 @@ PROCESS_IMAGE_TYPE = "qwen" # 2种选项 gemma3, qwen
 OPENAI_VL_MODEL = 'qwen-vl-plus-2025-05-07'
 OPENAI_VL_API_KEY = 'sk-cabc155d7d094825b2b1f0e9ffea35dd'
 OPENAI_VL_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+
+# 文章生成设置
+# 爬取网页数量默认值
+DEFAULT_SPIDER_NUM = 30
+# 是否自动插入相关图片默认值
+DEFAULT_ENABLE_IMAGES = True
+# 是否将图片下载至本地默认值
+DEFAULT_DOWNLOAD_IMAGES = True
