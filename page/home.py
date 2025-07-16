@@ -55,8 +55,8 @@ def main():
         
         # 新建聊天按钮
         if st.button("➕ 新建聊天", key="new_chat", type="primary", use_container_width=True):
-            # 保存当前聊天（如果有）
-            if st.session_state.active_chat_id and st.session_state.messages:
+            # 保存当前聊天（如果有且消息数量大于等于2条）
+            if st.session_state.active_chat_id and len(st.session_state.messages) >= 2:
                 save_chat_session(
                     current_user, 
                     st.session_state.active_chat_id, 
@@ -186,8 +186,8 @@ def main():
                         button_label = f"{display_title}\n{session['message_count']} 条消息"
                         if st.button(button_label, key=f"chat_{session['id']}", use_container_width=True):
                             
-                            # 保存当前聊天（如果有）
-                            if st.session_state.active_chat_id and st.session_state.messages:
+                            # 保存当前聊天（如果有且消息数量大于等于2条）
+                            if st.session_state.active_chat_id and len(st.session_state.messages) >= 2:
                                 save_chat_session(
                                     current_user, 
                                     st.session_state.active_chat_id, 
@@ -457,8 +457,8 @@ def main():
                 # 添加助手回复到历史记录
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
                 
-                # 保存聊天历史（只有当消息数量大于0时才保存）
-                if st.session_state.active_chat_id and len(st.session_state.messages) > 0:
+                # 保存聊天历史（只有当消息数量大于等于2条时才保存）
+                if st.session_state.active_chat_id and len(st.session_state.messages) >= 2:
                     save_chat_session(
                         current_user, 
                         st.session_state.active_chat_id, 

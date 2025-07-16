@@ -58,8 +58,31 @@ IMAGES_DIR = Path('images')
 IMAGES_DIR.mkdir(exist_ok=True)
 
 # 重试配置
-MAX_RETRIES = 3  # 最大重试次数
-RETRY_DELAY = 1  # 重试延迟（秒）
+MAX_RETRIES = 3  # 增加最大重试次数
+RETRY_DELAY = 2  # 增加重试延迟（秒）
+
+# 不进行重试的HTTP状态码
+NON_RETRYABLE_STATUS_CODES = {403, 404, 410, 451}  # 禁止访问、不存在、已删除、法律原因
+
+# 不进行重试的错误模式
+NON_RETRYABLE_ERROR_PATTERNS = [
+    "certificate",  # 证书错误
+    "ssl",          # SSL错误
+    "ConnectError", # 连接错误
+    "ConnectionRefused", # 连接被拒绝
+    "No route to host", # 无法路由到主机
+    "Name or service not known" # DNS解析失败
+]
+
+# 可重试的错误模式 - 这些错误通常是临时的，可以重试
+RETRYABLE_ERROR_PATTERNS = [
+    "timed out",    # 超时错误 - 可能是临时网络问题
+    "timeout",      # 另一种超时表述
+    "reset by peer", # 连接被对方重置
+    "TooManyRedirects", # 重定向过多
+    "ChunkedEncodingError", # 分块编码错误
+    "IncompleteRead"  # 不完整读取
+]
 
 # 全局URL映射缓存 - 用于跨会话去重
 # 格式: {normalized_url: {content_hash: hash, path: file_path}}
@@ -245,12 +268,25 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 'Origin': 'https://www.163.com'
             })
         
-        # 实现重试机制
+        # 实现智能重试机制
         retry_count = 0
-        max_retries = MAX_RETRIES + 1  # 增加一次重试次数
+        max_retries = MAX_RETRIES  # 使用配置的重试次数
         success = False
         last_error = None
         content = None
+        
+        # 检查域名是否在已知的高失败率域名列表中
+        high_failure_domains = ['toutiaoimg.com', 'toutiao.com', 'weibo.cn', 'sinaimg.cn', 'byteimg.com', 'gov.cn', 'chinadaily.com.cn']
+        medium_failure_domains = ['jschina.com.cn']
+        
+        if any(fail_domain in domain for fail_domain in high_failure_domains):
+            # 对于已知的高失败率域名，减少重试次数但不完全放弃
+            max_retries = 1
+            logger.info(f"Reducing retries for high-failure domain {domain}: {img_src}")
+        elif any(fail_domain in domain for fail_domain in medium_failure_domains):
+            # 对于中等失败率的域名，保持适中的重试次数
+            max_retries = 2
+            logger.info(f"Using medium retry count for domain {domain}: {img_src}")
         
         while retry_count <= max_retries and not success:
             try:
@@ -281,28 +317,91 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                         headers['Referer'] = csdn_referers[retry_count % len(csdn_referers)]
                 
                 # 尝试下载图片
-                async with session.get(img_src, ssl=False, headers=headers, timeout=timeout) as response:
-                    if response.status == 200:
-                        content = await response.read()
-                        success = True
-                        break
-                    else:
-                        logger.warning(f"Failed to download image {img_src}, status: {response.status}, retry: {retry_count+1}/{max_retries+1}")
-                        last_error = f"HTTP status {response.status}"
+                try:
+                    # 使用更长的超时时间
+                    timeout = aiohttp.ClientTimeout(total=15 + retry_count * 5, connect=10)
+                    
+                    # 对于某些特定域名，尝试使用不同的协议
+                    if retry_count > 0 and 'gov.cn' in domain:
+                        # 尝试将https切换为http，或反之
+                        if img_src.startswith('https://'):
+                            alt_img_src = img_src.replace('https://', 'http://')
+                        elif img_src.startswith('http://'):
+                            alt_img_src = img_src.replace('http://', 'https://')
+                        else:
+                            alt_img_src = img_src
+                            
+                        logger.info(f"Trying alternative protocol for gov.cn domain: {alt_img_src}")
+                        img_src = alt_img_src
+                    
+                    async with session.get(img_src, ssl=False, headers=headers, timeout=timeout, allow_redirects=True) as response:
+                        if response.status == 200:
+                            content = await response.read()
+                            success = True
+                            break
+                        else:
+                            status_code = response.status
+                            logger.warning(f"Failed to download image {img_src}, status: {status_code}, retry: {retry_count+1}/{max_retries+1}")
+                            last_error = f"HTTP status {status_code}"
+                            
+                            # 对于特定状态码，不再重试
+                            if status_code in NON_RETRYABLE_STATUS_CODES:
+                                logger.info(f"Skipping retries for non-retryable status code {status_code}: {img_src}")
+                                break
+                            
+                            # 对于重定向状态码，尝试获取重定向URL
+                            if status_code in (301, 302, 303, 307, 308) and 'Location' in response.headers:
+                                redirect_url = response.headers['Location']
+                                logger.info(f"Following redirect from {img_src} to {redirect_url}")
+                                img_src = redirect_url
+                except aiohttp.ClientConnectorError as e:
+                    # 特殊处理连接错误
+                    error_msg = str(e)
+                    logger.warning(f"Connection error for {img_src}: {error_msg}, retry: {retry_count+1}/{max_retries+1}")
+                    last_error = error_msg
                         
             except Exception as e:
-                logger.warning(f"Error downloading image {img_src}: {str(e)}, retry: {retry_count+1}/{max_retries+1}")
-                last_error = str(e)
+                error_msg = str(e)
+                logger.warning(f"Error downloading image {img_src}: {error_msg}, retry: {retry_count+1}/{max_retries+1}")
+                last_error = error_msg
+                
+                # 检查是否是不应该重试的错误类型
+                should_skip_retry = any(pattern in error_msg.lower() for pattern in NON_RETRYABLE_ERROR_PATTERNS)
+                if should_skip_retry:
+                    logger.info(f"Skipping retries for non-retryable error pattern: {error_msg}")
+                    break
+                    
+                # 检查是否是应该重试的错误类型
+                should_retry = any(pattern in error_msg.lower() for pattern in RETRYABLE_ERROR_PATTERNS)
+                if should_retry:
+                    logger.info(f"Will retry for retryable error pattern: {error_msg}")
+                    # 对于超时错误，增加额外的等待时间
+                    if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
+                        await asyncio.sleep(retry_count + 2)  # 额外等待时间
             
             # 如果失败，等待后重试
             retry_count += 1
             if retry_count <= max_retries:
-                await asyncio.sleep(RETRY_DELAY * retry_count)  # 指数退避
+                # 使用指数退避策略，但添加随机抖动以避免同时重试
+                jitter = random.uniform(0.5, 1.5)  # 随机抖动因子
+                delay = RETRY_DELAY * (2 ** (retry_count - 1)) * jitter  # 指数退避 + 随机抖动
+                logger.info(f"Waiting {delay:.2f}s before retry {retry_count} for {img_src}")
+                await asyncio.sleep(delay)
         
         if not success:
-            logger.error(f"Failed to download image after {max_retries+1} attempts: {img_src}, last error: {last_error}")
+            # 使用warning级别记录，以便更容易在日志中发现
+            logger.warning(f"Failed to download image after {retry_count} attempts: {img_src}, last error: {last_error}")
             stats['failed'] += 1 if stats else 0
-            return '' if not is_multimodal else None
+            
+            # 检查是否是特定域名的错误，可能需要特殊处理
+            if any(special_domain in domain for special_domain in ['gov.cn', 'chinadaily.com.cn', 'jschina.com.cn']):
+                # 对于这些特定域名，我们不将其标记为永久失败，以便将来可能重试
+                logger.info(f"Not caching failure for special domain {domain}: {img_src}")
+                return '' if not is_multimodal else None
+            else:
+                # 将URL添加到图片哈希缓存中，标记为失败，避免将来重试
+                image_hash_cache[normalized_img_src] = '' if not is_multimodal else None
+                return '' if not is_multimodal else None
             
         # 成功获取响应
         if not content:  # 如果内容还没有读取，则读取
@@ -577,9 +676,28 @@ def normalize_image_url(img_src: str, base_url: str = None) -> str:
     # 跳过数据URL
     if img_src.startswith('data:'):
         return ''
-        
+    
     # 处理特殊URL格式
     img_src = img_src.strip()
+    
+    # 修复一些常见的URL格式问题
+    img_src = img_src.replace('\\', '/')
+    
+    # 处理URL中的空格和特殊字符
+    try:
+        # 解析URL组件
+        parsed = urllib.parse.urlparse(img_src)
+        
+        # 如果路径部分包含空格或特殊字符，进行编码
+        if parsed.path and (' ' in parsed.path or '%' not in parsed.path and any(c in parsed.path for c in '#?&=+[]{}|\\^~`<>')):
+            path_parts = parsed.path.split('/')
+            encoded_path = '/'.join(urllib.parse.quote(part) for part in path_parts)
+            
+            # 重新构建URL
+            img_src = urllib.parse.urlunparse((parsed.scheme, parsed.netloc, encoded_path, 
+                                            parsed.params, parsed.query, parsed.fragment))
+    except Exception as e:
+        logger.debug(f"Error normalizing URL {img_src}: {str(e)}")
     
     # 处理相对路径
     if img_src.startswith('//'):
@@ -625,10 +743,15 @@ def normalize_image_url(img_src: str, base_url: str = None) -> str:
                 pass
                 
     # 处理新浪微博图片URL
-    if 'sinaimg.cn' in img_src and '/thumb' in img_src:
+    if 'sinaimg.cn' in img_src:
         # 尝试获取原图而不是缩略图
         try:
-            return img_src.replace('/thumb', '/large')
+            if '/thumb' in img_src:
+                return img_src.replace('/thumb', '/large')
+            elif '/small' in img_src:
+                return img_src.replace('/small', '/large')
+            elif '/mw690' in img_src:
+                return img_src.replace('/mw690', '/large')
         except:
             pass
             
@@ -642,6 +765,34 @@ def normalize_image_url(img_src: str, base_url: str = None) -> str:
                 if 'src' in query_params:
                     actual_img_url = query_params['src'][0]
                     return urllib.parse.unquote(actual_img_url)
+        except:
+            pass
+            
+    # 处理政府网站图片URL
+    if 'gov.cn' in img_src:
+        # 尝试处理政府网站的图片URL
+        try:
+            # 移除可能导致问题的查询参数
+            if '?' in img_src:
+                parsed_url = urllib.parse.urlparse(img_src)
+                # 如果查询参数中包含v=，可能是版本或缓存控制，尝试移除
+                if 'v=' in parsed_url.query:
+                    clean_url = urllib.parse.urlunparse((parsed_url.scheme, parsed_url.netloc, 
+                                                       parsed_url.path, '', '', ''))
+                    logger.info(f"Cleaned gov.cn URL: {img_src} -> {clean_url}")
+                    return clean_url
+        except:
+            pass
+            
+    # 处理中国日报网站图片URL
+    if 'chinadaily.com.cn' in img_src:
+        try:
+            # 检查是否有特定的查询参数或路径模式
+            if '_ORIGIN' in img_src:
+                # 尝试移除_ORIGIN后缀，获取原始图片
+                clean_url = img_src.replace('_ORIGIN', '')
+                logger.info(f"Cleaned chinadaily URL: {img_src} -> {clean_url}")
+                return clean_url
         except:
             pass
             

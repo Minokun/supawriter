@@ -15,12 +15,13 @@ WEB_SERVER_PORT = 90
 default_provider = 'openai'  # Will be overridden if available in LLM_PROVIDERS
 openai_model = None  # Will be set after LLM_MODEL is defined
 
-# List of supported LLM models
-LLM_PROVIDERS = ['deepseek', 'qwen', 'openai', 'yi', 'glm', 'fastgpt', 'xinference']
+# List of supported LLM models - model names are fetched from secrets
+# LLM_PROVIDERS = ['deepseek', 'qwen', 'openai', 'yi', 'glm', 'fastgpt', 'xinference']
 
-LLM_MODEL: dict[str, dict[str, str]] = {
-    # ... (existing content)
-}
+LLM_PROVIDERS = [
+    key for key in st.secrets.keys()
+    if hasattr(st.secrets[key], 'keys')
+]
 
 # Import prompt templates for transformations
 import utils.prompt_template as pt
@@ -63,20 +64,20 @@ HISTORY_FILTER_BASE_OPTIONS = [
 # Embedding settings 三种选项 gitee, xinference, local
 EMBEDDING_TYPE = 'gitee'
 # 模力方舟embedding设置
-# EMBEDDING_MODEL_gitee = 'Qwen3-Embedding-8B'
-EMBEDDING_MODEL_gitee = 'jina-embeddings-v4'
+EMBEDDING_MODEL_gitee = 'Qwen3-Embedding-8B'
+# EMBEDDING_MODEL_gitee = 'jina-embeddings-v4'
 EMBEDDING_HOST_gitee = 'https://ai.gitee.com/v1'
 EMBEDDING_API_KEY_gitee = 'U2PS8VI0XDMTMRAHB5XVMDGOTTD7H4KKSM6EQRN9'
-EMBEDDING_TIMEOUT_gitee = 5
+EMBEDDING_TIMEOUT_gitee = 10
 # xinference embedding设置
 EMBEDDING_MODEL_xinference = 'Qwen3-Embedding-8B'
 EMBEDDING_HOST_xinference = 'http://localhost:9997/v1'
-EMBEDDING_TIMEOUT_xinference = 5
+EMBEDDING_TIMEOUT_xinference = 10
 # jina-embedding-v4
 EMBEDDING_MODEL_jina = 'jina-embeddings-v4'
 EMBEDDING_HOST_jina = 'https://api.jina.ai/v1/embeddings'
 EMBEDDING_API_KEY_jina = 'jina_78bd66d1a7194ff8bf7942ae59779dac-ScGeQdHO_3OmFzHcLClLC_DFE0R'
-EMBEDDING_TIMEOUT_jina = 5
+EMBEDDING_TIMEOUT_jina = 10
 
 # 网页显示设置
 HTML_NGINX_BASE_URL = 'http://localhost:80/'
