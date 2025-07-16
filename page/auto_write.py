@@ -41,10 +41,14 @@ def main():
     if not st.session_state.get('_is_rerun', False):
         st.session_state.run_status = False
         
+    # 创建一个缓存键，每次执行按钮点击时更新，强制刷新缓存
+    if 'cache_key' not in st.session_state:
+        st.session_state.cache_key = 0
+        
     # 使用st.cache_resource装饰器来缓存FAISS索引和Embedding实例
-    # 添加TTL=10秒，确保索引每10秒刷新一次
+    # 添加缓存键作为参数，确保在需要时可以强制刷新
     @st.cache_resource(show_spinner="加载FAISS索引和Embedding模型...")
-    def get_cached_resources(force_refresh=False):
+    def get_cached_resources(cache_key=0, force_refresh=False):
         """获取缓存的FAISS索引和Embedding实例，优先从磁盘加载
         
         Args:
@@ -125,9 +129,9 @@ def main():
             return None, None
     
     # 获取缓存的资源
-    # 将get_cached_resources函数存储在session_state中，以侾grab_html_content.py可以使用
+    # 将get_cached_resources函数存储在session_state中，以便grab_html_content.py可以使用
     st.session_state.get_cached_resources = get_cached_resources
-    faiss_index, embedding_instance = get_cached_resources()
+    faiss_index, embedding_instance = get_cached_resources(st.session_state.cache_key)
 
     with st.sidebar:
         st.title("超级写手配置项：")
@@ -219,27 +223,35 @@ def main():
             # 每次执行时重置已使用图片集合
             st.session_state.used_images = set()
         
+        # 更新缓存键，强制重新创建缓存资源
+        st.session_state.cache_key += 1
+        logger.info(f"更新缓存键为: {st.session_state.cache_key}")
+        
         # 首先删除磁盘上的FAISS索引文件
         try:
-            if os.path.exists('data/faiss/index.faiss'):
-                os.remove('data/faiss/index.faiss')
-                logger.info("已删除FAISS索引文件")
-            if os.path.exists('data/faiss/index_data.pkl'):
-                os.remove('data/faiss/index_data.pkl')
-                logger.info("已删除FAISS数据文件")
+            # 确保目录存在
+            os.makedirs('data/faiss', exist_ok=True)
+            
+            # 删除索引文件
+            index_files = ['data/faiss/index.faiss', 'data/faiss/index_data.pkl']
+            for file_path in index_files:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    logger.info(f"已删除文件: {file_path}")
         except Exception as e:
             logger.error(f"删除FAISS索引文件失败: {str(e)}")
         
         # 设置强制清空索引的标志
         st.session_state.should_clear_index = True
+        st.session_state.first_load = True  # 重置为首次加载状态
         
-        # 清除缓存并重新创建空索引
+        # 清除所有缓存
         try:
             # 强制清除缓存
             get_cached_resources.clear()
             
-            # 获取新的空索引 - 这将触发get_cached_resources中的清除逻辑
-            cached_faiss_index, _ = get_cached_resources(force_refresh=True)
+            # 获取新的空索引 - 使用新的缓存键强制创建新实例
+            cached_faiss_index, _ = get_cached_resources(st.session_state.cache_key, force_refresh=True)
             
             # 确保索引为空
             if cached_faiss_index:
@@ -252,6 +264,9 @@ def main():
                 
                 if index_size > 0:
                     logger.warning(f"警告：FAISS索引清空后仍有 {index_size} 个项目")
+                    # 尝试强制清空
+                    cached_faiss_index.reset()
+                    logger.info("尝试使用reset()方法强制清空索引")
         except Exception as e:
             logger.error(f"清空FAISS索引失败: {str(e)}")
         
@@ -279,8 +294,8 @@ def main():
             
             # 显示当前FAISS索引中的所有图片
             if st.session_state.get('enable_images', False):
-                # 使用缓存的FAISS索引实例，但不强制刷新以避免删除索引
-                cached_faiss_index, _ = get_cached_resources(force_refresh=False)
+                # 使用缓存的FAISS索引实例，使用当前缓存键
+                cached_faiss_index, _ = get_cached_resources(st.session_state.cache_key, force_refresh=False)
                 index_size = cached_faiss_index.get_size()
                 
                 with st.popover(f"查看已抓取的图片 ({index_size})"):

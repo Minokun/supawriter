@@ -448,6 +448,14 @@ def main():
                         
                         # 显示最终响应
                         message_placeholder.markdown(full_response)
+                        
+                        # 添加保存按钮
+                        if full_response:
+                            col1, col2 = st.columns([6, 1])
+                            with col2:
+                                if st.button('💾 保存回复', key='save_response'):
+                                    st.session_state['save_content'] = full_response
+                                    st.session_state['show_save_dialog'] = True
                     except Exception as e:
                         error_msg = f"AI响应错误: {str(e)}"
                         logger.error(error_msg)
@@ -456,6 +464,61 @@ def main():
                         
                 # 添加助手回复到历史记录
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
+                
+                # 处理保存对话内容到文件的逻辑
+                if 'show_save_dialog' not in st.session_state:
+                    st.session_state['show_save_dialog'] = False
+                    
+                if 'save_content' not in st.session_state:
+                    st.session_state['save_content'] = ''
+                
+                if st.session_state.get('show_save_dialog', False):
+                    with st.form('save_dialog'):
+                        st.subheader('保存对话内容')
+                        file_name = st.text_input('文件名', value='对话内容.txt')
+                        
+                        # 添加文件预览
+                        with st.expander('内容预览'):
+                            st.text(st.session_state['save_content'][:500] + ('...' if len(st.session_state['save_content']) > 500 else ''))
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            save_submit = st.form_submit_button('确认保存')
+                        with col2:
+                            cancel_submit = st.form_submit_button('取消')
+                        
+                        if save_submit:
+                            try:
+                                import os
+                                from pathlib import Path
+                                import tkinter as tk
+                                from tkinter import filedialog
+                                
+                                # 创建一个隐藏的tkinter窗口
+                                root = tk.Tk()
+                                root.withdraw()
+                                
+                                # 打开文件保存对话框
+                                file_path = filedialog.asksaveasfilename(
+                                    defaultextension='.txt',
+                                    filetypes=[('Text files', '*.txt'), ('All files', '*.*')],
+                                    initialfile=file_name
+                                )
+                                
+                                if file_path:
+                                    with open(file_path, 'w', encoding='utf-8') as f:
+                                        f.write(st.session_state['save_content'])
+                                    st.success(f'内容已保存到: {file_path}')
+                                    st.session_state['show_save_dialog'] = False
+                                else:
+                                    st.info('保存已取消')
+                            except Exception as e:
+                                st.error(f'保存文件时出错: {str(e)}')
+                                logger.error(f'保存文件时出错: {str(e)}')
+                        
+                        if cancel_submit:
+                            st.session_state['show_save_dialog'] = False
+                            st.rerun()
                 
                 # 保存聊天历史（只有当消息数量大于等于2条时才保存）
                 if st.session_state.active_chat_id and len(st.session_state.messages) >= 2:

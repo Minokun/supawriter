@@ -58,7 +58,7 @@ IMAGES_DIR = Path('images')
 IMAGES_DIR.mkdir(exist_ok=True)
 
 # 重试配置
-MAX_RETRIES = 3  # 增加最大重试次数
+MAX_RETRIES = 1  # 增加最大重试次数
 RETRY_DELAY = 2  # 增加重试延迟（秒）
 
 # 不进行重试的HTTP状态码
