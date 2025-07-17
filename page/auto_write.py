@@ -32,7 +32,7 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
     # 将主线程的上下文附加到当前线程
     add_script_run_ctx(threading.current_thread(), ctx)
     
-    # 定义一个带时间戳和级别的日志函数
+    # --- 将log函数定义提升到函数顶层作用域 ---
     def log(level, message):
         timestamp = time.strftime("%H:%M:%S", time.localtime())
         task_state['log'].append(f"[{timestamp}] [{level.upper()}] {message}")
@@ -44,12 +44,14 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
         task_state['progress'] = 0
         task_state['progress_text'] = "任务初始化..."
         
-        # 初始化FAISS索引和Embedding实例
-        # 注意：这些资源应该在主线程中创建并传递进来，以避免线程安全问题
-        # 这里我们假设资源已经通过某种方式准备好或可以在此安全地初始化
-        # 为了简化，我们在这里重新获取，但在大型应用中建议从主线程传入
-        faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss')
-        embedding_instance = get_embedding_instance()
+        # --- 在任务开始时，只加载一次FAISS索引 ---
+        faiss_index = None
+        if enable_images:
+            try:
+                faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss')
+                log('info', f"FAISS索引加载成功，共 {faiss_index.get_size()} 张图片数据。")
+            except Exception as e:
+                log('error', f"FAISS索引加载失败: {e}")
 
         # 1. 抓取网页内容
         task_state['progress'] = 10
@@ -133,33 +135,31 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
                     custom_prompt, model_type=model_type, model_name=model_name)
 
                 # 图像处理逻辑
-                if enable_images:
+                if enable_images and faiss_index and faiss_index.get_size() > 0:
                     try:
-                        faiss_index_reloaded = create_faiss_index(load_from_disk=True, index_dir='data/faiss')
-                        if faiss_index_reloaded.get_size() > 0:
-                            outline_block_str = outline_block.get('h1', '') + "".join(outline_block.get('h2', [])) + outline_block_content_final
-                            _, distances, matched_data = search_similar_text(outline_block_str, faiss_index_reloaded, k=10)
-                            
-                            image_inserted = False
-                            if matched_data:
-                                for dist, data in zip(distances, matched_data):
-                                    if isinstance(data, dict) and 'image_url' in data:
-                                        image_url = data['image_url']
-                                        if image_url not in used_images:
-                                            similarity = 1.0 - min(dist / 2.0, 0.99)
-                                            if similarity >= 0.15:
-                                                used_images.add(image_url)
-                                                image_markdown = f"![图片]({image_url})\n\n"
-                                                outline_block_content_final = image_markdown + outline_block_content_final
-                                                log('info', f"为章节 '{outline_block.get('h1', '')}' 插入图片，相似度: {similarity:.2f}")
-                                                image_inserted = True
-                                                break # 每个章节只插入一张最匹配的
-                                if not image_inserted:
-                                    log('warn', f"章节 '{outline_block.get('h1', '')}' 未找到合适的未使用图片。")
-                        else:
-                            log('warn', "FAISS索引为空，跳过图片匹配。")
+                        outline_block_str = outline_block.get('h1', '') + "".join(outline_block.get('h2', [])) + outline_block_content_final
+                        _, distances, matched_data = search_similar_text(outline_block_str, faiss_index, k=10)
+                        
+                        image_inserted = False
+                        if matched_data:
+                            for dist, data in zip(distances, matched_data):
+                                if isinstance(data, dict) and 'image_url' in data:
+                                    image_url = data['image_url']
+                                    if image_url not in used_images:
+                                        similarity = 1.0 - min(dist / 2.0, 0.99)
+                                        if similarity >= 0.15:
+                                            used_images.add(image_url)
+                                            image_markdown = f"![图片]({image_url})\n\n"
+                                            outline_block_content_final = image_markdown + outline_block_content_final
+                                            log('info', f"为章节 '{outline_block.get('h1', '')}' 插入图片，相似度: {similarity:.2f}")
+                                            image_inserted = True
+                                            break # 每个章节只插入一张最匹配的
+                            if not image_inserted:
+                                log('warn', f"章节 '{outline_block.get('h1', '')}' 未找到合适的未使用图片。")
                     except Exception as e:
                         log('error', f"图片匹配时出错: {str(e)}")
+                elif enable_images:
+                    log('warn', "FAISS索引为空或加载失败，跳过本章节的图片匹配。")
 
                 article_chapters.append(outline_block_content_final)
                 task_state['live_article'] = '\n\n'.join(article_chapters) # 实时更新文章内容
@@ -229,6 +229,14 @@ def main():
     nest_asyncio.apply()
     if st.runtime.exists() and sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+    # --- 状态检查与智能重置 ---
+    # 检查是否有残留的、已死亡的后台任务状态
+    if 'article_task' in st.session_state and st.session_state.article_task['status'] == 'running':
+        active_threads = [t for t in threading.enumerate() if t.name == 'generate_article_background']
+        if not active_threads:
+            st.warning("检测到上次任务异常中断，已重置状态。", icon="⚠️")
+            del st.session_state.article_task # 重置任务状态
 
     # 初始化任务状态
     if "article_task" not in st.session_state:
@@ -304,15 +312,14 @@ def main():
             default_model = LLM_MODEL[default_provider]['model'][0] if isinstance(LLM_MODEL[default_provider]['model'], list) else LLM_MODEL[default_provider]['model']
             model_type = default_provider
             model_name = default_model
-            log('warn', f"未找到全局模型设置，已自动选择第一个可用模型: {model_type}/{model_name}")
         else:
             model_type = global_settings.get('provider')
             model_name = global_settings.get('model_name')
-            log('info', f"已加载全局模型设置: {model_type}/{model_name}")
 
         # 创建并启动后台线程
         thread = threading.Thread(
             target=generate_article_background,
+            name="generate_article_background", # 为线程命名
             args=(
                 ctx, # 传递上下文
                 st.session_state.article_task, text_input, model_type, model_name, 

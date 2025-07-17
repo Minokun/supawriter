@@ -147,3 +147,22 @@ def logout():
     except Exception as e:
         # If there's any error deleting the cookie, ignore it
         pass
+
+def change_password(username, old_password, new_password):
+    """Change user's password."""
+    users = load_users()
+    
+    if username not in users:
+        return False, "用户不存在"
+    
+    user = users[username]
+    
+    # Verify old password
+    if user.password_hash != hash_password(old_password):
+        return False, "当前密码不正确"
+    
+    # Update to new password
+    user.password_hash = hash_password(new_password)
+    save_users(users)
+    
+    return True, "密码修改成功"

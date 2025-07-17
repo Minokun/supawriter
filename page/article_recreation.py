@@ -122,8 +122,8 @@ def main():
                 new_topic,
                 transformed_content,
                 summary=new_summary,
-                model_type=original_model_type, # or the model used for transformation
-                model_name=original_model_name, # or the model used for transformation
+                model_type=model_type, # 使用全局模型设置
+                model_name=model_name, # 使用全局模型设置
                 write_type=selected_record.get('write_type'), # Inherit or set new?
                 spider_num=selected_record.get('spider_num'), # Inherit or set new?
                 custom_style=selected_record.get('custom_style'), # Inherit or set new?

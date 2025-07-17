@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # 根据实际响应时间统计数据调整超时时间
 # 平均响应时间在600ms-1800ms之间，设置为3秒应足够大部分请求
-EMBEDDING_TIMEOUT = 3
+EMBEDDING_TIMEOUT = 10
 
 gitee_client = OpenAI(
     base_url=EMBEDDING_HOST_gitee,

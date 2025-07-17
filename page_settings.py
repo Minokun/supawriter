@@ -18,11 +18,6 @@ PAGE_DOCUMENT_UTIL = st.Page(
     icon=':material/home:'
 )
 
-PAGE_HTML_VIEWER = st.Page(
-    "page/html_viewer.py",
-    title='网页预览',
-    icon=':material/preview:'
-)
 
 PAGE_ASR = st.Page(
     "page/asr.py",
@@ -71,20 +66,13 @@ PAGE_SYSTEM_SETTINGS = st.Page(
 # Chatbot functionality has been integrated into the home page
 # PAGE_CHATBOT definition removed
 
-# HTML查看器页面，但不显示在菜单中
-PAGE_HTML_VIEWER = st.Page(
-    "page/html_viewer.py",
-    title="HTML查看器",
-    icon=":material/code:"
-)
-
 # ******************菜单配置********************
 PAGES = {
     "APP": [PAGE_HOME],  # Chatbot functionality integrated into home page
-    "GPTS": [PAGE_GPTS, PAGE_GPTS_AUTOWITER],
-        "Toolkits": [PAGE_DOCUMENT_UTIL, PAGE_ASR, PAGE_TTS, PAGE_ARTICLE_RECREATION],
-    "用户": [PAGE_PROFILE, PAGE_HISTORY, PAGE_SYSTEM_SETTINGS, PAGE_HTML_VIEWER]
+    "GPTS": [PAGE_GPTS, PAGE_GPTS_AUTOWITER, PAGE_ARTICLE_RECREATION],
+    "Toolkits": [PAGE_DOCUMENT_UTIL, PAGE_ASR, PAGE_TTS],
+    "用户": [PAGE_PROFILE, PAGE_HISTORY, PAGE_SYSTEM_SETTINGS]
 }
 
 # 隐藏页面（不在菜单中显示，但可以通过代码跳转）
-HIDDEN_PAGES = [PAGE_HTML_VIEWER]
+HIDDEN_PAGES = []

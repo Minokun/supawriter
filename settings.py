@@ -61,11 +61,11 @@ HISTORY_FILTER_BASE_OPTIONS = [
     "完成文章" # Represents original, non-transformed articles
 ]
 
-# Embedding settings 三种选项 gitee, xinference, local
+# Embedding settings 三种选项 gitee, xinference, jina
 EMBEDDING_TYPE = 'gitee'
 # 模力方舟embedding设置
-EMBEDDING_MODEL_gitee = 'Qwen3-Embedding-8B'
-# EMBEDDING_MODEL_gitee = 'jina-embeddings-v4'
+# EMBEDDING_MODEL_gitee = 'Qwen3-Embedding-8B'
+EMBEDDING_MODEL_gitee = 'jina-embeddings-v4'
 EMBEDDING_HOST_gitee = 'https://ai.gitee.com/v1'
 EMBEDDING_API_KEY_gitee = 'U2PS8VI0XDMTMRAHB5XVMDGOTTD7H4KKSM6EQRN9'
 EMBEDDING_TIMEOUT_gitee = 10

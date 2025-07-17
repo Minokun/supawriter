@@ -30,31 +30,35 @@ def app():
         st.write(f"**上次登录**: {current_user.last_login.strftime('%Y-%m-%d %H:%M:%S')}")
     
     # Edit profile section
-    st.subheader("编辑个人信息")
-    with st.form("edit_profile"):
+    st.subheader("编辑邮箱")
+    with st.form("edit_email"):
         new_email = st.text_input("新邮箱", value=current_user.email or "")
-        current_password = st.text_input("当前密码", type="password")
-        new_password = st.text_input("新密码 (留空则不修改)", type="password")
-        confirm_password = st.text_input("确认新密码", type="password")
-        
-        submitted = st.form_submit_button("保存修改")
-        
-        if submitted:
-            if hash_password(current_password) != current_user.password_hash:
-                st.error("当前密码错误")
-            elif new_password and new_password != confirm_password:
-                st.error("两次输入的新密码不一致")
+        submitted_email = st.form_submit_button("更新邮箱")
+        if submitted_email:
+            current_user.email = new_email
+            users[user] = current_user
+            save_users(users)
+            st.success("邮箱已更新！")
+            st.rerun()
+
+    st.subheader("修改密码")
+    with st.form("change_password"):
+        old_password = st.text_input("当前密码", type="password")
+        new_password = st.text_input("新密码", type="password")
+        confirm_new_password = st.text_input("确认新密码", type="password")
+        submitted_password = st.form_submit_button("确认修改密码")
+
+        if submitted_password:
+            if not old_password or not new_password or not confirm_new_password:
+                st.warning("所有密码字段都不能为空。")
+            elif new_password != confirm_new_password:
+                st.error("两次输入的新密码不一致！")
             else:
-                # Update email
-                if new_email != current_user.email:
-                    current_user.email = new_email
-                
-                # Update password if provided
-                if new_password:
-                    current_user.password_hash = hash_password(new_password)
-                
-                # Save changes
-                users[user] = current_user
-                save_users(users)
-                st.success("个人信息已更新")
-                st.session_state.profile_trigger_rerun = True
+                from utils.auth import change_password
+                success, message = change_password(user, old_password, new_password)
+                if success:
+                    st.success(message)
+                else:
+                    st.error(message)
+
+app()
