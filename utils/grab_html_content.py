@@ -984,28 +984,40 @@ async def fetch(browser, url: str, task_id: str, is_multimodal: bool = False, th
             await page.close()
             await context.close()
 
-async def get_main_content(url_list: List[str], task_id: str = None, is_multimodal: bool = False, theme: str = "") -> List[Dict[str, any]]:
+async def get_main_content(url_list: List[str], task_id: str = None, is_multimodal: bool = False, theme: str = "", progress_callback: Optional[callable] = None) -> List[Dict[str, any]]:
     """
-    获取多个URL的内容
+    获取多个URL的内容，并提供进度回调
     :param url_list: URL列表
     :param task_id: 任务ID，如果未提供则使用时间戳
+    :param progress_callback: 进度回调函数，接收 (completed_count, total_count)
     """
-    # 确保在开始新任务前获取一个新的executor
     get_executor()
     
     async with async_playwright() as p:
         browser = await p.firefox.launch()
         try:
-            # 如果没有提供task_id，使用时间戳作为任务ID
             if task_id is None:
                 task_id = f"task_{int(asyncio.get_event_loop().time())}"
             
             tasks = [fetch(browser, url, task_id, is_multimodal=is_multimodal, theme=theme) for url in url_list]
-            results = await asyncio.gather(*tasks)
+            
+            results = []
+            completed_count = 0
+            total_count = len(tasks)
+
+            for future in asyncio.as_completed(tasks):
+                result = await future
+                results.append(result)
+                completed_count += 1
+                if progress_callback:
+                    try:
+                        progress_callback(completed_count, total_count)
+                    except Exception as e:
+                        logger.error(f"Error in progress_callback: {e}")
+
             return results, task_id
         finally:
-            # 确保在关闭浏览器前所有图片下载任务都已完成
-            await asyncio.sleep(0.5)  # 给异步任务一点时间完成
+            await asyncio.sleep(0.5)
             await browser.close()
 
 if __name__ == '__main__':

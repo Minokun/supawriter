@@ -64,21 +64,23 @@ def process_result(content, question, output_type=prompt_template.ARTICLE, model
     return chat_result
 
 
-def llm_task(search_result, question, output_type, model_type, model_name, max_workers=20):
+from typing import Optional
+
+def llm_task(search_result, question, output_type, model_type, model_name, max_workers=20, progress_callback: Optional[callable] = None):
     """
-    使用线程池并发处理搜索结果
+    使用线程池并发处理搜索结果，并提供进度回调
     :param search_result: 搜索结果列表
     :param question: 查询问题
     :param output_type: 输出类型
     :param model_type: 模型类型
     :param model_name: 模型名称
     :param max_workers: 最大线程数
+    :param progress_callback: 进度回调函数，接收 (completed_count, total_count)
     :return: 处理后的结果
     """
     if model_type == 'glm':
         max_workers = 10
     
-    # 提取任务类型中的"---任务---"部分
     task_description = ""
     if "---任务---" in output_type:
         task_parts = output_type.split("---任务---")
@@ -87,99 +89,85 @@ def llm_task(search_result, question, output_type, model_type, model_name, max_w
     
     logger.info(f"开始处理LLM任务: 模型={model_type}/{model_name}, 任务类型=---任务---{task_description}---, 搜索结果数量={len(search_result)}")
     
-    # 重新组装search_result，将html_content组合成不超过2万字符的块
     MAX_CONTENT_LENGTH = 20000
     optimized_search_result = []
     current_chunk = ""
     current_titles = []
     
-    # 按照内容长度排序，优先处理较短的内容
     sorted_results = sorted(search_result, key=lambda x: len(x.get('html_content', ''))) 
     
     for item in sorted_results:
         content = item.get('html_content', '')
         title = item.get('title', 'Untitled')
         
-        # 如果当前内容本身就超过了最大长度，单独处理
         if len(content) >= MAX_CONTENT_LENGTH:
-            optimized_search_result.append({
-                'title': title,
-                'html_content': content[:MAX_CONTENT_LENGTH],
-                'url': item.get('url', '')
-            })
+            optimized_search_result.append({'title': title, 'html_content': content[:MAX_CONTENT_LENGTH], 'url': item.get('url', '')})
             continue
         
-        # 如果添加当前内容后会超过最大长度，先保存当前块，再开始新块
         if len(current_chunk) + len(content) > MAX_CONTENT_LENGTH:
-            if current_chunk:  # 确保不添加空块
-                optimized_search_result.append({
-                    'title': ' | '.join(current_titles),
-                    'html_content': current_chunk,
-                    'url': 'combined'
-                })
+            if current_chunk:
+                optimized_search_result.append({'title': ' | '.join(current_titles), 'html_content': current_chunk, 'url': 'combined'})
             current_chunk = content
             current_titles = [title]
         else:
-            # 添加分隔符
             if current_chunk:
                 current_chunk += "\n\n---\n\n"
             current_chunk += content
             current_titles.append(title)
     
-    # 添加最后一个块（如果有）
     if current_chunk:
-        optimized_search_result.append({
-            'title': ' | '.join(current_titles),
-            'html_content': current_chunk,
-            'url': 'combined'
-        })
+        optimized_search_result.append({'title': ' | '.join(current_titles), 'html_content': current_chunk, 'url': 'combined'})
     
     logger.info(f"搜索结果优化: 原始数量={len(search_result)}, 优化后数量={len(optimized_search_result)}")
     
-    # 创建一个线程安全的标志，用于标记是否发生了连接错误
     connection_error = None
     
-    # 定义一个包装函数来捕获ConnectionError
     def process_result_wrapper(content, question, output_type, model_type, model_name):
         nonlocal connection_error
+        if connection_error: return "CONNECTION_ERROR"
         try:
             return process_result(content, question, output_type, model_type, model_name)
         except ConnectionError as e:
             connection_error = e
             logger.error(f"连接错误: {str(e)}")
-            # 返回一个占位符，这个结果不会被使用
             return "CONNECTION_ERROR"
-    
+
+    results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # 使用优化后的搜索结果
         futures = [executor.submit(process_result_wrapper, item['html_content'], question, output_type, model_type, model_name) 
                   for item in optimized_search_result]
         
-        # 等待所有任务完成
-        logger.info(f"已提交{len(futures)}个任务到线程池，等待完成...")
-        concurrent.futures.wait(futures)
+        logger.info(f"已提交{len(futures)}个LLM任务到线程池，等待完成...")
         
-        # 检查是否有连接错误
-        if connection_error:
-            logger.error(f"任务执行失败: {str(connection_error)}")
-            raise connection_error
-        
-        logger.info(f"所有任务已完成")
+        completed_count = 0
+        total_count = len(futures)
+
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            if connection_error:
+                logger.error(f"检测到连接错误，正在中止其余任务...")
+                break 
+
+            results.append(result)
+            completed_count += 1
+            if progress_callback:
+                try:
+                    progress_callback(completed_count, total_count)
+                except Exception as e:
+                    logger.error(f"进度回调函数出错: {e}")
+
+    if connection_error:
+        logger.error(f"任务执行因连接错误而失败: {str(connection_error)}")
+        raise connection_error
+    
+    logger.info(f"所有LLM任务已完成，获取到{len(results)}个结果")
     
     if output_type == prompt_template.ARTICLE_OUTLINE_GEN:
-        # 获取结果
-        results = [future.result() for future in futures]
-        logger.info(f"获取到{len(results)}个大纲结果")
-        # 处理结果
-        outlines = '\n'.join([result.replace('\n', '').replace('```json', '').replace('```', '') for result in results])
+        outlines = '\n'.join([res.replace('\n', '').replace('```json', '').replace('```', '') for res in results if res != "CONNECTION_ERROR"])
         logger.info(f"大纲结果合并完成，总长度={len(outlines)}")
         return outlines
     else:
-        # 获取结果
-        results = [future.result() for future in futures]
-        logger.info(f"获取到{len(results)}个结果")
-        # 处理结果
-        outlines = '\n'.join(results)
+        outlines = '\n'.join([res for res in results if res != "CONNECTION_ERROR"])
         if len(outlines) > 25000:
             logger.info(f"结果过长({len(outlines)}字符)，截断至25000字符")
             outlines = outlines[:25000]
@@ -373,7 +361,7 @@ class Search:
             print(f"SearXNG搜索失败: {e}")
             return None
 
-    def get_search_result(self, question: str, is_multimodal=False, theme="", spider_mode=False):
+    def get_search_result(self, question: str, is_multimodal=False, theme="", spider_mode=False, progress_callback: Optional[callable] = None):
         data = self.query_search(question)
         search_result = []
         search_engine_urls = []
@@ -479,7 +467,7 @@ class Search:
                 logger.info(f"Final deduplicated URLs for content grabbing: {len(final_urls)}")
                 
                 # 爬取内容
-                result, task_id = asyncio.run(get_main_content(final_urls, is_multimodal=is_multimodal, theme=theme))
+                result, task_id = asyncio.run(get_main_content(final_urls, is_multimodal=is_multimodal, theme=theme, progress_callback=progress_callback))
                 
                 # 创建字典，存储爬取到的内容和图片
                 html_content_dict = {}

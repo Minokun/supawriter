@@ -44,6 +44,15 @@ def main():
                         if st.session_state.active_chat_id:
                             update_chat_title(current_user, st.session_state.active_chat_id, new_title)
                     break
+
+    def handle_delete_session(session_id):
+        delete_chat_session(current_user, session_id)
+        # 如果删除的是当前活动聊天，重置状态
+        if st.session_state.active_chat_id == session_id:
+            st.session_state.active_chat_id = None
+            st.session_state.messages = []
+            st.session_state.chat_title = "新对话"
+        st.rerun()
     
     
     # 在侧边栏添加模型选择和清空按钮
@@ -64,11 +73,10 @@ def main():
                     st.session_state.chat_title
                 )
             
-            # 创建新聊天
-            new_chat = create_chat_session(current_user, "新对话")
-            st.session_state.active_chat_id = new_chat['id']
+            # 重置内存状态以开始新聊天，而不是立即创建持久化记录
+            st.session_state.active_chat_id = None
             st.session_state.messages = []
-            st.session_state.chat_title = new_chat['title']
+            st.session_state.chat_title = "新对话"
             st.rerun()
         
         # 获取聊天历史列表
@@ -86,194 +94,50 @@ def main():
                 # 显示历史对话数量
                 st.caption(f"共 {len(chat_sessions)} 条对话记录")
                 
-                # 添加CSS样式使历史记录更美观
+                # 添加CSS样式，专注于“新建聊天”按钮
                 st.markdown("""
                 <style>
-                /* 滚动容器样式 */
-                .scroll-container {
-                    max-height: 300px;
-                    overflow-y: auto;
-                    padding-right: 5px;
-                    margin-bottom: 10px;
-                    border-radius: 4px;
-                }
-                
-                /* 自定义滚动条 */
-                .scroll-container::-webkit-scrollbar {
-                    width: 4px;
-                }
-                
-                .scroll-container::-webkit-scrollbar-track {
-                    background: #f1f1f1;
-                    border-radius: 4px;
-                }
-                
-                .scroll-container::-webkit-scrollbar-thumb {
-                    background: #c1c1c1;
-                    border-radius: 4px;
-                }
-                
-                /* 时间标签样式 */
-                .chat-time {
-                    font-size: 0.7em;
-                    color: #888;
-                    margin: 0 0 2px 0;
-                    padding: 0;
-                }
-                
-                /* 历史记录按钮样式 */
-                div.stButton > button {
-                    background-color: #aaa19f;
-                    border: none;
-                    padding: 4px 8px;
-                    border-radius: 4px;
-                    font-size: 0.75em;
-                    line-height: 1.2;
-                    text-align: left;
-                    white-space: normal;
-                    height: auto;
-                    min-height: 0;
-                    margin: 0;
-                }
-                
-                /* 新建聊天按钮样式 - 确保白色文字 */
-                button[data-testid="baseButton-primary"]:has(div:contains("➕ 新建聊天")) {
+                /* --- “新建聊天”按钮 --- */
+                div.stButton > button:has(div:contains("新建聊天")) {
+                    background-color: #007AFF !important;
                     color: white !important;
-                }
-                
-                /* 移除按钮的悬停效果 */
-                div.stButton > button:hover {
-                    border: none;
-                }
-                
-                /* 删除按钮样式 */
-                div.stButton > button[data-testid="baseButton-secondary"] {
-                    background-color: transparent;
-                    padding: 2px;
-                    min-height: 0;
-                    height: auto;
-                }
-                
-                /* 分隔线样式 */
-                .chat-divider {
-                    margin: 2px 0;
-                    border-top: 1px solid #eee;
+                    border-radius: 20px !important;
+                    border: none !important;
+                    font-weight: bold !important;
                 }
                 </style>
                 """, unsafe_allow_html=True)
                 
-                # 创建一个滑动区域来容纳历史对话
-                st.markdown('<div class="scroll-container">', unsafe_allow_html=True)
-                for idx, session in enumerate(chat_sessions):
-                    # 格式化日期时间
-                    try:
-                        updated_at = datetime.datetime.fromisoformat(session['updated_at'])
-                        date_str = updated_at.strftime("%m-%d %H:%M")
-                    except:
-                        date_str = "未知时间"
-                    
-                    # 截取前15个字作为显示
-                    display_title = session['title'][:15] + ('...' if len(session['title']) > 15 else '')
-                    
-                    # 使用按钮实现更紧凑的历史记录项
-                    col1, col2 = st.columns([0.9, 0.1])
-                    
-                    with col1:
-                        # 显示时间信息
-                        st.markdown(f"<p class='chat-time'>{date_str}</p>", unsafe_allow_html=True)
+                # 使用st.container和st.columns构建清晰的卡片布局
+                for session in chat_sessions:
+                    with st.container(border=True):
+                        col1, col2, col3 = st.columns([0.7, 0.15, 0.15])
                         
-                        # 使用按钮但添加自定义样式
-                        button_label = f"{display_title}\n{session['message_count']} 条消息"
-                        if st.button(button_label, key=f"chat_{session['id']}", use_container_width=True):
+                        with col1:
+                            # 格式化日期和标题
+                            try:
+                                updated_at = datetime.datetime.fromisoformat(session['updated_at'])
+                                date_str = updated_at.strftime("%Y-%m-%d %H:%M")
+                            except:
+                                date_str = "未知时间"
+                            display_title = session['title'][:20] + ('...' if len(session['title']) > 20 else '')
                             
-                            # 保存当前聊天（如果有且消息数量大于等于2条）
-                            if st.session_state.active_chat_id and len(st.session_state.messages) >= 2:
-                                save_chat_session(
-                                    current_user, 
-                                    st.session_state.active_chat_id, 
-                                    st.session_state.messages,
-                                    st.session_state.chat_title
-                                )
-                            
-                            # 加载选中的聊天
-                            chat_data = load_chat_session(current_user, session['id'])
-                            if chat_data:
-                                st.session_state.active_chat_id = session['id']
-                                st.session_state.messages = chat_data['messages']
-                                st.session_state.chat_title = chat_data['title']
-                                st.rerun()
-                    
-                    # 删除按钮
-                    with col2:
-                        if st.button("🗑️", key=f"delete_{session['id']}", help="删除该对话"):
-                            delete_chat_session(current_user, session['id'])
-                            # 如果删除的是当前活动聊天，重置状态
-                            if st.session_state.active_chat_id == session['id']:
-                                st.session_state.active_chat_id = None
-                                st.session_state.messages = []
-                                st.session_state.chat_title = "新对话"
-                            st.rerun()
-                    
-                    # 添加分隔线，除非是最后一项
-                    if idx < len(chat_sessions) - 1:
-                        st.markdown("<div class='chat-divider'></div>", unsafe_allow_html=True)
-                
-                # 关闭滚动容器
-                st.markdown('</div>', unsafe_allow_html=True)
-        
-        # 添加分隔线
-        st.markdown("<hr>", unsafe_allow_html=True)
-        
-        st.header("模型设置")
-        
-        # 初始化会话状态
-        if "selected_provider" not in st.session_state:
-            st.session_state.selected_provider = LLM_PROVIDERS[0]
-        
-        # 选择供应商
-        provider_options = LLM_PROVIDERS
-        selected_provider = st.selectbox(
-            "选择供应商",
-            options=provider_options,
-            index=provider_options.index(st.session_state.selected_provider) if st.session_state.selected_provider in provider_options else 0,
-            key="provider_selector"
-        )
-        
-        # 如果供应商变化，更新会话状态
-        if selected_provider != st.session_state.selected_provider:
-            st.session_state.selected_provider = selected_provider
-            # 重置模型选择
-            if "selected_model_index" in st.session_state:
-                del st.session_state.selected_model_index
-        
-        # 获取选定供应商的模型列表
-        try:
-            available_models = st.secrets[selected_provider]['model']
-            if not isinstance(available_models, list):
-                available_models = [available_models]
-                
-            # 初始化选定模型索引
-            if "selected_model_index" not in st.session_state:
-                st.session_state.selected_model_index = 0
-                
-            # 选择具体模型
-            selected_model_index = st.selectbox(
-                "选择模型",
-                options=range(len(available_models)),
-                format_func=lambda i: available_models[i],
-                index=st.session_state.selected_model_index if st.session_state.selected_model_index < len(available_models) else 0,
-                key="model_selector"
-            )
-            
-            # 更新选定模型索引
-            if selected_model_index != st.session_state.selected_model_index:
-                st.session_state.selected_model_index = selected_model_index
-                # 重新加载页面以应用新模型
-                st.rerun()
-                
-        except Exception as e:
-            st.error(f"无法加载 {selected_provider} 的模型列表: {str(e)}")
-            available_models = ["default_model"]
+                            # 使用Markdown正确渲染HTML标签
+                            st.markdown(f"**{display_title}**<br><small>{date_str} - {session['message_count']} 条消息</small>", unsafe_allow_html=True)
+
+                        with col2:
+                            if st.button(":material/open_in_new:", key=f"open_{session['id']}", help="打开对话"):
+                                if st.session_state.active_chat_id and len(st.session_state.messages) >= 2:
+                                    save_chat_session(current_user, st.session_state.active_chat_id, st.session_state.messages, st.session_state.chat_title)
+                                chat_data = load_chat_session(current_user, session['id'])
+                                if chat_data:
+                                    st.session_state.active_chat_id = session['id']
+                                    st.session_state.messages = chat_data['messages']
+                                    st.session_state.chat_title = chat_data['title']
+                                    st.rerun()
+                        
+                        with col3:
+                            st.button(":material/delete_forever:", key=f"delete_{session['id']}", help="删除该对话", on_click=handle_delete_session, args=(session['id'],))
         
         # 清空对话按钮
         if st.button("🚮 清空当前对话", type="secondary", use_container_width=True):
@@ -320,36 +184,22 @@ def main():
                       handlers=[logging.StreamHandler(sys.stdout)])
     logger = logging.getLogger('home')
 
-    # 使用侧边栏中选择的模型
+    # 使用全局模型设置
     try:
-        # 获取选定的供应商
-        provider = st.session_state.get("selected_provider", LLM_PROVIDERS[0])
+        global_settings = st.session_state.get('global_model_settings', {})
+        if not global_settings:
+            # 如果全局设置不存在，使用第一个可用模型作为后备
+            model_type = list(LLM_MODEL.keys())[0]
+            model_name = LLM_MODEL[model_type]['model'][0] if isinstance(LLM_MODEL[model_type]['model'], list) else LLM_MODEL[model_type]['model']
+            st.warning(f"全局模型未配置，已自动选择: {model_type}/{model_name}", icon="⚠️")
+        else:
+            model_type = global_settings.get('provider')
+            model_name = global_settings.get('model_name')
         
-        # 获取选定的模型索引
-        model_index = st.session_state.get("selected_model_index", 0)
-        
-        # 获取模型列表
-        available_models = st.secrets[provider]['model']
-        if not isinstance(available_models, list):
-            available_models = [available_models]
-            
-        # 确保索引有效
-        if model_index >= len(available_models):
-            model_index = 0
-            
-        # 获取具体模型名称
-        model_name = available_models[model_index]
-        
-        # 获取API配置
-        model_api_key = st.secrets[provider]['api_key']
-        model_base_url = st.secrets[provider]['base_url']
-        
-        # 记录供应商信息便于显示
-        model_type = provider
+        model_api_key = LLM_MODEL[model_type]['api_key']
+        model_base_url = LLM_MODEL[model_type]['base_url']
         
         logger.info(f"使用模型: {model_type} - {model_name}")
-        logger.info(f"API基础URL: {model_base_url}")
-        
         client = openai.OpenAI(api_key=model_api_key, base_url=model_base_url)
     except Exception as e:
         st.error(f"模型配置错误: {str(e)}")
@@ -372,11 +222,8 @@ def main():
             st.caption(f"当前对话: {st.session_state.chat_title}")
         
         with col2:
-            # 显示当前选择的模型信息
-            if 'model_name' in locals() and 'model_type' in locals():
-                st.info(f"{model_type} - {model_name}", icon="📡")
-            else:
-                st.info(f"已加载默认模型", icon="📡")
+            # 显示当前使用的全局模型
+            st.info(f"{model_type} - {model_name}", icon="📡")
     
     # 添加轻量级分隔线
     st.markdown("<hr style='margin: 0.5em 0; opacity: 0.3'>", unsafe_allow_html=True)
@@ -385,12 +232,6 @@ def main():
     if not st.session_state.messages:
         # 如果消息为空，显示简洁的欢迎信息
         st.info("欢迎使用 AI 助手！请在下方输入框中提问。")
-        
-        # 如果没有活动聊天，创建一个新聊天
-        if not st.session_state.active_chat_id:
-            new_chat = create_chat_session(current_user, "新对话")
-            st.session_state.active_chat_id = new_chat['id']
-            st.session_state.chat_title = new_chat['title']
     else:
         # 显示所有聊天消息
         for message in st.session_state.messages:
@@ -449,13 +290,17 @@ def main():
                         # 显示最终响应
                         message_placeholder.markdown(full_response)
                         
-                        # 添加保存按钮
+                        # 添加下载按钮，用于保存单条回复
                         if full_response:
-                            col1, col2 = st.columns([6, 1])
-                            with col2:
-                                if st.button('💾 保存回复', key='save_response'):
-                                    st.session_state['save_content'] = full_response
-                                    st.session_state['show_save_dialog'] = True
+                            # 为文件名生成一个唯一的时间戳
+                            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                            st.download_button(
+                                label="📥 保存此条回复",
+                                data=full_response,
+                                file_name=f"ai_response_{timestamp}.md",
+                                mime="text/markdown",
+                                key=f"download_{timestamp}" # 使用唯一key避免冲突
+                            )
                     except Exception as e:
                         error_msg = f"AI响应错误: {str(e)}"
                         logger.error(error_msg)
@@ -465,69 +310,30 @@ def main():
                 # 添加助手回复到历史记录
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
                 
-                # 处理保存对话内容到文件的逻辑
-                if 'show_save_dialog' not in st.session_state:
-                    st.session_state['show_save_dialog'] = False
-                    
-                if 'save_content' not in st.session_state:
-                    st.session_state['save_content'] = ''
-                
-                if st.session_state.get('show_save_dialog', False):
-                    with st.form('save_dialog'):
-                        st.subheader('保存对话内容')
-                        file_name = st.text_input('文件名', value='对话内容.txt')
-                        
-                        # 添加文件预览
-                        with st.expander('内容预览'):
-                            st.text(st.session_state['save_content'][:500] + ('...' if len(st.session_state['save_content']) > 500 else ''))
-                        
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            save_submit = st.form_submit_button('确认保存')
-                        with col2:
-                            cancel_submit = st.form_submit_button('取消')
-                        
-                        if save_submit:
-                            try:
-                                import os
-                                from pathlib import Path
-                                import tkinter as tk
-                                from tkinter import filedialog
-                                
-                                # 创建一个隐藏的tkinter窗口
-                                root = tk.Tk()
-                                root.withdraw()
-                                
-                                # 打开文件保存对话框
-                                file_path = filedialog.asksaveasfilename(
-                                    defaultextension='.txt',
-                                    filetypes=[('Text files', '*.txt'), ('All files', '*.*')],
-                                    initialfile=file_name
-                                )
-                                
-                                if file_path:
-                                    with open(file_path, 'w', encoding='utf-8') as f:
-                                        f.write(st.session_state['save_content'])
-                                    st.success(f'内容已保存到: {file_path}')
-                                    st.session_state['show_save_dialog'] = False
-                                else:
-                                    st.info('保存已取消')
-                            except Exception as e:
-                                st.error(f'保存文件时出错: {str(e)}')
-                                logger.error(f'保存文件时出错: {str(e)}')
-                        
-                        if cancel_submit:
-                            st.session_state['show_save_dialog'] = False
-                            st.rerun()
-                
-                # 保存聊天历史（只有当消息数量大于等于2条时才保存）
-                if st.session_state.active_chat_id and len(st.session_state.messages) >= 2:
-                    save_chat_session(
-                        current_user, 
-                        st.session_state.active_chat_id, 
-                        st.session_state.messages,
-                        st.session_state.chat_title
-                    )
+                # --- 延迟创建和保存逻辑 ---
+                # 只有当对话至少有一轮（用户提问+AI回答）时才保存
+                if len(st.session_state.messages) >= 2:
+                    # 如果这是一个全新的、还未保存的对话
+                    if not st.session_state.active_chat_id:
+                        # 先创建持久化记录，获取ID
+                        new_chat = create_chat_session(current_user, st.session_state.chat_title)
+                        st.session_state.active_chat_id = new_chat['id']
+                        # 立即保存第一轮对话
+                        save_chat_session(
+                            current_user,
+                            st.session_state.active_chat_id,
+                            st.session_state.messages,
+                            st.session_state.chat_title
+                        )
+                        st.rerun() # 重新运行以更新侧边栏的历史记录
+                    else:
+                        # 对于已存在的对话，直接更新
+                        save_chat_session(
+                            current_user,
+                            st.session_state.active_chat_id,
+                            st.session_state.messages,
+                            st.session_state.chat_title
+                        )
             except Exception as e:
                 st.error(f"处理对话时出错: {str(e)}")
                 logger.error(f"处理对话时出错: {str(e)}")
