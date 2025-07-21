@@ -7,7 +7,7 @@ import numpy as np
 import faiss
 from typing import List, Dict, Any, Tuple, Optional
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from settings import EMBEDDING_TYPE, EMBEDDING_MODEL_gitee, EMBEDDING_HOST_gitee, EMBEDDING_TIMEOUT_gitee, EMBEDDING_API_KEY_gitee, EMBEDDING_MODEL_xinference, EMBEDDING_HOST_xinference, EMBEDDING_TIMEOUT_xinference
+from settings import EMBEDDING_TYPE, EMBEDDING_CONFIG
 from openai import OpenAI
 from sentence_transformers import SentenceTransformer
 
@@ -17,15 +17,21 @@ logger = logging.getLogger(__name__)
 # 平均响应时间在600ms-1800ms之间，设置为3秒应足够大部分请求
 EMBEDDING_TIMEOUT = 10
 
+# Initialize clients for different embedding providers
 gitee_client = OpenAI(
-    base_url=EMBEDDING_HOST_gitee,
-    api_key=EMBEDDING_API_KEY_gitee,
-    timeout=EMBEDDING_TIMEOUT
+    base_url=EMBEDDING_CONFIG['gitee']['host'],
+    api_key=EMBEDDING_CONFIG['gitee']['api_key'],
+    timeout=EMBEDDING_CONFIG['gitee']['timeout']
 )
 xinference_client = OpenAI(
-    base_url=f"{EMBEDDING_HOST_xinference}",
-    api_key="not-needed",
-    timeout=EMBEDDING_TIMEOUT
+    base_url=EMBEDDING_CONFIG['xinference']['host'],
+    api_key=EMBEDDING_CONFIG['xinference']['api_key'],
+    timeout=EMBEDDING_CONFIG['xinference']['timeout']
+)
+jina_client = OpenAI(
+    base_url=EMBEDDING_CONFIG['jina']['host'],
+    api_key=EMBEDDING_CONFIG['jina']['api_key'],
+    timeout=EMBEDDING_CONFIG['jina']['timeout']
 )
 
 # 全局Embedding实例，避免重复创建
@@ -46,23 +52,28 @@ def get_embedding_instance():
     
 class Embedding:
     def __init__(self):
-        global EMBEDDING_TYPE, gitee_client, xinference_client, EMBEDDING_MODEL_xinference, EMBEDDING_MODEL_gitee
+        global EMBEDDING_TYPE, EMBEDDING_CONFIG, gitee_client, xinference_client, jina_client
         self.embedding_type = EMBEDDING_TYPE
-        self.local_model_name = "BAAI/bge-large-zh-v1.5"
-        self.embedding_model = EMBEDDING_MODEL_gitee if self.embedding_type == 'gitee' else EMBEDDING_MODEL_xinference
-        self.embedding_host = EMBEDDING_HOST_gitee if self.embedding_type == 'gitee' else EMBEDDING_HOST_xinference
-        self.embedding_timeout = EMBEDDING_TIMEOUT_gitee if self.embedding_type == 'gitee' else EMBEDDING_TIMEOUT_xinference
-        self.embedding_api_key = EMBEDDING_API_KEY_gitee if self.embedding_type == 'gitee' else "not-needed"
+        
+        # Get configuration based on embedding type
+        self.config = EMBEDDING_CONFIG[self.embedding_type]
+        self.embedding_model = self.config['model']
+        
+        # For local model, use the model name from config
+        self.local_model_name = EMBEDDING_CONFIG['local']['model']
         
         logger.info(f"Using embedding mode: {self.embedding_type}")
         
         if self.embedding_type == 'gitee':
             self.client = gitee_client
-            logger.info(f"Gitee embedding model: {self.embedding_model} at {self.embedding_host}")
+            logger.info(f"Gitee embedding model: {self.embedding_model} at {self.config['host']}")
         elif self.embedding_type == 'xinference':
             self.client = xinference_client
-            logger.info(f"Xinference embedding model: {self.embedding_model} at {self.embedding_host}")
-        else:
+            logger.info(f"Xinference embedding model: {self.embedding_model} at {self.config['host']}")
+        elif self.embedding_type == 'jina':
+            self.client = jina_client
+            logger.info(f"Jina embedding model: {self.embedding_model} at {self.config['host']}")
+        else:  # local model
             logger.info(f"Using local embedding model: {self.local_model_name}")
             try:
                 # First try with trust_remote_code for models that might need it
@@ -79,23 +90,15 @@ class Embedding:
         
         for attempt in range(max_retries):
             try:
-                if self.embedding_type == 'gitee':
-                    logger.info(f"Getting embedding from gitee (attempt {attempt+1}/{max_retries})")
+                if self.embedding_type in ['gitee', 'xinference', 'jina']:
+                    logger.info(f"Getting embedding from {self.embedding_type} (attempt {attempt+1}/{max_retries})")
                     response = self.client.embeddings.create(
                         model=self.embedding_model,
                         input=text,
                         encoding_format="float"
                     )
                     return response.data[0].embedding
-                elif self.embedding_type == 'xinference':
-                    logger.info(f"Getting embedding from xinference (attempt {attempt+1}/{max_retries})")
-                    response = self.client.embeddings.create(
-                        model=self.embedding_model,
-                        input=text,
-                        encoding_format="float"
-                    )
-                    return response.data[0].embedding
-                else:
+                else:  # local model
                     logger.info(f"Getting embedding from local model (attempt {attempt+1}/{max_retries})")
                     return self.model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
             except Exception as e:
@@ -386,7 +389,7 @@ class FAISSIndex:
             return False
 
 
-def create_faiss_index(load_from_disk: bool = False, index_dir: str = 'data/faiss') -> FAISSIndex:
+def create_faiss_index(load_from_disk: bool = False, index_dir: str = 'data/faiss', username: str = None, article_id: str = None) -> FAISSIndex:
     """
     创建一个新的FAISS索引实例，可选从磁盘加载。
     维度将在添加第一个embedding时自动设置。
@@ -394,6 +397,8 @@ def create_faiss_index(load_from_disk: bool = False, index_dir: str = 'data/fais
     Args:
         load_from_disk: 是否尝试从磁盘加载现有索引
         index_dir: FAISS索引文件的存储目录
+        username: 用户名，用于创建用户特定的索引路径
+        article_id: 文章ID，用于创建文章特定的索引路径
         
     Returns:
         FAISSIndex: 新创建的或从磁盘加载的FAISS索引实例
@@ -403,14 +408,25 @@ def create_faiss_index(load_from_disk: bool = False, index_dir: str = 'data/fais
     
     faiss_index = FAISSIndex()
     
+    # 根据用户名和文章ID构建索引路径
+    if username and article_id:
+        # 使用文章特定的索引路径：/data/faiss/{username}/{article_id}/
+        actual_index_dir = os.path.join(index_dir, username, article_id)
+    elif username:
+        # 使用用户特定的索引路径：/data/faiss/{username}/
+        actual_index_dir = os.path.join(index_dir, username)
+    else:
+        # 使用全局索引路径
+        actual_index_dir = index_dir
+    
     # 设置索引文件路径
-    index_path = os.path.join(index_dir, 'index.faiss')
-    data_path = os.path.join(index_dir, 'index_data.pkl')
+    index_path = os.path.join(actual_index_dir, 'index.faiss')
+    data_path = os.path.join(actual_index_dir, 'index_data.pkl')
     
     # 如果指定从磁盘加载且文件存在，尝试加载
     if load_from_disk:
         # 创建目录（如果不存在）
-        Path(index_dir).mkdir(parents=True, exist_ok=True)
+        Path(actual_index_dir).mkdir(parents=True, exist_ok=True)
         
         # 检查文件是否存在
         index_exists = os.path.exists(index_path)
@@ -431,13 +447,15 @@ def create_faiss_index(load_from_disk: bool = False, index_dir: str = 'data/fais
     return faiss_index
 
 
-def save_faiss_index(faiss_index: FAISSIndex, index_dir: str = 'data/faiss') -> bool:
+def save_faiss_index(faiss_index: FAISSIndex, index_dir: str = 'data/faiss', username: str = None, article_id: str = None) -> bool:
     """
     将FAISS索引保存到磁盘。
     
     Args:
         faiss_index: 要保存的FAISS索引实例
         index_dir: FAISS索引文件的存储目录
+        username: 用户名，用于创建用户特定的索引路径
+        article_id: 文章ID，用于创建文章特定的索引路径
         
     Returns:
         bool: 是否成功保存
@@ -445,18 +463,29 @@ def save_faiss_index(faiss_index: FAISSIndex, index_dir: str = 'data/faiss') -> 
     import os
     from pathlib import Path
     
+    # 根据用户名和文章ID构建索引路径
+    if username and article_id:
+        # 使用文章特定的索引路径：/data/faiss/{username}/{article_id}/
+        actual_index_dir = os.path.join(index_dir, username, article_id)
+    elif username:
+        # 使用用户特定的索引路径：/data/faiss/{username}/
+        actual_index_dir = os.path.join(index_dir, username)
+    else:
+        # 使用全局索引路径
+        actual_index_dir = index_dir
+    
     # 创建目录（如果不存在）
-    Path(index_dir).mkdir(parents=True, exist_ok=True)
+    Path(actual_index_dir).mkdir(parents=True, exist_ok=True)
     
     # 设置索引文件路径 - 统一使用index.faiss和index_data.pkl命名
-    index_path = os.path.join(index_dir, 'index.faiss')
-    data_path = os.path.join(index_dir, 'index_data.pkl')
+    index_path = os.path.join(actual_index_dir, 'index.faiss')
+    data_path = os.path.join(actual_index_dir, 'index_data.pkl')
     
     # 保存到磁盘
     return faiss_index.save_to_disk(index_path, data_path)
 
 
-def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex) -> None:
+def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex, username: str = None, article_id: str = None, auto_save: bool = True) -> None:
     """
     Add a text string and its corresponding data to the provided FAISS index.
     The text will be converted to an embedding vector automatically.
@@ -465,6 +494,9 @@ def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex) -> None:
         text: The text string to be embedded.
         data: The corresponding data object.
         faiss_index: The FAISS index instance to add the embedding to.
+        username: 用户名，用于自动保存时确定路径
+        article_id: 文章ID，用于自动保存时确定路径
+        auto_save: 是否自动保存索引到磁盘
     """
     # 使用全局Embedding实例
     embedding_instance = get_embedding_instance()
@@ -479,6 +511,14 @@ def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex) -> None:
     
     # 添加到索引
     faiss_index.add_embedding(embedding_vector, data)
+    
+    # 自动保存到磁盘
+    if auto_save:
+        try:
+            save_faiss_index(faiss_index, username=username, article_id=article_id)
+            logger.debug(f"Auto-saved FAISS index after adding embedding")
+        except Exception as e:
+            logger.warning(f"Failed to auto-save FAISS index: {e}")
 
 
 def add_batch_to_faiss_index(texts: List[str], data: List[Any], faiss_index: FAISSIndex) -> None:

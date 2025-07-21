@@ -3,6 +3,7 @@ import sys
 import logging
 import os
 import uuid
+import re
 from pathlib import Path
 from utils.searxng_utils import Search, llm_task, chat, parse_outline_json
 import utils.prompt_template as pt
@@ -32,6 +33,10 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
     # 将主线程的上下文附加到当前线程
     add_script_run_ctx(threading.current_thread(), ctx)
     
+    # 导入所需模块
+    import hashlib
+    import time
+    
     # --- 将log函数定义提升到函数顶层作用域 ---
     def log(level, message):
         timestamp = time.strftime("%H:%M:%S", time.localtime())
@@ -44,12 +49,21 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
         task_state['progress'] = 0
         task_state['progress_text'] = "任务初始化..."
         
-        # --- 在任务开始时，只加载一次FAISS索引 ---
+        # --- 在任务开始时，加载用户和文章特定的FAISS索引 ---
+        # 获取当前用户信息
+        current_user = get_current_user()
+        username = current_user if current_user else "anonymous"
+        
+        # 生成文章ID（基于标题和时间戳）
+        article_hash = hashlib.md5(f"{article_title}_{int(time.time())}".encode()).hexdigest()[:8]
+        article_id = f"article_{article_hash}"
+        
         faiss_index = None
         if enable_images:
             try:
-                faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss')
-                log('info', f"FAISS索引加载成功，共 {faiss_index.get_size()} 张图片数据。")
+                # 尝试加载文章特定的索引，如果不存在则回退到用户索引或全局索引
+                faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss', username=username, article_id=article_id)
+                log('info', f"FAISS索引加载成功（{username}/{article_id}），共 {faiss_index.get_size()} 张图片数据。")
             except Exception as e:
                 log('error', f"FAISS索引加载失败: {e}")
 
@@ -67,11 +81,27 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
 
         search_result = []
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(Search(result_num=spider_num).get_search_result, text_input, is_multimodal=enable_images, theme=article_title, progress_callback=spider_progress_callback)
+            future = executor.submit(Search(result_num=spider_num).get_search_result, text_input, is_multimodal=enable_images, theme=article_title, progress_callback=spider_progress_callback, username=username, article_id=article_id)
             search_result = future.result()
         
         log('info', f"网页抓取完成，共找到 {len(search_result)} 个结果。UI即将更新...")
         task_state['search_result'] = search_result # 保存结果以供预览
+        
+        # 搜索完成后，重新加载FAISS索引以获取最新的图片数据
+        if enable_images:
+            try:
+                # 使用用户和文章特定的索引路径
+                expected_index_path = f"data/faiss/{username}/{article_id}/index.faiss"
+                log('info', f"尝试加载用户和文章特定的FAISS索引: {expected_index_path}")
+                faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss', username=username, article_id=article_id)
+                log('info', f"搜索后重新加载FAISS索引成功，共 {faiss_index.get_size()} 张图片数据。")
+                
+                # 检查索引是否为空
+                if faiss_index.get_size() == 0:
+                    log('warn', f"用户和文章特定的FAISS索引为空，可能图片数据未正确保存。")
+            except Exception as e:
+                log('error', f"搜索后重新加载FAISS索引失败: {e}")
+                faiss_index = None
 
         # 2. 生成大纲
         task_state['progress'] = 30
@@ -137,8 +167,10 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
                 # 图像处理逻辑
                 if enable_images and faiss_index and faiss_index.get_size() > 0:
                     try:
+                        log('info', f"开始为章节 '{outline_block.get('h1', '')}' 搜索图片，当前FAISS索引大小: {faiss_index.get_size()}")
                         outline_block_str = outline_block.get('h1', '') + "".join(outline_block.get('h2', [])) + outline_block_content_final
                         _, distances, matched_data = search_similar_text(outline_block_str, faiss_index, k=10)
+                        log('info', f"图片搜索完成，找到 {len(matched_data)} 个匹配结果")
                         
                         image_inserted = False
                         if matched_data:
@@ -162,14 +194,28 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
                     log('warn', "FAISS索引为空或加载失败，跳过本章节的图片匹配。")
 
                 article_chapters.append(outline_block_content_final)
-                task_state['live_article'] = '\n\n'.join(article_chapters) # 实时更新文章内容
+                
+                # 实时更新文章内容，包含summary
+                live_article_content = '\n\n'.join(article_chapters)
+                if outline_summary_json.get('summary') and outline_summary_json['summary'].strip():
+                    summary_text = outline_summary_json['summary'].strip()
+                    summary_markdown = f"> **文章概要**\n> {summary_text}\n\n"
+                    live_article_content = summary_markdown + live_article_content
+                task_state['live_article'] = live_article_content
 
         # 5. 完成并保存
         task_state['progress'] = 100
         task_state['progress_text'] = "文章生成完成！"
         log('info', "文章已生成，正在保存到历史记录...")
         
+        # 组装最终文章，在最前面添加summary
         final_article_content = '\n\n'.join(article_chapters)
+        
+        # 在文章最前面添加summary（使用markdown引用格式）
+        if outline_summary_json.get('summary') and outline_summary_json['summary'].strip():
+            summary_text = outline_summary_json['summary'].strip()
+            summary_markdown = f"> **文章概要**\n> {summary_text}\n\n"
+            final_article_content = summary_markdown + final_article_content
         if final_article_content.strip():
             current_user = get_current_user()
             if current_user:
@@ -337,8 +383,33 @@ def main():
         st.info("任务正在后台执行中... 您可以切换到其他页面，任务不会中断。")
         st.progress(task_state['progress'], text=task_state['progress_text'])
         
-        # 创建三列布局，用于放置按钮
-        col1, col2, col3 = st.columns(3)
+        # 确保faiss_index和enable_images变量可用
+        enable_images = DEFAULT_ENABLE_IMAGES
+        faiss_index = None
+        
+        # 尝试从任务状态获取当前用户和文章ID
+        current_user = get_current_user()
+        username = current_user if current_user else "anonymous"
+        
+        # 从日志中尝试提取文章ID
+        article_id = None
+        for log_line in task_state.get('log', []):
+            if "FAISS索引加载成功" in log_line and "/article_" in log_line:
+                match = re.search(r"\(([^/]+)/(article_[^\)]+)\)", log_line)
+                if match and match.group(2):
+                    article_id = match.group(2)
+                    break
+        
+        # 加载FAISS索引
+        if enable_images and username and article_id:
+            try:
+                from utils.embedding_utils import create_faiss_index
+                faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss', username=username, article_id=article_id)
+            except Exception as e:
+                logger.error(f"无法加载FAISS索引用于图片显示: {e}")
+        
+        # 创建四列布局，用于放置按钮
+        col1, col2, col3, col4 = st.columns(4)
 
         with col1:
             # 将日志显示也改为Popover，保持UI一致性
@@ -370,6 +441,31 @@ def main():
             if task_state['outline']:
                 with st.popover("查看生成的大纲"):
                     st.json(task_state['outline'])
+        
+        with col4:
+            # 显示FAISS索引中的图片
+            if enable_images and faiss_index and faiss_index.get_size() > 0:
+                with st.popover("查看抓取的图片"):
+                    # 从FAISS索引中提取图片数据
+                    all_data = faiss_index.get_all_data()
+                    image_data = [data for data in all_data if isinstance(data, dict) and 'image_url' in data]
+                    
+                    if image_data:
+                        st.write(f"共找到 {len(image_data)} 张图片：")
+                        
+                        # 创建三列网格布局显示图片
+                        img_cols = st.columns(3)
+                        
+                        for i, data in enumerate(image_data):
+                            # 轮流使用三列中的一列
+                            with img_cols[i % 3]:
+                                image_url = data.get('image_url')
+                                # 显示图片标题和缩略图
+                                if image_url:
+                                    image_title = data.get('title', '未命名图片')
+                                    st.image(image_url, caption=f"{i+1}. {image_title[:20]}...", use_column_width=True)
+                    else:
+                        st.info("暂无图片数据")
 
         # 实时文章预览
         if task_state.get('live_article'):

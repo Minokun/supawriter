@@ -35,30 +35,47 @@ async def take_webpage_screenshot(url, username, filename=None, full_page=True, 
             )
             page = await context.new_page()
             
-            # Set default timeout for all operations
-            page.set_default_timeout(10000)
+            # Set default timeout for all operations - increased to handle complex pages
+            page.set_default_timeout(30000)
             
-            # Set specific timeout just for navigation
-            page.set_default_navigation_timeout(15000)
+            # Set specific timeout just for navigation - increased for better reliability
+            page.set_default_navigation_timeout(40000)
             
             # Navigate to the URL with a more reliable wait strategy
             try:
                 logger.info(f"Navigating to {url}")
                 # First try with 'domcontentloaded' which is faster
-                await page.goto(url, wait_until="domcontentloaded", timeout=10000)
+                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 
                 # Then wait for network to be idle with a separate call
                 logger.info("Waiting for network idle")
-                await page.wait_for_load_state("networkidle", timeout=5000)
+                await page.wait_for_load_state("networkidle", timeout=15000)
             except Exception as nav_error:
                 logger.warning(f"Navigation with networkidle failed: {nav_error}. Continuing with screenshot anyway.")
             
-            # Wait a bit for any animations or dynamic content to load
+            # Wait longer for animations, fonts, and dynamic content to load
             logger.info("Waiting for additional content to load")
-            await asyncio.sleep(2)
+            await asyncio.sleep(5)
             
-            # Take screenshot
-            screenshot_bytes = await page.screenshot(full_page=full_page)
+            # Wait for fonts to be loaded
+            logger.info("Waiting for fonts to load")
+            try:
+                # Execute JavaScript to check if document fonts are loaded
+                await page.evaluate('''
+                    () => {
+                        if (document.fonts && typeof document.fonts.ready === 'object') {
+                            return document.fonts.ready;
+                        }
+                        return true; // If document.fonts not supported, continue anyway
+                    }
+                ''')
+                logger.info("Fonts loaded successfully")
+            except Exception as font_error:
+                logger.warning(f"Error waiting for fonts: {font_error}")
+            
+            # Take screenshot with longer timeout
+            logger.info("Taking screenshot")
+            screenshot_bytes = await page.screenshot(full_page=full_page, timeout=60000)
             
             # Close browser
             await browser.close()

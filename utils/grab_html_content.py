@@ -40,14 +40,32 @@ INDEX_DIR = 'data/faiss'
 faiss_index = create_faiss_index(load_from_disk=True, index_dir=INDEX_DIR)
 logger.info(f"FAISS index loaded/created in grab_html_content.py with {faiss_index.get_size()} items")
 
-def get_streamlit_faiss_index():
-    """获取FAISS索引实例，优先从磁盘加载"""
+def get_streamlit_faiss_index(username: str = None, article_id: str = None):
+    """获取FAISS索引实例，优先从磁盘加载用户和文章特定的索引"""
     global faiss_index, INDEX_DIR
+    
+    # 如果指定了用户名和文章ID，尝试加载文章特定的索引
+    if username and article_id:
+        try:
+            article_faiss_index = create_faiss_index(load_from_disk=True, index_dir=INDEX_DIR, username=username, article_id=article_id)
+            logger.info(f"Loaded article-specific FAISS index for {username}/{article_id} with {article_faiss_index.get_size()} items")
+            return article_faiss_index
+        except Exception as e:
+            logger.warning(f"Failed to load article-specific index for {username}/{article_id}: {e}")
+    
+    # 如果指定了用户名，尝试加载用户特定的索引
+    if username:
+        try:
+            user_faiss_index = create_faiss_index(load_from_disk=True, index_dir=INDEX_DIR, username=username)
+            logger.info(f"Loaded user-specific FAISS index for {username} with {user_faiss_index.get_size()} items")
+            return user_faiss_index
+        except Exception as e:
+            logger.warning(f"Failed to load user-specific index for {username}: {e}")
     
     # 如果全局索引为None或为空，尝试从磁盘重新加载
     if faiss_index is None or faiss_index.get_size() == 0:
         faiss_index = create_faiss_index(load_from_disk=True, index_dir=INDEX_DIR)
-        logger.info(f"Reloaded FAISS index from disk with {faiss_index.get_size()} items")
+        logger.info(f"Reloaded global FAISS index from disk with {faiss_index.get_size()} items")
         
     return faiss_index
 
@@ -122,7 +140,7 @@ def tag_visible(element) -> bool:
         return False
     return True
 
-async def download_image(session: aiohttp.ClientSession, img_src: str, image_hash_cache: dict, task_id: str, is_multimodal: bool = False, theme: str = "", stats: dict = None, base_url: str = None) -> Union[str, dict]:
+async def download_image(session: aiohttp.ClientSession, img_src: str, image_hash_cache: dict, task_id: str, is_multimodal: bool = False, theme: str = "", stats: dict = None, base_url: str = None, username: str = None, article_id: str = None) -> Union[str, dict]:
     """
     异步下载图片，使用MD5哈希确保每张图片只下载一次
     
@@ -481,15 +499,10 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                         
                         # 添加到FAISS索引
                         try:
-                            # 获取FAISS索引实例
-                            current_faiss_index = get_streamlit_faiss_index()
-                            add_to_faiss_index(description, data, current_faiss_index)
-                            logger.info(f"Added image description to FAISS index: {img_src}")
-                            
-                            # 保存更新后的索引到磁盘
-                            from utils.embedding_utils import save_faiss_index
-                            save_faiss_index(current_faiss_index, INDEX_DIR)
-                            logger.info(f"Saved updated FAISS index to disk with {current_faiss_index.get_size()} items")
+                            # 获取用户和文章特定的FAISS索引实例
+                            current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
+                            add_to_faiss_index(description, data, current_faiss_index, username=username, article_id=article_id, auto_save=True)
+                            logger.info(f"Added image description to FAISS index for {username}/{article_id}: {img_src}")
                         except Exception as e:
                             # logger.error(f"Failed to add to FAISS index: {str(e)}")
                             pass
@@ -798,7 +811,7 @@ def normalize_image_url(img_src: str, base_url: str = None) -> str:
             
     return img_src
 
-async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str, is_multimodal: bool = False, theme: str = "", page_url: str = None) -> Dict[str, any]:
+async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str, is_multimodal: bool = False, theme: str = "", page_url: str = None, username: str = None, article_id: str = None) -> Dict[str, any]:
     """
     从HTML内容中提取文本和图片
     """
@@ -884,8 +897,8 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
                     stats['skipped'] += 1
                     continue
                 
-                # 创建异步任务，传递base_url
-                task = download_image(session, img_src, image_hash_cache, task_id, is_multimodal, theme, stats, base_url)
+                # 创建异步任务，传递base_url、用户名和文章ID
+                task = download_image(session, img_src, image_hash_cache, task_id, is_multimodal, theme, stats, base_url, username, article_id)
                 img_tasks.append(task)
             
             # 等待所有图片下载完成
@@ -907,7 +920,7 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
         logger.error(f"Error processing HTML content: {str(e)}")
         return {'text': '', 'images': []}
 
-async def fetch(browser, url: str, task_id: str, is_multimodal: bool = False, theme: str = "", retry_count: int = 0) -> Dict[str, any]:
+async def fetch(browser, url: str, task_id: str, is_multimodal: bool = False, theme: str = "", retry_count: int = 0, username: str = None, article_id: str = None) -> Dict[str, any]:
     """
     获取页面内容
     """
@@ -966,7 +979,7 @@ async def fetch(browser, url: str, task_id: str, is_multimodal: bool = False, th
             content = await page.content()
             
             # 处理页面内容
-            result = await text_from_html(content, session, task_id, is_multimodal, theme, final_url)  # 使用最终URL
+            result = await text_from_html(content, session, task_id, is_multimodal, theme, final_url, username, article_id)  # 使用最终URL，传递用户名和文章ID
             result['url'] = final_url  # 使用最终URL而不是原始URL
             result['original_url'] = url  # 保存原始URL以便跟踪
             return result
@@ -977,14 +990,14 @@ async def fetch(browser, url: str, task_id: str, is_multimodal: bool = False, th
             if retry_count < MAX_RETRIES:
                 logger.info(f"Retrying {url}, attempt {retry_count + 1}/{MAX_RETRIES}")
                 await asyncio.sleep(RETRY_DELAY * (retry_count + 1))  # 指数退避
-                return await fetch(browser, url, task_id, is_multimodal, theme, retry_count + 1)
+                return await fetch(browser, url, task_id, is_multimodal, theme, retry_count + 1, username, article_id)
                 
             return {"url": url, "text": "", "images": [], "error": str(e)}
         finally:
             await page.close()
             await context.close()
 
-async def get_main_content(url_list: List[str], task_id: str = None, is_multimodal: bool = False, theme: str = "", progress_callback: Optional[callable] = None) -> List[Dict[str, any]]:
+async def get_main_content(url_list: List[str], task_id: str = None, is_multimodal: bool = False, theme: str = "", progress_callback: Optional[callable] = None, username: str = None, article_id: str = None) -> List[Dict[str, any]]:
     """
     获取多个URL的内容，并提供进度回调
     :param url_list: URL列表
@@ -999,7 +1012,7 @@ async def get_main_content(url_list: List[str], task_id: str = None, is_multimod
             if task_id is None:
                 task_id = f"task_{int(asyncio.get_event_loop().time())}"
             
-            tasks = [fetch(browser, url, task_id, is_multimodal=is_multimodal, theme=theme) for url in url_list]
+            tasks = [fetch(browser, url, task_id, is_multimodal=is_multimodal, theme=theme, username=username, article_id=article_id) for url in url_list]
             
             results = []
             completed_count = 0

@@ -61,23 +61,33 @@ HISTORY_FILTER_BASE_OPTIONS = [
     "完成文章" # Represents original, non-transformed articles
 ]
 
-# Embedding settings 三种选项 gitee, xinference, jina
-EMBEDDING_TYPE = 'gitee'
-# 模力方舟embedding设置
-# EMBEDDING_MODEL_gitee = 'Qwen3-Embedding-8B'
-EMBEDDING_MODEL_gitee = 'jina-embeddings-v4'
-EMBEDDING_HOST_gitee = 'https://ai.gitee.com/v1'
-EMBEDDING_API_KEY_gitee = 'U2PS8VI0XDMTMRAHB5XVMDGOTTD7H4KKSM6EQRN9'
-EMBEDDING_TIMEOUT_gitee = 10
-# xinference embedding设置
-EMBEDDING_MODEL_xinference = 'Qwen3-Embedding-8B'
-EMBEDDING_HOST_xinference = 'http://localhost:9997/v1'
-EMBEDDING_TIMEOUT_xinference = 10
-# jina-embedding-v4
-EMBEDDING_MODEL_jina = 'jina-embeddings-v4'
-EMBEDDING_HOST_jina = 'https://api.jina.ai/v1/embeddings'
-EMBEDDING_API_KEY_jina = 'jina_78bd66d1a7194ff8bf7942ae59779dac-ScGeQdHO_3OmFzHcLClLC_DFE0R'
-EMBEDDING_TIMEOUT_jina = 10
+# Embedding settings
+EMBEDDING_TYPE = 'gitee' # Options: gitee, xinference, jina, local
+
+EMBEDDING_CONFIG = {
+    'gitee': {
+        'model': 'jina-embeddings-v4',
+        'host': 'https://ai.gitee.com/v1',
+        'api_key': 'U2PS8VI0XDMTMRAHB5XVMDGOTTD7H4KKSM6EQRN9',
+        'timeout': 10
+    },
+    'xinference': {
+        'model': 'Qwen3-Embedding-8B',
+        'host': 'http://localhost:9997/v1',
+        'api_key': 'not-needed', # xinference usually doesn't require an API key
+        'timeout': 10
+    },
+    'jina': {
+        'model': 'jina-embeddings-v4',
+        'host': 'https://api.jina.ai/v1',
+        'api_key': 'jina_78bd66d1a7194ff8bf7942ae59779dac-ScGeQdHO_3OmFzHcLClLC_DFE0R',
+        'timeout': 10
+    },
+    'local': {
+        'model': 'BAAI/bge-large-zh-v1.5',
+        # For local models, host, api_key, and timeout are not applicable
+    }
+}
 
 # 网页显示设置
 HTML_NGINX_BASE_URL = 'http://localhost:80/'

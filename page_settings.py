@@ -8,7 +8,7 @@ PAGE_HOME = st.Page(
 
 PAGE_GPTS = st.Page(
     "page/gpts.py",
-    title='应用商店',
+    title='自媒体平台导航',
     icon=':material/home:'
 )
 

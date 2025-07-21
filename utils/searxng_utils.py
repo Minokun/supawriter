@@ -39,8 +39,8 @@ from utils.embedding_utils import Embedding
 max_workers = 20
 search_result_num = 30
 
-# Global URL tracking for deduplication across search engines
-GLOBAL_PROCESSED_URLS = set()
+# 注意：不再使用全局URL去重，改为任务级别的去重，确保每次文章生成都是独立的搜索
+# GLOBAL_PROCESSED_URLS = set()  # 已移除全局去重
 
 def process_result(content, question, output_type=prompt_template.ARTICLE, model_type='deepseek', model_name='deepseek-chat'):
     """
@@ -185,7 +185,8 @@ class Search:
 
     def deduplicate_urls(self, urls_with_data, key='url'):
         """
-        Deduplicate URLs using advanced URL normalization and similarity checking
+        在当前批次内去除重复URL，使用高级URL标准化和相似性检查
+        注意：不再使用全局去重，确保每次文章生成都是独立的搜索
         
         Args:
             urls_with_data: List of dictionaries containing URLs and associated data
@@ -209,10 +210,8 @@ class Search:
             normalized_url = sougou_search.normalize_url(url)
             url_hash = sougou_search.calculate_url_hash(url)
             
-            # Skip if URL has been processed globally
-            if normalized_url in GLOBAL_PROCESSED_URLS:
-                logger.info(f"Skipping globally processed URL: {url}")
-                continue
+            # 不再检查全局已处理URL，确保每次搜索都是独立的
+            # 原全局去重逻辑已移除，避免跨用户和跨任务的数据污染
                 
             # Skip if URL has been processed in this batch
             is_duplicate = False
@@ -224,7 +223,8 @@ class Search:
                     
             if not is_duplicate:
                 processed_urls.add(normalized_url)
-                GLOBAL_PROCESSED_URLS.add(normalized_url)
+                # 不再添加到全局集合，保持任务独立性
+                # GLOBAL_PROCESSED_URLS.add(normalized_url)  # 已移除
                 unique_results.append(item)
                 
         logger.info(f"URL deduplication: Original={len(urls_with_data)}, After deduplication={len(unique_results)}")
@@ -276,9 +276,6 @@ class Search:
                     sogou_count = 0
                     embedding = Embedding()
                     
-                    # 预先计算查询词的向量
-                    query_vector = embedding.get_embedding(self.search_query)
-                    
                     # 存储搜狗结果及其相似度分数
                     scored_sogou_results = []
                     
@@ -310,7 +307,7 @@ class Search:
                         print(f"搜狗结果相似度统计: 最小={min_score:.4f}, 最大={max_score:.4f}, 平均={avg_score:.4f}")
                         
                         # 使用标准阈值，因为相似度分数实际上很好
-                        SIMILARITY_THRESHOLD = 0.2  # 相似度阈值
+                        SIMILARITY_THRESHOLD = 0.1  # 相似度阈值
                         filtered_results = [(result, score) for result, score in scored_sogou_results if score >= SIMILARITY_THRESHOLD]
                         
                         print(f"搜狗结果相似度过滤: {len(filtered_results)}/{len(scored_sogou_results)} 结果通过阈值 {SIMILARITY_THRESHOLD}")
@@ -361,7 +358,7 @@ class Search:
             print(f"SearXNG搜索失败: {e}")
             return None
 
-    def get_search_result(self, question: str, is_multimodal=False, theme="", spider_mode=False, progress_callback: Optional[callable] = None):
+    def get_search_result(self, question: str, is_multimodal=False, theme="", spider_mode=False, progress_callback: Optional[callable] = None, username: str = None, article_id: str = None):
         data = self.query_search(question)
         search_result = []
         search_engine_urls = []
@@ -467,7 +464,7 @@ class Search:
                 logger.info(f"Final deduplicated URLs for content grabbing: {len(final_urls)}")
                 
                 # 爬取内容
-                result, task_id = asyncio.run(get_main_content(final_urls, is_multimodal=is_multimodal, theme=theme, progress_callback=progress_callback))
+                result, task_id = asyncio.run(get_main_content(final_urls, is_multimodal=is_multimodal, theme=theme, progress_callback=progress_callback, username=username, article_id=article_id))
                 
                 # 创建字典，存储爬取到的内容和图片
                 html_content_dict = {}
