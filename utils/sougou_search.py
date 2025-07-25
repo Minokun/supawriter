@@ -203,11 +203,12 @@ def deduplicate_results(results):
     logger.info(f"搜索结果去重: 原始数量={len(results)}, 去重后数量={len(final_results)}")
     return final_results
 
-def query_search(question: str, remove_duplicates=True):
+def query_search(question: str, remove_duplicates=True, max_results=10):
     """
     搜索函数，获取搜狗搜索结果并进行去重
     :param question: 查询问题
     :param remove_duplicates: 是否去除重复结果，默认为True
+    :param max_results: 最大返回结果数量，默认为10条
     :return: 搜索结果列表
     """
     # 搜索
@@ -228,8 +229,10 @@ def query_search(question: str, remove_duplicates=True):
         
         # 如果需要去重
         if remove_duplicates and search_results:
-            return deduplicate_results(search_results)
-        return search_results
+            search_results = deduplicate_results(search_results)
+        
+        # 限制返回结果数量
+        return search_results[:max_results]
     except Exception as e:
         logger.error(f"搜狗搜索失败: {str(e)}")
         return []

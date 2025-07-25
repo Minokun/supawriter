@@ -15,10 +15,11 @@ from settings import LLM_MODEL, HTML_NGINX_BASE_URL, DEFAULT_SPIDER_NUM, DEFAULT
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
 from utils.history_utils import add_history_record
-from utils.embedding_utils import create_faiss_index, get_embedding_instance, search_similar_text
+from utils.embedding_utils import create_faiss_index, search_similar_text
 import streamlit.components.v1 as components
 import threading
 import time
+from datetime import datetime
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -84,6 +85,14 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
             future = executor.submit(Search(result_num=spider_num).get_search_result, text_input, is_multimodal=enable_images, theme=article_title, progress_callback=spider_progress_callback, username=username, article_id=article_id)
             search_result = future.result()
         
+        # 检查搜索结果是否为空
+        if not search_result or len(search_result) == 0:
+            log('error', "搜索结果为空，无法生成文章。请尝试修改搜索关键词或增加搜索结果数量。")
+            task_state['status'] = 'error'
+            task_state['progress'] = 0
+            task_state['progress_text'] = "搜索结果为空，无法生成文章"
+            return
+            
         log('info', f"网页抓取完成，共找到 {len(search_result)} 个结果。UI即将更新...")
         task_state['search_result'] = search_result # 保存结果以供预览
         
@@ -552,6 +561,38 @@ def main():
             mime="text/markdown",
             key="download_final_article"
         )
+
+        # 添加保存编辑按钮
+        if st.button("💾 保存编辑", key="save_edited_article"):
+            try:
+                # 获取当前用户
+                current_user = get_current_user()
+                if current_user:
+                    # 获取原始记录信息
+                    from utils.history_utils import load_user_history, save_user_history
+                    history = load_user_history(current_user)
+                    
+                    # 查找最新的记录（应该是刚刚生成的文章）
+                    latest_record = None
+                    for record in reversed(history):
+                        if record.get('topic') == task_state.get('outline', {}).get('title'):
+                            latest_record = record
+                            break
+                    
+                    if latest_record:
+                        # 更新文章内容
+                        latest_record['article_content'] = st.session_state.edited_full_article
+                        # 添加编辑时间戳
+                        latest_record['edited_at'] = datetime.now().isoformat()
+                        # 保存更新后的历史记录
+                        save_user_history(current_user, history)
+                        st.success("✅ 编辑已保存到数据库！")
+                    else:
+                        st.error("❌ 无法找到原始文章记录，请尝试重新生成文章。")
+                else:
+                    st.error("❌ 无法获取当前用户信息，请重新登录。")
+            except Exception as e:
+                st.error(f"❌ 保存编辑时出错: {str(e)}")
 
     # --- UI for Error ---
     elif status == 'error':

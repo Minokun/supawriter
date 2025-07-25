@@ -2,14 +2,6 @@ import streamlit as st
 from utils.auth_decorator import require_auth
 import streamlit.components.v1 as components
 
-# 页面配置 - 必须是第一个Streamlit命令
-st.set_page_config(
-    page_title="内容创作导航中心",
-    page_icon="🚀",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
-
 @require_auth
 def main():
     # 自定义CSS样式
@@ -61,21 +53,25 @@ def main():
     }
     
     .nav-button {
-        background: linear-gradient(45deg, #667eea, #764ba2);
-        color: white;
+        background: linear-gradient(45deg, #4776E6, #8E54E9);
+        color: black !important;
         border: none;
-        padding: 0.5rem 1.5rem;
+        padding: 0.7rem 1.5rem;
         border-radius: 25px;
         text-decoration: none;
         display: inline-block;
         transition: all 0.3s ease;
-        font-weight: 500;
+        font-weight: 600;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        letter-spacing: 0.5px;
     }
     
     .nav-button:hover {
         transform: scale(1.05);
         text-decoration: none;
-        color: white;
+        color: white !important;
+        box-shadow: 0 6px 15px rgba(0,0,0,0.3);
+        background: linear-gradient(45deg, #5E85F7, #A169FA);
     }
     
     .search-section {
@@ -117,15 +113,38 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # 嵌入SearXNG搜索引擎
-    with st.container():
-        st.markdown('<div class="iframe-container">', unsafe_allow_html=True)
-        components.iframe(
-            src="https://searxng.sevnday.top/search",
-            height=600,
-            scrolling=True
-        )
-        st.markdown('</div>', unsafe_allow_html=True)
+    # 提供多个搜索引擎选项
+    search_col1, search_col2, search_col3 = st.columns(3)
+    
+    with search_col1:
+        st.markdown("""
+        <div class="nav-card">
+            <div class="nav-icon">🔍</div>
+            <div class="nav-title">SearXNG</div>
+            <div class="nav-desc">隐私保护搜索引擎</div>
+            <a href="http://localhost:8080" target="_blank" class="nav-button">打开搜索</a>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with search_col2:
+        st.markdown("""
+        <div class="nav-card">
+            <div class="nav-icon">🌐</div>
+            <div class="nav-title">秘塔AI搜索</div>
+            <div class="nav-desc">没有广告，直达结果</div>
+            <a href="https://metaso.cn/" target="_blank" class="nav-button">打开搜索</a>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with search_col3:
+        st.markdown("""
+        <div class="nav-card">
+            <div class="nav-icon">🔒</div>
+            <div class="nav-title">Google搜索</div>
+            <div class="nav-desc">Google搜索引擎</div>
+            <a href="https://www.google.com/" target="_blank" class="nav-button">打开搜索</a>
+        </div>
+        """, unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -141,7 +160,7 @@ def main():
             <div class="nav-icon">💬</div>
             <div class="nav-title">微信公众号</div>
             <div class="nav-desc">微信公众平台管理</div>
-            <a href="https://mp.weixin.qq.com/cgi-bin/home?t=home/index&lang=zh_CN&token=1616067758" target="_blank" class="nav-button">进入平台</a>
+            <a href="https://mp.weixin.qq.com/" target="_blank" class="nav-button">进入平台</a>
         </div>
         """, unsafe_allow_html=True)
     
@@ -184,9 +203,9 @@ def main():
         st.markdown("""
         <div class="nav-card">
             <div class="nav-icon">📧</div>
-            <div class="nav-title">网易号</div>
-            <div class="nav-desc">网易媒体平台</div>
-            <a href="https://mp.163.com/#/message" target="_blank" class="nav-button">进入平台</a>
+            <div class="nav-title">即梦</div>
+            <div class="nav-desc">AI视频创作</div>
+            <a href="https://jimeng.jianying.com/ai-tool/home" target="_blank" class="nav-button">进入平台</a>
         </div>
         """, unsafe_allow_html=True)
     
@@ -194,9 +213,9 @@ def main():
         st.markdown("""
         <div class="nav-card">
             <div class="nav-icon">📱</div>
-            <div class="nav-title">一点资讯</div>
-            <div class="nav-desc">个性化资讯平台</div>
-            <a href="https://mp.yidianzixun.com/#/Home" target="_blank" class="nav-button">进入平台</a>
+            <div class="nav-title">剪映</div>
+            <div class="nav-desc">AI一键生成视频</div>
+            <a href="https://www.jianying.com/ai-creator/start" target="_blank" class="nav-button">进入平台</a>
         </div>
         """, unsafe_allow_html=True)
     
@@ -271,7 +290,7 @@ def main():
     st.markdown("<br><br>", unsafe_allow_html=True)
     st.markdown("""
     <div style="text-align: center; color: #7f8c8d; padding: 2rem; border-top: 1px solid #e9ecef; margin-top: 2rem;">
-        <p>🚀 内容创作导航中心 | 让创作更高效 | © 2024</p>
+        <p>🚀 内容创作导航中心 | 让创作更高效 | 2024</p>
         <p style="font-size: 0.8rem;">提示：点击各个平台卡片可直接跳转到对应平台</p>
     </div>
     """, unsafe_allow_html=True)

@@ -77,6 +77,12 @@ def main():
             is_html = content.startswith('<') and content.endswith('>')
             topic_indicates_html = any(keyword in record.get('topic', '').lower() for keyword in ['bento', '网页', 'html', 'web'])
 
+            # 检查是否有编辑过的内容
+            has_been_edited = 'edited_at' in record
+            if has_been_edited:
+                edited_time = record['edited_at'][:16].replace('T', ' ')
+                st.info(f"⚠️ 此文章已于 {edited_time} 编辑过")
+
             if is_html or topic_indicates_html:
                 # 对于HTML内容，不直接显示，而是提供预览链接
                 is_bento = "Bento" in record.get('topic', '') or "网页" in record.get('topic', '')
@@ -193,9 +199,9 @@ def main():
                 with col1:
                     # 下载按钮
                     st.download_button(
-                        label="📥 下载文章",
+                        label="📥 下载文章" + (" (已编辑)" if has_been_edited else ""),
                         data=content,
-                        file_name=f"{record['topic']}.md",
+                        file_name=f"{record['topic']}{' (已编辑)' if has_been_edited else ''}.md",
                         mime="text/markdown",
                         key=f"download_{record['id']}",
                         use_container_width=True,

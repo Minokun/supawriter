@@ -179,7 +179,7 @@ class Search:
         初始化搜索引擎类，设置默认结果数量
         :param result_num: 搜索结果数量，默认为8
         """
-        self.search_url = "HTTP://searxng.sevnday.top"  # 搜索引擎URL
+        self.search_url = "http://localhost:8080"  # 搜索引擎URL
         self.result_num = result_num  # 结果数量
         self.search_query = ""
 
@@ -252,7 +252,7 @@ class Search:
             "q": self.search_query,
             "format": "json",
             "pageno": 1,
-            "engines": ','.join(["google", "bing", "duckduckgo", "yahoo", "qwant"]),  # 减少搜索引擎数量，提高相关性
+            "engines": ','.join(["google", "bing", "duckduckgo", "yahoo", "qwant", "presearch"]),  # 减少搜索引擎数量，提高相关性
             "time_range": "",  # 不限制时间范围
             "safesearch": 0,  # 关闭安全搜索
             "categories": "general",  # 只搜索一般类别

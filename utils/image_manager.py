@@ -3,7 +3,7 @@ import json
 import re
 import logging
 from utils.gemma3_client import call_gemma3_api
-from utils.embedding_utils import search_similar_text, add_to_faiss_index, get_embedding_instance
+from utils.embedding_utils import search_similar_text, add_to_faiss_index, Embedding
 from utils.image_url_mapper import ImageUrlMapper
 
 # Configure logging
@@ -21,7 +21,7 @@ class ImageManager:
         """
         self.image_base_dir = image_base_dir
         self.task_id = task_id
-        self.embedding_instance = get_embedding_instance()
+        self.embedding_instance = Embedding()
         self.url_mapper = ImageUrlMapper(image_base_dir)
         
     def _get_image_dirs(self):
@@ -166,7 +166,7 @@ class ImageManager:
                 
         return paragraphs
     
-    def match_images_to_paragraphs(self, paragraphs, analyzed_images, similarity_threshold=0.5):
+    def match_images_to_paragraphs(self, paragraphs, analyzed_images, similarity_threshold=0.5, username=None, article_id=None):
         """
         Match images to paragraphs based on semantic similarity
         
@@ -174,6 +174,8 @@ class ImageManager:
             paragraphs: List of article paragraphs
             analyzed_images: List of analyzed image dictionaries
             similarity_threshold: Minimum similarity score (0-1) for an image to be considered relevant
+            username: Username for user-specific FAISS index
+            article_id: Article ID for article-specific FAISS index
             
         Returns:
             List of tuples (paragraph_index, image_info, similarity_score)
@@ -195,29 +197,42 @@ class ImageManager:
         # Find best matching paragraph for each image using embedding-based similarity
         results = []
         
-        # 使用全局FAISS索引
+        # 使用用户和文章特定的FAISS索引
         from utils.embedding_utils import get_faiss_index
-        faiss_index = get_faiss_index()
+        faiss_index = get_faiss_index(username=username, article_id=article_id)
+        logger.info(f"使用FAISS索引: 用户={username}, 文章={article_id}")
         
         # 检查索引是否为空
         if faiss_index.get_size() == 0:
             logger.warning("FAISS索引为空，无法匹配图片")
             return []
         
-        # 为段落创建嵌入向量
+        # 为段落创建嵌入向量 - 使用批量处理方式
         embedding_instance = self.embedding_instance
         paragraph_data = []
         paragraph_embeddings = []
         
+        # 准备段落列表
+        valid_paragraphs = []
+        valid_indices = []
+        
         for i, paragraph in enumerate(paragraphs):
-            try:
-                # 获取段落的嵌入向量
-                paragraph_embedding = embedding_instance.get_embedding(paragraph)
-                if paragraph_embedding is not None:
-                    paragraph_embeddings.append(paragraph_embedding)
-                    paragraph_data.append({'id': i, 'text': paragraph})
-            except Exception as e:
-                logger.error(f"Error embedding paragraph {i}: {str(e)}")
+            if paragraph.strip():
+                valid_paragraphs.append(paragraph)
+                valid_indices.append(i)
+        
+        try:
+            # 批量获取段落的嵌入向量
+            if valid_paragraphs:
+                batch_embeddings = embedding_instance.get_embedding(valid_paragraphs)
+                
+                # 处理返回的嵌入向量列表
+                for i, (idx, embedding) in enumerate(zip(valid_indices, batch_embeddings)):
+                    if embedding is not None:
+                        paragraph_embeddings.append(embedding)
+                        paragraph_data.append({'id': idx, 'text': paragraphs[idx]})
+        except Exception as e:
+            logger.error(f"Error batch embedding paragraphs: {str(e)}")
         
         if not paragraph_embeddings:
             logger.warning("No paragraph embeddings were created, cannot match images to paragraphs")
@@ -233,8 +248,9 @@ class ImageManager:
                     for i, (distance, data) in enumerate(zip(distances, matched_data)):
                         # 检查是否是图片数据
                         if 'image_url' in data and 'description' in data:
-                            # 转换距离为相似度分数
-                            similarity = 1.0 - min(distance / 2.0, 0.99)  # 归一化并反转
+                            # 使用距离值作为相似度分数
+                            # 注意：在优化后的FAISS索引中，distance已经是1-相似度
+                            similarity = distance
                             
                             # 只包含超过相似度阈值的匹配
                             if similarity >= similarity_threshold:
@@ -263,7 +279,7 @@ class ImageManager:
         
         return results
     
-    def insert_images_into_article(self, markdown_content, similarity_threshold=0.5, max_images=10, article_theme=""):
+    def insert_images_into_article(self, markdown_content, similarity_threshold=0.5, max_images=10, article_theme="", username=None, article_id=None):
         """
         Main function to analyze and insert images into an article
         
@@ -272,17 +288,19 @@ class ImageManager:
             similarity_threshold: Minimum similarity score (0-1) for an image to be considered relevant
             max_images: Maximum number of images to analyze (not necessarily insert)
             article_theme: Theme of the article for relevance checking
+            username: Username for user-specific FAISS index
+            article_id: Article ID for article-specific FAISS index
             
         Returns:
             Enhanced markdown content with images inserted
         """
-        logger.info(f"Starting image insertion process for theme: {article_theme}")
+        logger.info(f"Starting image insertion process for theme: {article_theme}, user: {username}, article: {article_id}")
         
-        # 首先检查全局FAISS索引中是否有图片数据
+        # 获取用户和文章特定的FAISS索引
         from utils.embedding_utils import get_faiss_index
-        faiss_index = get_faiss_index()
+        faiss_index = get_faiss_index(username=username, article_id=article_id)
         index_size = faiss_index.get_size()
-        logger.info(f"当前FAISS索引大小: {index_size}")
+        logger.info(f"当前FAISS索引大小: {index_size}, 用户: {username}, 文章: {article_id}")
         
         if index_size == 0:
             logger.warning("FAISS索引中没有图片数据，无法进行图片匹配")
@@ -302,7 +320,9 @@ class ImageManager:
         image_paragraph_matches = self.match_images_to_paragraphs(
             paragraphs, 
             analyzed_images,
-            similarity_threshold=similarity_threshold
+            similarity_threshold=similarity_threshold,
+            username=username,
+            article_id=article_id
         )
         
         # Step 4: Insert images before their matching paragraphs

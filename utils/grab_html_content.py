@@ -33,22 +33,35 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 创建FAISS索引实例 - 尝试从磁盘加载
-# 这个索引实例将在grab_html_content.py中创建并填充数据，然后保存到磁盘
-# auto_write.py中会从磁盘加载已经填充了数据的索引
+# 定义FAISS索引目录，但不在模块级别初始化索引
+# 根据用户和文章ID动态创建索引
 INDEX_DIR = 'data/faiss'
-faiss_index = create_faiss_index(load_from_disk=True, index_dir=INDEX_DIR)
-logger.info(f"FAISS index loaded/created in grab_html_content.py with {faiss_index.get_size()} items")
+# 全局索引变量，但不在模块级别初始化
+faiss_index = None
 
 def get_streamlit_faiss_index(username: str = None, article_id: str = None):
     """获取FAISS索引实例，优先从磁盘加载用户和文章特定的索引"""
     global faiss_index, INDEX_DIR
     
+    # 记录请求的索引路径，用于调试
+    expected_path = ""
+    if username and article_id:
+        expected_path = f"{INDEX_DIR}/{username}/{article_id}"
+    elif username:
+        expected_path = f"{INDEX_DIR}/{username}"
+    else:
+        expected_path = INDEX_DIR
+    
+    logger.info(f"Requesting FAISS index for path: {expected_path}")
+    
     # 如果指定了用户名和文章ID，尝试加载文章特定的索引
     if username and article_id:
         try:
             article_faiss_index = create_faiss_index(load_from_disk=True, index_dir=INDEX_DIR, username=username, article_id=article_id)
-            logger.info(f"Loaded article-specific FAISS index for {username}/{article_id} with {article_faiss_index.get_size()} items")
+            index_size = article_faiss_index.get_size()
+            logger.info(f"Loaded article-specific FAISS index for {username}/{article_id} with {index_size} items")
+            if index_size == 0:
+                logger.warning(f"Article-specific index for {username}/{article_id} is empty")
             return article_faiss_index
         except Exception as e:
             logger.warning(f"Failed to load article-specific index for {username}/{article_id}: {e}")
@@ -57,16 +70,23 @@ def get_streamlit_faiss_index(username: str = None, article_id: str = None):
     if username:
         try:
             user_faiss_index = create_faiss_index(load_from_disk=True, index_dir=INDEX_DIR, username=username)
-            logger.info(f"Loaded user-specific FAISS index for {username} with {user_faiss_index.get_size()} items")
+            index_size = user_faiss_index.get_size()
+            logger.info(f"Loaded user-specific FAISS index for {username} with {index_size} items")
+            if index_size == 0:
+                logger.warning(f"User-specific index for {username} is empty")
             return user_faiss_index
         except Exception as e:
             logger.warning(f"Failed to load user-specific index for {username}: {e}")
     
-    # 如果全局索引为None或为空，尝试从磁盘重新加载
-    if faiss_index is None or faiss_index.get_size() == 0:
+    # 如果全局索引为None，初始化它
+    if faiss_index is None:
+        logger.info("Initializing global FAISS index for the first time")
         faiss_index = create_faiss_index(load_from_disk=True, index_dir=INDEX_DIR)
-        logger.info(f"Reloaded global FAISS index from disk with {faiss_index.get_size()} items")
-        
+        index_size = faiss_index.get_size()
+        logger.info(f"Global FAISS index initialized with {index_size} items")
+        if index_size == 0:
+            logger.warning("Global FAISS index is empty")
+    
     return faiss_index
 
 # 常量配置
@@ -336,8 +356,9 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 
                 # 尝试下载图片
                 try:
-                    # 使用更长的超时时间
-                    timeout = aiohttp.ClientTimeout(total=15 + retry_count * 5, connect=10)
+                    # 使用适当的超时时间，防止卡死
+                    # 每次重试增加超时时间，但不超过30秒
+                    timeout = aiohttp.ClientTimeout(total=min(30, 10 + retry_count * 5), connect=10)
                     
                     # 对于某些特定域名，尝试使用不同的协议
                     if retry_count > 0 and 'gov.cn' in domain:
@@ -352,26 +373,31 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                         logger.info(f"Trying alternative protocol for gov.cn domain: {alt_img_src}")
                         img_src = alt_img_src
                     
-                    async with session.get(img_src, ssl=False, headers=headers, timeout=timeout, allow_redirects=True) as response:
-                        if response.status == 200:
-                            content = await response.read()
-                            success = True
-                            break
-                        else:
-                            status_code = response.status
-                            logger.warning(f"Failed to download image {img_src}, status: {status_code}, retry: {retry_count+1}/{max_retries+1}")
-                            last_error = f"HTTP status {status_code}"
-                            
-                            # 对于特定状态码，不再重试
-                            if status_code in NON_RETRYABLE_STATUS_CODES:
-                                logger.info(f"Skipping retries for non-retryable status code {status_code}: {img_src}")
+                    # 使用超时保护进行请求
+                    try:
+                        async with session.get(img_src, ssl=False, headers=headers, timeout=timeout, allow_redirects=True) as response:
+                            if response.status == 200:
+                                content = await response.read()
+                                success = True
                                 break
-                            
-                            # 对于重定向状态码，尝试获取重定向URL
-                            if status_code in (301, 302, 303, 307, 308) and 'Location' in response.headers:
-                                redirect_url = response.headers['Location']
-                                logger.info(f"Following redirect from {img_src} to {redirect_url}")
-                                img_src = redirect_url
+                            else:
+                                status_code = response.status
+                                logger.warning(f"Failed to download image {img_src}, status: {status_code}, retry: {retry_count+1}/{max_retries+1}")
+                                last_error = f"HTTP status {status_code}"
+                                
+                                # 对于特定状态码，不再重试
+                                if status_code in NON_RETRYABLE_STATUS_CODES:
+                                    logger.debug(f"Skipping retries for non-retryable status code {status_code}: {img_src}")
+                                    break
+                                
+                                # 对于重定向状态码，尝试获取重定向URL
+                                if status_code in (301, 302, 303, 307, 308) and 'Location' in response.headers:
+                                    redirect_url = response.headers['Location']
+                                    logger.debug(f"Following redirect from {img_src} to {redirect_url}")
+                                    img_src = redirect_url
+                    except aiohttp.ClientError as e:
+                        logger.warning(f"Client error for {img_src}: {str(e)}, retry: {retry_count+1}/{max_retries+1}")
+                        last_error = str(e)
                 except aiohttp.ClientConnectorError as e:
                     # 特殊处理连接错误
                     error_msg = str(e)
@@ -386,7 +412,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 # 检查是否是不应该重试的错误类型
                 should_skip_retry = any(pattern in error_msg.lower() for pattern in NON_RETRYABLE_ERROR_PATTERNS)
                 if should_skip_retry:
-                    logger.info(f"Skipping retries for non-retryable error pattern: {error_msg}")
+                    logger.debug(f"Skipping retries for non-retryable error pattern: {error_msg}")
                     break
                     
                 # 检查是否是应该重试的错误类型
@@ -431,7 +457,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
             """Helper function to determine if image should be skipped"""
             # 1. 检查文件大小
             if content_size < MIN_IMAGE_SIZE:
-                # logger.info(f"Skipping small file: {img_src} ({content_size/1024:.1f}KB < {MIN_IMAGE_SIZE/1024:.1f}KB)")
+                # logger.debug(f"Skipping small file: {img_src} ({content_size/1024:.1f}KB < {MIN_IMAGE_SIZE/1024:.1f}KB)")
                 return True
                 
             # 2. 检查图片尺寸
@@ -449,18 +475,18 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 
                 # 检查是否为常见图标尺寸
                 if (width, height) in ICON_SIZES:
-                    logger.info(f"Skipping common icon size: {img_src} ({width}x{height})")
+                    logger.debug(f"Skipping common icon size: {img_src} ({width}x{height})")
                     return True
                     
                 # 检查是否为小图片 - 降低尺寸限制
                 if width < 150 and height < 150:
-                    logger.info(f"Skipping small image: {img_src} ({width}x{height})")
+                    logger.debug(f"Skipping small image: {img_src} ({width}x{height})")
                     return True
                     
                 # 检查宽高比例 - 放宽比例限制
                 ratio = width / height
                 if ratio > 8 or ratio < 0.125:  # 更宽容的比例限制
-                    logger.info(f"Skipping abnormal aspect ratio: {img_src} (ratio: {ratio:.2f})")
+                    logger.debug(f"Skipping abnormal aspect ratio: {img_src} (ratio: {ratio:.2f})")
                     return True
                     
                 # 图片通过所有检查
@@ -480,9 +506,9 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
         if is_multimodal:
             logger.info(f"Processing image with multimodal model: {img_src}")
             
-            # 调用gemma3 API进行图片识别
+            # 调用Qwen模型进行图片识别
             try:
-                result = process_image(image_url=img_src, theme=theme)
+                result = process_image(image_url=img_src)
                 
                 if result and isinstance(result, dict) and "describe" in result:
                     # 将图片描述添加到FAISS索引
@@ -492,9 +518,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                         data = {
                             "image_url": img_src,
                             "task_id": task_id,
-                            "description": description,
-                            "is_related": result.get("is_related", False),
-                            "is_deleted": result.get("is_deleted", False)
+                            "description": description
                         }
                         
                         # 添加到FAISS索引
@@ -511,7 +535,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                     image_hash_cache[img_src] = result
                     return result
                 else:
-                    logger.warning(f"Invalid or empty result from gemma3 API for {img_src}")
+                    logger.warning(f"Invalid or empty result from Qwen API for {img_src}")
                     image_hash_cache[img_src] = None
                     return None
             except Exception as e:
@@ -840,13 +864,11 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
                 # 首先使用传入的页面URL
                 if page_url:
                     base_url = page_url
-                    logger.info(f"Using provided page URL as base: {base_url}")
                 else:
                     # 从页面中提取基础URL
                     base_tag = soup.find('base', href=True)
                     if base_tag and base_tag.get('href'):
                         base_url = base_tag['href']
-                        logger.info(f"Found base URL tag: {base_url}")
                     else:
                         # 尝试从meta标签中提取URL
                         meta_url = None
@@ -854,7 +876,6 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
                             meta_url = meta.get('content')
                             if meta_url:
                                 base_url = meta_url
-                                logger.info(f"Found base URL from meta tag: {base_url}")
                                 break
                         
                         # 尝试从canonical链接中提取
@@ -862,7 +883,6 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
                             canonical = soup.find('link', rel='canonical')
                             if canonical and canonical.get('href'):
                                 base_url = canonical.get('href')
-                                logger.info(f"Found base URL from canonical link: {base_url}")
                                 
                         # 尝试从页面头部提取
                         if not base_url:
@@ -873,7 +893,6 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
                                     if href.startswith('http'):
                                         parsed = urllib.parse.urlparse(href)
                                         base_url = f"{parsed.scheme}://{parsed.netloc}"
-                                        logger.info(f"Extracted base URL from stylesheet: {base_url}")
                                         break
             except Exception as e:
                 logger.warning(f"Error extracting base URL: {str(e)}")
@@ -891,11 +910,12 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
             for img in img_tags:
                 img_src = img.get('src', '')
                 
-                # 使用normalize_image_url处理图片URL
-                img_src = normalize_image_url(img_src, base_url)
-                if not img_src:
+                # 检查图片URL是否为空
+                if not img_src or img_src.strip() == '':
                     stats['skipped'] += 1
                     continue
+                    
+                # 直接传递原始img_src，让download_image函数处理URL规范化
                 
                 # 创建异步任务，传递base_url、用户名和文章ID
                 task = download_image(session, img_src, image_hash_cache, task_id, is_multimodal, theme, stats, base_url, username, article_id)

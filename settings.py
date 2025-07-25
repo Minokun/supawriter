@@ -63,29 +63,27 @@ HISTORY_FILTER_BASE_OPTIONS = [
 
 # Embedding settings
 EMBEDDING_TYPE = 'gitee' # Options: gitee, xinference, jina, local
-
+EMBEDDING_D = 2048
+EMBEDDING_MODEL = 'jina-embeddings-v4'
+EMBEDDING_TIMEOUT = 10
 EMBEDDING_CONFIG = {
     'gitee': {
-        'model': 'jina-embeddings-v4',
-        'host': 'https://ai.gitee.com/v1',
-        'api_key': 'U2PS8VI0XDMTMRAHB5XVMDGOTTD7H4KKSM6EQRN9',
-        'timeout': 10
+        'model': EMBEDDING_MODEL,
+        'host': st.secrets['gitee']['base_url'],
+        'api_key': st.secrets['gitee']['api_key'],
+        'timeout': EMBEDDING_TIMEOUT
     },
     'xinference': {
-        'model': 'Qwen3-Embedding-8B',
-        'host': 'http://localhost:9997/v1',
-        'api_key': 'not-needed', # xinference usually doesn't require an API key
-        'timeout': 10
+        'model': EMBEDDING_MODEL,
+        'host': st.secrets['xinference']['base_url'] + '/embeddings',
+        'api_key': st.secrets['xinference']['api_key'],
+        'timeout': EMBEDDING_TIMEOUT
     },
     'jina': {
-        'model': 'jina-embeddings-v4',
-        'host': 'https://api.jina.ai/v1',
-        'api_key': 'jina_78bd66d1a7194ff8bf7942ae59779dac-ScGeQdHO_3OmFzHcLClLC_DFE0R',
-        'timeout': 10
-    },
-    'local': {
-        'model': 'BAAI/bge-large-zh-v1.5',
-        # For local models, host, api_key, and timeout are not applicable
+        'model': EMBEDDING_MODEL,
+        'host': st.secrets['jina']['base_url'] + '/embeddings',
+        'api_key': st.secrets['jina']['api_key'],
+        'timeout': EMBEDDING_TIMEOUT
     }
 }
 
@@ -93,14 +91,15 @@ EMBEDDING_CONFIG = {
 HTML_NGINX_BASE_URL = 'http://localhost:80/'
 
 # openai vl设置
-PROCESS_IMAGE_TYPE = "qwen" # 2种选项 gemma3, qwen
-OPENAI_VL_MODEL = 'qwen-vl-plus-2025-05-07'
-OPENAI_VL_API_KEY = 'sk-cabc155d7d094825b2b1f0e9ffea35dd'
-OPENAI_VL_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+PROCESS_IMAGE_TYPE = "qwen" # 只使用qwen模型
+# 免费模型还有 qwen-vl-max-2025-04-08 qwen-vl-max-2025-04-02 qwen-vl-max-2025-01-25 qwen-vl-plus-2025-01-25
+OPENAI_VL_MODEL = 'qwen-vl-plus-2025-01-25'
+OPENAI_VL_API_KEY = st.secrets['dashscope']['api_key']
+OPENAI_VL_BASE_URL = st.secrets['dashscope']['base_url']
 
 # 文章生成设置
 # 爬取网页数量默认值
-DEFAULT_SPIDER_NUM = 30
+DEFAULT_SPIDER_NUM = 5
 # 是否自动插入相关图片默认值
 DEFAULT_ENABLE_IMAGES = True
 # 是否将图片下载至本地默认值

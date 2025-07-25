@@ -1,124 +1,42 @@
 import os
-os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 import sys
 import logging
-import time
 import numpy as np
 import faiss
 from typing import List, Dict, Any, Tuple, Optional
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from settings import EMBEDDING_TYPE, EMBEDDING_CONFIG
+from settings import EMBEDDING_TYPE, EMBEDDING_CONFIG, EMBEDDING_D
 from openai import OpenAI
-from sentence_transformers import SentenceTransformer
+import requests
 
 logger = logging.getLogger(__name__)
-
-# 根据实际响应时间统计数据调整超时时间
-# 平均响应时间在600ms-1800ms之间，设置为3秒应足够大部分请求
-EMBEDDING_TIMEOUT = 10
-
-# Initialize clients for different embedding providers
-gitee_client = OpenAI(
-    base_url=EMBEDDING_CONFIG['gitee']['host'],
-    api_key=EMBEDDING_CONFIG['gitee']['api_key'],
-    timeout=EMBEDDING_CONFIG['gitee']['timeout']
-)
-xinference_client = OpenAI(
-    base_url=EMBEDDING_CONFIG['xinference']['host'],
-    api_key=EMBEDDING_CONFIG['xinference']['api_key'],
-    timeout=EMBEDDING_CONFIG['xinference']['timeout']
-)
-jina_client = OpenAI(
-    base_url=EMBEDDING_CONFIG['jina']['host'],
-    api_key=EMBEDDING_CONFIG['jina']['api_key'],
-    timeout=EMBEDDING_CONFIG['jina']['timeout']
-)
-
-# 全局Embedding实例，避免重复创建
-global_embedding_instance = None
-
-def get_embedding_instance():
-    """
-    获取全局Embedding实例，如果不存在则创建一个
-    
-    Returns:
-        Embedding: 全局Embedding实例
-    """
-    global global_embedding_instance
-    if global_embedding_instance is None:
-        global_embedding_instance = Embedding()
-        logger.info("Created global Embedding instance")
-    return global_embedding_instance
     
 class Embedding:
-    def __init__(self):
-        global EMBEDDING_TYPE, EMBEDDING_CONFIG, gitee_client, xinference_client, jina_client
-        self.embedding_type = EMBEDDING_TYPE
-        
-        # Get configuration based on embedding type
-        self.config = EMBEDDING_CONFIG[self.embedding_type]
-        self.embedding_model = self.config['model']
-        
-        # For local model, use the model name from config
-        self.local_model_name = EMBEDDING_CONFIG['local']['model']
-        
-        logger.info(f"Using embedding mode: {self.embedding_type}")
-        
-        if self.embedding_type == 'gitee':
-            self.client = gitee_client
-            logger.info(f"Gitee embedding model: {self.embedding_model} at {self.config['host']}")
-        elif self.embedding_type == 'xinference':
-            self.client = xinference_client
-            logger.info(f"Xinference embedding model: {self.embedding_model} at {self.config['host']}")
-        elif self.embedding_type == 'jina':
-            self.client = jina_client
-            logger.info(f"Jina embedding model: {self.embedding_model} at {self.config['host']}")
-        else:  # local model
-            logger.info(f"Using local embedding model: {self.local_model_name}")
-            try:
-                # First try with trust_remote_code for models that might need it
-                self.model = SentenceTransformer(self.local_model_name, trust_remote_code=True)
-            except Exception as e:
-                logger.warning(f"Failed to load with trust_remote_code=True: {e}, trying without it")
-                # If that fails, try without trust_remote_code
-                self.model = SentenceTransformer(self.local_model_name, trust_remote_code=False)
-    
-    def get_embedding(self, text):
-        # 最大重试次数
-        max_retries = 3
-        retry_delay = 1  # 初始重试延迟（秒）
-        
-        for attempt in range(max_retries):
-            try:
-                if self.embedding_type in ['gitee', 'xinference', 'jina']:
-                    logger.info(f"Getting embedding from {self.embedding_type} (attempt {attempt+1}/{max_retries})")
-                    response = self.client.embeddings.create(
-                        model=self.embedding_model,
-                        input=text,
-                        encoding_format="float"
-                    )
-                    return response.data[0].embedding
-                else:  # local model
-                    logger.info(f"Getting embedding from local model (attempt {attempt+1}/{max_retries})")
-                    return self.model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
-            except Exception as e:
-                logger.error(f"Error getting embedding (attempt {attempt+1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:  # 如果不是最后一次尝试
-                    logger.info(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # 指数退避策略
-                else:
-                    # 如果是最后一次尝试且失败，尝试切换到本地模型
-                    if self.embedding_type != 'local':
-                        logger.warning(f"All {max_retries} attempts failed. Trying to fall back to local model...")
-                        try:
-                            if not hasattr(self, 'model'):
-                                logger.info("Initializing local embedding model for fallback")
-                                self.model = SentenceTransformer(self.local_model_name, trust_remote_code=True)
-                            return self.model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
-                        except Exception as local_error:
-                            logger.error(f"Local model fallback also failed: {local_error}")
-                    return None
+    def get_embedding(self, data):
+        if EMBEDDING_TYPE == "gitee":
+            response = OpenAI(
+                base_url=EMBEDDING_CONFIG[EMBEDDING_TYPE]['host'],
+                api_key=EMBEDDING_CONFIG[EMBEDDING_TYPE]['api_key'],
+                timeout=EMBEDDING_CONFIG[EMBEDDING_TYPE]['timeout']
+            ).embeddings.create(
+                model=EMBEDDING_CONFIG[EMBEDDING_TYPE]['model'],
+                input=data
+            )
+            return [i.embedding for i in response.data]
+        else:
+            url = EMBEDDING_CONFIG[EMBEDDING_TYPE]['host']
+            headers = {
+                'Authorization': f'Bearer {EMBEDDING_CONFIG[EMBEDDING_TYPE]["api_key"]}',
+                'Content-Type': 'application/json'
+            }
+            task = "retrieval" if EMBEDDING_TYPE == "xinference" else "retrieval.passage"
+            data = {
+                'model': EMBEDDING_CONFIG[EMBEDDING_TYPE]['model'],
+                'task': task,
+                'input': data
+            }
+            response = requests.post(url, headers=headers, json=data, timeout=EMBEDDING_CONFIG[EMBEDDING_TYPE]['timeout'])
+            return [i['embedding'] for i in response.json()['data']]
             
     def cosine_similarity(self, text1, text2):
         """
@@ -133,8 +51,7 @@ class Embedding:
         """
         try:
             # 获取两段文本的向量表示
-            embedding1 = self.get_embedding(text1)
-            embedding2 = self.get_embedding(text2)
+            embedding1, embedding2 = self.get_embedding([text1, text2])
             
             if embedding1 is None or embedding2 is None:
                 logger.warning("Failed to get embeddings for similarity calculation")
@@ -166,29 +83,11 @@ class FAISSIndex:
     def __init__(self):
         """
         Initialize a FAISS index for storing and retrieving embeddings.
-        维度将在添加第一个embedding时自动设置。
+        使用内积(IP)索引计算余弦相似度，向量维度固定为EMBEDDING_D。
         """
-        self.dimension = None
-        self.index = None
+        self.index = faiss.IndexFlatIP(EMBEDDING_D)  # 使用内积索引计算余弦相似度
         self.data = []  # Store original data corresponding to embeddings
-        self.initialized = False
-        logger.info("FAISS index initialized, dimension will be determined from first embedding")
-    
-    def _initialize_index(self, dimension: int) -> None:
-        """
-        Initialize the FAISS index with the specified dimension.
-        
-        Args:
-            dimension: The dimension of the embeddings.
-        """
-        if self.initialized:
-            return
-            
-        self.dimension = dimension
-        # Using L2 distance for similarity search
-        self.index = faiss.IndexFlatL2(dimension)
-        self.initialized = True
-        logger.info(f"FAISS index initialized with dimension: {dimension}")
+        logger.info(f"FAISS index initialized with dimension: {EMBEDDING_D} using IndexFlatIP")
     
     def add_embeddings(self, embeddings: List[List[float]], data: List[Any]) -> None:
         """
@@ -196,25 +95,24 @@ class FAISSIndex:
         
         Args:
             embeddings: List of embedding vectors.
-            data: List of corresponding data objects.
+            data: List of data corresponding to the embeddings.
         """
-        if not embeddings or len(embeddings) == 0:
-            logger.warning("No embeddings provided to add to FAISS index")
+        if len(embeddings) != len(data):
+            logger.warning(f"Mismatch between embeddings ({len(embeddings)}) and data ({len(data)})")
             return
             
         # Convert embeddings to numpy array
         embeddings_np = np.array(embeddings).astype('float32')
         
-        # Initialize index if not already done
-        if not self.initialized:
-            self._initialize_index(embeddings_np.shape[1])
+        # 对向量进行L2归一化，使内积等价于余弦相似度
+        faiss.normalize_L2(embeddings_np)
         
         # Add embeddings to index
         self.index.add(embeddings_np)
         
         # Store corresponding data
         self.data.extend(data)
-        logger.info(f"Added {len(embeddings)} embeddings to FAISS index. Total: {len(self.data)}")
+        logger.debug(f"Added {len(embeddings)} embeddings to FAISS index. Total: {len(self.data)}")
     
     def add_embedding(self, embedding: List[float], data_item: Any) -> None:
         """
@@ -222,7 +120,7 @@ class FAISSIndex:
         
         Args:
             embedding: The embedding vector.
-            data_item: The corresponding data object.
+            data_item: The data corresponding to the embedding.
         """
         self.add_embeddings([embedding], [data_item])
     
@@ -232,84 +130,80 @@ class FAISSIndex:
         
         Args:
             query_embedding: The query embedding vector.
-            k: Number of similar items to retrieve.
+            k: Number of results to return.
             
         Returns:
             Tuple containing (indices, distances, data)
         """
-        if not self.initialized:
-            logger.warning("FAISS index not initialized yet, cannot perform search")
-            return [], [], []
-            
         # Ensure k doesn't exceed the number of items in the index
         k = min(k, len(self.data))
         if k == 0:
+            logger.warning("FAISS index is empty, cannot perform search")
             return [], [], []
             
         # Convert query to numpy array
         query_np = np.array([query_embedding]).astype('float32')
         
+        # 对查询向量进行L2归一化，使内积等价于余弦相似度
+        faiss.normalize_L2(query_np)
+        
         # Perform search
         distances, indices = self.index.search(query_np, k)
         
-        # Get corresponding data
-        result_data = [self.data[i] for i in indices[0]]
+        # Flatten results
+        indices = indices[0].tolist()
+        distances = distances[0].tolist()
         
-        return indices[0].tolist(), distances[0].tolist(), result_data
-    
+        # 由于我们使用内积索引，距离实际上是相似度分数（越大越相似）
+        # 转换为标准距离格式（越小越相似）
+        distances = [1 - d for d in distances]
+        
+        # Get corresponding data
+        result_data = [self.data[i] for i in indices]
+        
+        return indices, distances, result_data
+        
     def get_size(self) -> int:
         """
-        Get the number of embeddings in the index.
+        Get the number of items in the FAISS index.
         
         Returns:
-            Number of embeddings in the index.
+            int: Number of items in the index
         """
         return len(self.data)
     
-    def get_all_data(self) -> List[Any]:
-        """
-        Get all data stored in the index.
-        
-        Returns:
-            List of all data items stored in the index.
-        """
-        return self.data
-        
     def clear(self) -> None:
         """
-        清空FAISS索引和相关数据，并将空索引保存到磁盘
+        Clear the FAISS index and associated data.
         
         Returns:
             None
         """
-        if self.initialized:
-            # 重新初始化索引
-            self.index = faiss.IndexFlatL2(self.dimension)
-            # 清空数据
-            self.data = []
-            logger.info("FAISS索引已清空")
+        # 重新初始化索引
+        self.index = faiss.IndexFlatIP(EMBEDDING_D)
+        # 清空数据
+        self.data = []
+        logger.info("FAISS索引已清空")
             
-            # 将空索引保存到磁盘
-            try:
-                # 默认索引路径
-                index_dir = 'data/faiss'
-                index_path = f"{index_dir}/index.faiss"
-                data_path = f"{index_dir}/index_data.pkl"
+        # 将空索引保存到磁盘
+        try:
+            # 默认索引路径
+            index_dir = 'data/faiss'
+            index_path = f"{index_dir}/index.faiss"
+            data_path = f"{index_dir}/index_data.pkl"
                 
-                # 确保目录存在
-                import os
-                os.makedirs(index_dir, exist_ok=True)
+            # 确保目录存在
+            import os
+            os.makedirs(index_dir, exist_ok=True)
                 
-                # 保存空索引到磁盘
-                success = self.save_to_disk(index_path, data_path)
-                if success:
-                    logger.info(f"空FAISS索引已保存到磁盘: {index_path}")
-                else:
-                    logger.warning(f"保存空FAISS索引到磁盘失败")
-            except Exception as e:
-                logger.error(f"保存空FAISS索引到磁盘时出错: {str(e)}")
-        else:
-            logger.warning("尝试清空未初始化的FAISS索引")
+            # 保存空索引到磁盘
+            success = self.save_to_disk(index_path, data_path)
+            if success:
+                logger.info(f"空FAISS索引已保存到磁盘: {index_path}")
+            else:
+                logger.warning(f"保存空FAISS索引到磁盘失败")
+        except Exception as e:
+            logger.error(f"保存空FAISS索引到磁盘时出错: {str(e)}")
         
     def save_to_disk(self, index_path: str, data_path: str) -> bool:
         """
@@ -324,10 +218,6 @@ class FAISSIndex:
         """
         import pickle
         import os
-        
-        if not self.initialized:
-            logger.warning("Cannot save uninitialized index to disk")
-            return False
             
         try:
             # 确保目录存在
@@ -336,15 +226,14 @@ class FAISSIndex:
             # 保存索引
             faiss.write_index(self.index, index_path)
             
-            # 保存数据 - 包含数据和维度信息
+            # 保存数据
             data_dict = {
-                'data': self.data,
-                'dimension': self.dimension
+                'data': self.data
             }
             with open(data_path, 'wb') as f:
                 pickle.dump(data_dict, f)
                 
-            logger.info(f"Successfully saved FAISS index to {index_path} and data to {data_path} (dimension: {self.dimension}, items: {len(self.data)})")
+            logger.info(f"Successfully saved FAISS index to {index_path} and data to {data_path} (items: {len(self.data)})")
             return True
             
         except Exception as e:
@@ -378,9 +267,8 @@ class FAISSIndex:
             with open(data_path, 'rb') as f:
                 data_dict = pickle.load(f)
                 self.data = data_dict['data']
-                self.dimension = data_dict['dimension']
+                # 兼容旧版本数据，忽略dimension字段
             
-            self.initialized = True
             logger.info(f"Successfully loaded FAISS index from {index_path} with {len(self.data)} items")
             return True
             
@@ -480,37 +368,34 @@ def save_faiss_index(faiss_index: FAISSIndex, index_dir: str = 'data/faiss', use
     # 设置索引文件路径 - 统一使用index.faiss和index_data.pkl命名
     index_path = os.path.join(actual_index_dir, 'index.faiss')
     data_path = os.path.join(actual_index_dir, 'index_data.pkl')
-    
+        
     # 保存到磁盘
     return faiss_index.save_to_disk(index_path, data_path)
 
 
-def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex, username: str = None, article_id: str = None, auto_save: bool = True) -> None:
+def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex, auto_save: bool = True, username: str = None, article_id: str = None) -> None:
     """
     Add a text string and its corresponding data to the provided FAISS index.
     The text will be converted to an embedding vector automatically.
-    
+        
     Args:
         text: The text string to be embedded.
-        data: The corresponding data object.
+        data: The data object corresponding to the text.
         faiss_index: The FAISS index instance to add the embedding to.
-        username: 用户名，用于自动保存时确定路径
-        article_id: 文章ID，用于自动保存时确定路径
-        auto_save: 是否自动保存索引到磁盘
+        auto_save: Whether to automatically save the index after adding the embedding.
+        username: Optional username for saving the index to a user-specific location.
+        article_id: Optional article ID for saving the index to an article-specific location.
     """
-    # 使用全局Embedding实例
-    embedding_instance = get_embedding_instance()
-    
     # 获取文本的embedding向量
-    embedding_vector = embedding_instance.get_embedding(text)
-    
+    embedding_vectors = Embedding().get_embedding([text])
+        
     # 检查embedding是否成功
-    if embedding_vector is None:
+    if not embedding_vectors or len(embedding_vectors) == 0:
         logger.warning(f"Failed to create embedding for text: {text[:50]}...")
         return
-    
+        
     # 添加到索引
-    faiss_index.add_embedding(embedding_vector, data)
+    faiss_index.add_embedding(embedding_vectors[0], data)
     
     # 自动保存到磁盘
     if auto_save:
@@ -518,7 +403,7 @@ def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex, username: 
             save_faiss_index(faiss_index, username=username, article_id=article_id)
             logger.debug(f"Auto-saved FAISS index after adding embedding")
         except Exception as e:
-            logger.warning(f"Failed to auto-save FAISS index: {e}")
+            logger.warning(f"Failed to auto-save FAISS index: {str(e)}")
 
 
 def add_batch_to_faiss_index(texts: List[str], data: List[Any], faiss_index: FAISSIndex) -> None:
@@ -535,27 +420,28 @@ def add_batch_to_faiss_index(texts: List[str], data: List[Any], faiss_index: FAI
         logger.warning("No texts provided to add to FAISS index")
         return
         
-    # 使用全局Embedding实例
-    embedding_instance = get_embedding_instance()
-    
     # 批量获取embeddings
-    embeddings = []
+    embedding_vectors = Embedding().get_embedding(texts)
+    
+    if not embedding_vectors or len(embedding_vectors) == 0:
+        logger.warning("No valid embeddings were created")
+        return
+    
+    # 过滤有效的embeddings和对应的数据
+    valid_embeddings = []
     valid_data = []
     
-    for i, text in enumerate(texts):
-        embedding_vector = embedding_instance.get_embedding(text)
-        if embedding_vector is not None:
-            embeddings.append(embedding_vector)
+    for i, embedding in enumerate(embedding_vectors):
+        if embedding is not None:
+            valid_embeddings.append(embedding)
             valid_data.append(data[i])
-        else:
-            logger.warning(f"Failed to create embedding for text: {text[:50]}...")
     
-    if not embeddings:
-        logger.warning("No valid embeddings were created")
+    if not valid_embeddings:
+        logger.warning("No valid embeddings were created after filtering")
         return
         
     # 添加到索引
-    faiss_index.add_embeddings(embeddings, valid_data)
+    faiss_index.add_embeddings(valid_embeddings, valid_data)
 
 
 def add_batch_embeddings_to_faiss_index(embeddings: List[List[float]], data: List[Any], faiss_index: FAISSIndex) -> None:
@@ -582,18 +468,15 @@ def search_similar_text(query_text: str, faiss_index: FAISSIndex, k: int = 5) ->
     Returns:
         Tuple containing (indices, distances, data)
     """
-    # 使用全局Embedding实例
-    embedding_instance = get_embedding_instance()
-    
     # 获取查询文本的embedding
-    query_embedding = embedding_instance.get_embedding(query_text)
+    embedding_vectors = Embedding().get_embedding([query_text])
     
-    if query_embedding is None:
+    if not embedding_vectors or len(embedding_vectors) == 0:
         logger.warning(f"Failed to create embedding for query text: {query_text[:50]}...")
         return [], [], []
     
     # 使用embedding进行搜索
-    return search_similar(query_embedding, faiss_index, k)
+    return search_similar(embedding_vectors[0], faiss_index, k)
 
 
 def search_similar(query_embedding: List[float], faiss_index: FAISSIndex, k: int = 5) -> Tuple[List[int], List[float], List[Any]]:
@@ -610,8 +493,15 @@ def search_similar(query_embedding: List[float], faiss_index: FAISSIndex, k: int
     """
     return faiss_index.search(query_embedding, k)
 
-# 初始化全局Embedding实例
-embedding_instance = get_embedding_instance()
+# 提供get_embedding_instance函数以保持与现有代码的向后兼容性
+def get_embedding_instance():
+    """
+    返回Embedding类的实例，用于向后兼容
+    
+    Returns:
+        Embedding: Embedding类的实例
+    """
+    return Embedding()
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -689,7 +579,8 @@ if __name__ == "__main__":
     # 测试4: 使用预先计算的embedding进行搜索
     print("\n4. 使用预先计算的embedding进行搜索:")
     query_text = "人工智能的发展趋势"
-    query_embedding = get_embedding_instance().get_embedding(query_text)
+    embedding_vectors = Embedding().get_embedding([query_text])
+    query_embedding = embedding_vectors[0]
     print(f"查询: '{query_text}'")
     indices, distances, data = search_similar(query_embedding, test_index, k=3)
     for i, (dist, item) in enumerate(zip(distances, data)):

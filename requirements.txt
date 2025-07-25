@@ -40,7 +40,6 @@ readability-lxml>=0.8.1
 mysql-connector-python>=8.0.32
 
 # 图片分析和文本匹配
-sentence-transformers>=2.2.2
 faiss-cpu>=1.7.4
 huggingface_hub>=0.16.0
 
