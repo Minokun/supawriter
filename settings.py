@@ -62,7 +62,7 @@ HISTORY_FILTER_BASE_OPTIONS = [
 ]
 
 # Embedding settings
-EMBEDDING_TYPE = 'gitee' # Options: gitee, xinference, jina, local
+EMBEDDING_TYPE = 'xinference' # Options: gitee, xinference, jina, local
 EMBEDDING_D = 2048
 EMBEDDING_MODEL = 'jina-embeddings-v4'
 EMBEDDING_TIMEOUT = 10

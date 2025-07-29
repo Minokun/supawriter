@@ -13,30 +13,75 @@ logger = logging.getLogger(__name__)
     
 class Embedding:
     def get_embedding(self, data):
-        if EMBEDDING_TYPE == "gitee":
-            response = OpenAI(
-                base_url=EMBEDDING_CONFIG[EMBEDDING_TYPE]['host'],
-                api_key=EMBEDDING_CONFIG[EMBEDDING_TYPE]['api_key'],
-                timeout=EMBEDDING_CONFIG[EMBEDDING_TYPE]['timeout']
-            ).embeddings.create(
-                model=EMBEDDING_CONFIG[EMBEDDING_TYPE]['model'],
-                input=data
-            )
-            return [i.embedding for i in response.data]
-        else:
-            url = EMBEDDING_CONFIG[EMBEDDING_TYPE]['host']
-            headers = {
-                'Authorization': f'Bearer {EMBEDDING_CONFIG[EMBEDDING_TYPE]["api_key"]}',
-                'Content-Type': 'application/json'
-            }
-            task = "retrieval" if EMBEDDING_TYPE == "xinference" else "retrieval.passage"
-            data = {
-                'model': EMBEDDING_CONFIG[EMBEDDING_TYPE]['model'],
-                'task': task,
-                'input': data
-            }
-            response = requests.post(url, headers=headers, json=data, timeout=EMBEDDING_CONFIG[EMBEDDING_TYPE]['timeout'])
-            return [i['embedding'] for i in response.json()['data']]
+        try:
+            if EMBEDDING_TYPE == "gitee":
+                response = OpenAI(
+                    base_url=EMBEDDING_CONFIG[EMBEDDING_TYPE]['host'],
+                    api_key=EMBEDDING_CONFIG[EMBEDDING_TYPE]['api_key'],
+                    timeout=EMBEDDING_CONFIG[EMBEDDING_TYPE]['timeout']
+                ).embeddings.create(
+                    model=EMBEDDING_CONFIG[EMBEDDING_TYPE]['model'],
+                    input=data
+                )
+                return [i.embedding for i in response.data]
+            else:
+                url = EMBEDDING_CONFIG[EMBEDDING_TYPE]['host']
+                headers = {
+                    'Authorization': f'Bearer {EMBEDDING_CONFIG[EMBEDDING_TYPE]["api_key"]}',
+                    'Content-Type': 'application/json'
+                }
+                task = "retrieval" if EMBEDDING_TYPE == "xinference" else "retrieval.passage"
+                request_data = {
+                    'model': EMBEDDING_CONFIG[EMBEDDING_TYPE]['model'],
+                    'task': task,
+                    'input': data
+                }
+                
+                logger.debug(f"发送嵌入请求到 {url}，模型: {EMBEDDING_CONFIG[EMBEDDING_TYPE]['model']}")
+                logger.info(f"发送嵌入请求到 {url}，请求体: {str(request_data)}")
+                response = requests.post(url, headers=headers, json=request_data, timeout=EMBEDDING_CONFIG[EMBEDDING_TYPE]['timeout'])
+                response.raise_for_status()  # 检查HTTP错误
+                
+                # 尝试解析JSON响应
+                try:
+                    response_json = response.json()
+                    # 打印完整响应以便调试
+                    logger.info(f"嵌入API响应状态码: {response.status_code}")
+                    # logger.info(f"嵌入API响应头部: {dict(response.headers)}")
+                    # logger.info(f"嵌入API完整响应: {str(response_json)}")
+                except Exception as e:
+                    logger.error(f"解析API响应JSON失败: {str(e)}")
+                    logger.info(f"原始响应内容: {response.text[:1000]}")
+                    raise
+                
+                # 根据不同API格式解析响应
+                if 'data' in response_json:
+                    # 标准格式: {'data': [{'embedding': [...]}]}
+                    return [i['embedding'] for i in response_json['data']]
+                elif 'embeddings' in response_json:
+                    # 替代格式: {'embeddings': [...]}
+                    return response_json['embeddings']
+                elif 'embedding' in response_json:
+                    # 单一嵌入格式: {'embedding': [...]}
+                    return [response_json['embedding']]
+                else:
+                    # 尝试直接解析响应体作为嵌入向量
+                    if isinstance(response_json, list) and len(response_json) > 0:
+                        if isinstance(response_json[0], list):
+                            # 响应是嵌入向量列表
+                            return response_json
+                        elif isinstance(response_json[0], dict) and 'embedding' in response_json[0]:
+                            # 响应是包含嵌入的对象列表
+                            return [item['embedding'] for item in response_json]
+                    
+                    # 如果无法解析，记录错误并返回空列表
+                    logger.error(f"无法从API响应中解析嵌入向量: {str(response_json)[:500]}")
+                    return []
+                    
+        except Exception as e:
+            logger.error(f"获取嵌入向量时出错: {str(e)}")
+            logger.exception("详细错误信息:")
+            return []
             
     def cosine_similarity(self, text1, text2):
         """
@@ -277,6 +322,9 @@ class FAISSIndex:
             return False
 
 
+# 全局FAISS索引缓存，避免循环导入
+global_faiss_index_cache = {}
+
 def create_faiss_index(load_from_disk: bool = False, index_dir: str = 'data/faiss', username: str = None, article_id: str = None) -> FAISSIndex:
     """
     创建一个新的FAISS索引实例，可选从磁盘加载。
@@ -293,6 +341,21 @@ def create_faiss_index(load_from_disk: bool = False, index_dir: str = 'data/fais
     """
     import os
     from pathlib import Path
+    
+    # 使用全局缓存字典而不是导入grab_html_content模块
+    global global_faiss_index_cache
+    cache_key = f"{username or 'global'}/{article_id or 'default'}"
+    
+    # 尝试从全局缓存获取索引
+    if cache_key in global_faiss_index_cache:
+        cached_index = global_faiss_index_cache[cache_key]
+        try:
+            index_size = cached_index.get_size()
+            logger.debug(f"Using cached FAISS index for {cache_key} with {index_size} items")
+            return cached_index
+        except Exception as e:
+            logger.debug(f"Cached index invalid: {e}, removing from cache")
+            del global_faiss_index_cache[cache_key]
     
     faiss_index = FAISSIndex()
     
@@ -324,6 +387,9 @@ def create_faiss_index(load_from_disk: bool = False, index_dir: str = 'data/fais
             success = faiss_index.load_from_disk(index_path, data_path)
             if success:
                 logger.info(f"Loaded existing FAISS index from {index_path} with {faiss_index.get_size()} items")
+                # 更新全局缓存
+                global_faiss_index_cache[cache_key] = faiss_index
+                logger.debug(f"Updated global FAISS index cache for {cache_key}")
                 return faiss_index
             else:
                 logger.warning("Failed to load FAISS index from disk, creating a new one")
@@ -332,6 +398,8 @@ def create_faiss_index(load_from_disk: bool = False, index_dir: str = 'data/fais
     
     # 如果没有指定从磁盘加载或加载失败，创建新的索引实例
     logger.info("Created new FAISS index instance")
+    # 将新创建的索引添加到缓存
+    global_faiss_index_cache[cache_key] = faiss_index
     return faiss_index
 
 
@@ -386,24 +454,47 @@ def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex, auto_save:
         username: Optional username for saving the index to a user-specific location.
         article_id: Optional article ID for saving the index to an article-specific location.
     """
-    # 获取文本的embedding向量
-    embedding_vectors = Embedding().get_embedding([text])
-        
-    # 检查embedding是否成功
-    if not embedding_vectors or len(embedding_vectors) == 0:
-        logger.warning(f"Failed to create embedding for text: {text[:50]}...")
-        return
-        
-    # 添加到索引
-    faiss_index.add_embedding(embedding_vectors[0], data)
+    # 记录当前索引大小
+    before_size = faiss_index.get_size()
+    logger.info(f"添加前FAISS索引大小: {before_size}")
     
-    # 自动保存到磁盘
-    if auto_save:
+    # 记录文本信息
+    text_preview = text[:50] + "..." if len(text) > 50 else text
+    logger.info(f"正在为文本生成嵌入向量: {text_preview}")
+    
+    try:
+        # 获取文本的embedding向量
+        embedding_vectors = Embedding().get_embedding([text])
+        
+        # 检查embedding是否成功
+        if not embedding_vectors or len(embedding_vectors) == 0:
+            logger.warning(f"无法为文本创建嵌入向量: {text_preview}")
+            return
+        
+        logger.info(f"成功生成嵌入向量，维度: {len(embedding_vectors[0])}")
+        
+        # 添加到索引
         try:
-            save_faiss_index(faiss_index, username=username, article_id=article_id)
-            logger.debug(f"Auto-saved FAISS index after adding embedding")
+            faiss_index.add_embedding(embedding_vectors[0], data)
+            after_size = faiss_index.get_size()
+            logger.info(f"添加后FAISS索引大小: {after_size}，增加: {after_size - before_size}")
         except Exception as e:
-            logger.warning(f"Failed to auto-save FAISS index: {str(e)}")
+            logger.error(f"添加嵌入向量到FAISS索引失败: {str(e)}")
+            return
+        
+        # 自动保存到磁盘
+        if auto_save:
+            try:
+                save_path = f"{username}/{article_id}" if username and article_id else "global"
+                logger.info(f"正在保存FAISS索引到: {save_path}")
+                save_faiss_index(faiss_index, username=username, article_id=article_id)
+                logger.info(f"成功保存FAISS索引，大小: {faiss_index.get_size()}")
+            except Exception as e:
+                logger.error(f"保存FAISS索引失败: {str(e)}")
+    except Exception as e:
+        logger.error(f"生成嵌入向量过程中出错: {str(e)}")
+        logger.exception("详细错误信息:")
+        return
 
 
 def add_batch_to_faiss_index(texts: List[str], data: List[Any], faiss_index: FAISSIndex) -> None:

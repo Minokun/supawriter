@@ -39,9 +39,19 @@ INDEX_DIR = 'data/faiss'
 # 全局索引变量，但不在模块级别初始化
 faiss_index = None
 
+# 导入embedding_utils中的全局缓存，避免循环导入
+try:
+    from utils.embedding_utils import global_faiss_index_cache as faiss_index_cache
+except ImportError:
+    # 如果无法导入，创建本地缓存
+    faiss_index_cache = {}
+
 def get_streamlit_faiss_index(username: str = None, article_id: str = None):
-    """获取FAISS索引实例，优先从磁盘加载用户和文章特定的索引"""
-    global faiss_index, INDEX_DIR
+    """获取FAISS索引实例，优先从缓存获取，然后从磁盘加载用户和文章特定的索引"""
+    global faiss_index, INDEX_DIR, faiss_index_cache
+    
+    # 构建索引缓存键
+    cache_key = f"{username or 'global'}/{article_id or 'default'}"
     
     # 记录请求的索引路径，用于调试
     expected_path = ""
@@ -54,6 +64,20 @@ def get_streamlit_faiss_index(username: str = None, article_id: str = None):
     
     logger.info(f"Requesting FAISS index for path: {expected_path}")
     
+    # 首先检查缓存中是否已有该索引
+    if cache_key in faiss_index_cache:
+        logger.debug(f"Using cached FAISS index for {cache_key}")
+        cached_index = faiss_index_cache[cache_key]
+        # 验证索引是否有效
+        try:
+            index_size = cached_index.get_size()
+            logger.info(f"Using cached FAISS index for {cache_key} with {index_size} items")
+            return cached_index
+        except Exception as e:
+            logger.warning(f"Cached index for {cache_key} is invalid: {e}, will reload")
+            # 如果缓存的索引无效，从缓存中删除
+            del faiss_index_cache[cache_key]
+    
     # 如果指定了用户名和文章ID，尝试加载文章特定的索引
     if username and article_id:
         try:
@@ -62,6 +86,8 @@ def get_streamlit_faiss_index(username: str = None, article_id: str = None):
             logger.info(f"Loaded article-specific FAISS index for {username}/{article_id} with {index_size} items")
             if index_size == 0:
                 logger.warning(f"Article-specific index for {username}/{article_id} is empty")
+            # 将加载的索引添加到缓存
+            faiss_index_cache[cache_key] = article_faiss_index
             return article_faiss_index
         except Exception as e:
             logger.warning(f"Failed to load article-specific index for {username}/{article_id}: {e}")
@@ -69,11 +95,14 @@ def get_streamlit_faiss_index(username: str = None, article_id: str = None):
     # 如果指定了用户名，尝试加载用户特定的索引
     if username:
         try:
+            user_cache_key = f"{username}/default"
             user_faiss_index = create_faiss_index(load_from_disk=True, index_dir=INDEX_DIR, username=username)
             index_size = user_faiss_index.get_size()
             logger.info(f"Loaded user-specific FAISS index for {username} with {index_size} items")
             if index_size == 0:
                 logger.warning(f"User-specific index for {username} is empty")
+            # 将加载的索引添加到缓存
+            faiss_index_cache[user_cache_key] = user_faiss_index
             return user_faiss_index
         except Exception as e:
             logger.warning(f"Failed to load user-specific index for {username}: {e}")
@@ -86,6 +115,8 @@ def get_streamlit_faiss_index(username: str = None, article_id: str = None):
         logger.info(f"Global FAISS index initialized with {index_size} items")
         if index_size == 0:
             logger.warning("Global FAISS index is empty")
+        # 将全局索引添加到缓存
+        faiss_index_cache['global/default'] = faiss_index
     
     return faiss_index
 
@@ -524,12 +555,28 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                         # 添加到FAISS索引
                         try:
                             # 获取用户和文章特定的FAISS索引实例
+                            logger.info(f"正在获取FAISS索引实例: {username}/{article_id}")
                             current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
+                            
+                            # 记录添加前的索引大小
+                            before_size = current_faiss_index.get_size()
+                            logger.info(f"添加图片前FAISS索引大小: {before_size}")
+                            
+                            # 添加到索引
                             add_to_faiss_index(description, data, current_faiss_index, username=username, article_id=article_id, auto_save=True)
-                            logger.info(f"Added image description to FAISS index for {username}/{article_id}: {img_src}")
+                            
+                            # 记录添加后的索引大小
+                            after_size = current_faiss_index.get_size()
+                            logger.info(f"添加图片后FAISS索引大小: {after_size}，增加: {after_size - before_size}")
+                            
+                            if after_size > before_size:
+                                logger.info(f"成功添加图片到FAISS索引 {username}/{article_id}: {img_src[:50]}...")
+                            else:
+                                logger.warning(f"图片似乎未成功添加到FAISS索引: {img_src[:50]}...")
+                                
                         except Exception as e:
-                            # logger.error(f"Failed to add to FAISS index: {str(e)}")
-                            pass
+                            logger.error(f"添加图片到FAISS索引失败: {str(e)}")
+                            logger.exception("详细错误信息:")
                     
                     # 缓存结果
                     image_hash_cache[img_src] = result
