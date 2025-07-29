@@ -6,6 +6,7 @@ import datetime
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
 from settings import LLM_MODEL, LLM_PROVIDERS
+from utils.config_manager import get_config
 from utils.history_utils import (
     list_chat_sessions, create_chat_session, load_chat_session, 
     save_chat_session, update_chat_title, delete_chat_session
@@ -186,7 +187,10 @@ def main():
 
     # 使用全局模型设置
     try:
-        global_settings = st.session_state.get('global_model_settings', {})
+        # 从配置管理器获取全局模型设置
+        config = get_config()
+        global_settings = config.get('global_model_settings', {})
+        
         if not global_settings:
             # 如果全局设置不存在，使用第一个可用模型作为后备
             model_type = list(LLM_MODEL.keys())[0]

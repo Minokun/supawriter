@@ -62,10 +62,19 @@ HISTORY_FILTER_BASE_OPTIONS = [
 ]
 
 # Embedding settings
-EMBEDDING_TYPE = 'xinference' # Options: gitee, xinference, jina, local
-EMBEDDING_D = 2048
-EMBEDDING_MODEL = 'jina-embeddings-v4'
-EMBEDDING_TIMEOUT = 10
+# 导入配置管理器，如果导入失败则使用默认值
+try:
+    from utils.config_manager import get_embedding_type, get_embedding_model, get_embedding_dimension, get_embedding_timeout
+    EMBEDDING_TYPE = get_embedding_type()  # Options: gitee, xinference, jina, local
+    EMBEDDING_D = get_embedding_dimension()
+    EMBEDDING_MODEL = get_embedding_model()
+    EMBEDDING_TIMEOUT = get_embedding_timeout()
+except ImportError:
+    # 如果配置管理器未导入成功，使用默认值
+    EMBEDDING_TYPE = 'xinference'
+    EMBEDDING_D = 2048
+    EMBEDDING_MODEL = 'jina-embeddings-v4'
+    EMBEDDING_TIMEOUT = 10
 EMBEDDING_CONFIG = {
     'gitee': {
         'model': EMBEDDING_MODEL,

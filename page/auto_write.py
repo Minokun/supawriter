@@ -16,6 +16,7 @@ from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
 from utils.history_utils import add_history_record
 from utils.embedding_utils import create_faiss_index, search_similar_text
+from utils.config_manager import get_config
 import streamlit.components.v1 as components
 import threading
 import time
@@ -312,12 +313,13 @@ def main():
     with st.sidebar:
         st.title("超级写手配置项：")
 
-        # 显示当前使用的全局模型
-        global_settings = st.session_state.get('global_model_settings', {})
+        # 显示当前使用的全局模型 - 从配置管理器获取
+        config = get_config()
+        global_settings = config.get('global_model_settings', {})
         if global_settings:
             st.info(f"当前模型: **{global_settings.get('provider')}/{global_settings.get('model_name')}**")
         else:
-            st.warning("尚未配置全局模型，请前往‘系统设置’页面配置。")
+            st.warning("尚未配置全局模型，请前往'系统设置'页面配置。")
 
         with st.form(key='my_form'):
             text_input = st.text_input(
@@ -359,8 +361,9 @@ def main():
         from streamlit.runtime.scriptrunner import get_script_run_ctx
         ctx = get_script_run_ctx()
 
-        # 获取全局模型设置
-        global_settings = st.session_state.get('global_model_settings', {})
+        # 获取全局模型设置 - 从配置管理器获取
+        config = get_config()
+        global_settings = config.get('global_model_settings', {})
         # 如果全局设置为空，则使用第一个可用的模型作为后备
         if not global_settings:
             default_provider = list(LLM_MODEL.keys())[0]
