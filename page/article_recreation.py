@@ -15,6 +15,7 @@ from utils.history_utils import load_user_history, add_history_record, save_html
 from utils.searxng_utils import chat
 import utils.prompt_template as pt
 from settings import LLM_MODEL, ARTICLE_TRANSFORMATIONS
+from utils.config_manager import get_config
 
 @require_auth
 def main():
@@ -52,13 +53,17 @@ def main():
         list(transformation_options.keys())
     )
 
-    # 使用全局模型设置
-    global_settings = st.session_state.get('global_model_settings', {})
+    # 使用全局模型设置 - 从配置管理器获取
+    config = get_config()
+    global_settings = config.get('global_model_settings', {})
+    # 如果全局设置为空，则使用第一个可用的模型作为后备
     if not global_settings:
-        st.warning("尚未配置全局模型，请前往‘系统设置’页面进行配置。将使用默认模型。")
+        st.warning("尚未配置全局模型，请前往'系统设置'页面进行配置。将使用默认模型。")
         # 提供一个后备的默认模型
-        model_type = list(LLM_MODEL.keys())[0]
-        model_name = LLM_MODEL[model_type]['model'][0] if isinstance(LLM_MODEL[model_type]['model'], list) else LLM_MODEL[model_type]['model']
+        default_provider = list(LLM_MODEL.keys())[0]
+        default_model = LLM_MODEL[default_provider]['model'][0] if isinstance(LLM_MODEL[default_provider]['model'], list) else LLM_MODEL[default_provider]['model']
+        model_type = default_provider
+        model_name = default_model
     else:
         model_type = global_settings.get('provider')
         model_name = global_settings.get('model_name')

@@ -100,15 +100,24 @@ EMBEDDING_CONFIG = {
 HTML_NGINX_BASE_URL = 'http://localhost:80/'
 
 # openai vl设置
-PROCESS_IMAGE_TYPE = "qwen" # 只使用qwen模型
+PROCESS_IMAGE_TYPE = "glm" # 使用qwen glm模型
 # 免费模型还有 qwen-vl-max-2025-04-08 qwen-vl-max-2025-04-02 qwen-vl-max-2025-01-25 qwen-vl-plus-2025-01-25
-OPENAI_VL_MODEL = 'qwen-vl-plus-2025-01-25'
-OPENAI_VL_API_KEY = st.secrets['dashscope']['api_key']
-OPENAI_VL_BASE_URL = st.secrets['dashscope']['base_url']
+PROCESS_CONFIG = {
+    "qwen": {
+        "model": "qwen-vl-plus-2025-01-25",
+        "api_key": st.secrets['dashscope']['api_key'],
+        "base_url": st.secrets['dashscope']['base_url']
+    },
+    "glm": {
+        "model": "glm-4.1v-thinking-flash",
+        "api_key": st.secrets['glm']['api_key'],
+        "base_url": st.secrets['glm']['base_url']
+    }
+}
 
 # 文章生成设置
 # 爬取网页数量默认值
-DEFAULT_SPIDER_NUM = 5
+DEFAULT_SPIDER_NUM = 2
 # 是否自动插入相关图片默认值
 DEFAULT_ENABLE_IMAGES = True
 # 是否将图片下载至本地默认值

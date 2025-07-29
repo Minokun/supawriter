@@ -5,7 +5,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import json
 import logging
 from openai import OpenAI
-from settings import OPENAI_VL_MODEL, OPENAI_VL_API_KEY, OPENAI_VL_BASE_URL
+from zai import ZhipuAiClient
+from settings import PROCESS_CONFIG, PROCESS_IMAGE_TYPE
 import requests
 
 # 配置日志
@@ -15,10 +16,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# API配置
-BASE_URL = OPENAI_VL_BASE_URL
-MODEL = OPENAI_VL_MODEL
-API_KEY = OPENAI_VL_API_KEY
+if PROCESS_IMAGE_TYPE == "qwen":
+    client = OpenAI(
+        api_key=PROCESS_CONFIG['qwen']['api_key'],
+        base_url=PROCESS_CONFIG['qwen']['base_url'],
+    )
+else:
+    client = ZhipuAiClient(
+        api_key=PROCESS_CONFIG['glm']['api_key']
+    )
 
 # 示例提示词，与gemma3_client.py中的类似
 sample_prompt = """
@@ -26,10 +32,6 @@ sample_prompt = """
 """
 
 def openai_ali(prompt=sample_prompt, image_path: str = None, image_url: str = None, image_content: bytes = None):
-    client = OpenAI(
-        api_key=API_KEY,
-        base_url=BASE_URL,
-    )
     
     # 准备图像数据
     if image_path:
@@ -48,7 +50,7 @@ def openai_ali(prompt=sample_prompt, image_path: str = None, image_url: str = No
         raise ValueError("必须提供image_path、image_url或image_content")
     
     completion = client.chat.completions.create(
-        model=MODEL,
+        model=PROCESS_CONFIG[PROCESS_IMAGE_TYPE]['model'],
         messages=[
             {
                 "role": "user",
@@ -85,7 +87,6 @@ def openai_ali(prompt=sample_prompt, image_path: str = None, image_url: str = No
         }
 
 def process_image(prompt=sample_prompt, image_path: str = None, image_url: str = None, image_content: bytes = None):
-    # 只使用qwen模型
     return openai_ali(prompt, image_path, image_url, image_content)
     
 # 已移除call_gemma3_api函数，统一使用qwen模型处理图像
