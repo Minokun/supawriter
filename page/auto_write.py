@@ -207,6 +207,7 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
                                 if isinstance(data, dict) and 'image_url' in data:
                                     image_url = data['image_url']
                                     if image_url not in used_images:
+                                        log.info(f"找到相似度为{similarity}的图片：{image_url}")
                                         # 相似度分数范围为-1到1，值越大表示越相似
                                         if similarity >= 0.1:  # 调整阈值，因为现在直接使用余弦相似度
                                             used_images.add(image_url)
