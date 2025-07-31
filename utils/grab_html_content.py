@@ -191,7 +191,7 @@ def tag_visible(element) -> bool:
         return False
     return True
 
-async def download_image(session: aiohttp.ClientSession, img_src: str, image_hash_cache: dict, task_id: str, is_multimodal: bool = False, theme: str = "", stats: dict = None, base_url: str = None, username: str = None, article_id: str = None) -> Union[str, dict]:
+async def download_image(session: aiohttp.ClientSession, img_src: str, image_hash_cache: dict, task_id: str, is_multimodal: bool = False, use_direct_image_embedding: bool = False, theme: str = "", stats: dict = None, base_url: str = None, username: str = None, article_id: str = None) -> Union[str, dict]:
     """
     异步下载图片，使用MD5哈希确保每张图片只下载一次
     
@@ -533,8 +533,58 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
             image_hash_cache[img_src] = '' if not is_multimodal else None
             return '' if not is_multimodal else None
         
+        # 如果是直接图片URL嵌入模式
+        if use_direct_image_embedding:
+            logger.info(f"Processing image with direct URL embedding: {img_src}")
+            
+            try:
+                # 准备要存储的数据
+                data = {
+                    "image_url": img_src,
+                    "task_id": task_id
+                }
+                
+                # 添加到FAISS索引，使用is_image_url=True标记这是一个图片URL
+                try:
+                    # 获取用户和文章特定的FAISS索引实例
+                    logger.info(f"正在获取FAISS索引实例用于直接图片URL嵌入: {username}/{article_id}")
+                    current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
+                    
+                    # 记录添加前的索引大小
+                    before_size = current_faiss_index.get_size()
+                    logger.info(f"添加图片URL前FAISS索引大小: {before_size}")
+                    
+                    # 直接添加图片URL到索引，使用is_image_url=True
+                    add_to_faiss_index(img_src, data, current_faiss_index, username=username, article_id=article_id, auto_save=True, is_image_url=True)
+                    
+                    # 记录添加后的索引大小
+                    after_size = current_faiss_index.get_size()
+                    logger.info(f"添加图片URL后FAISS索引大小: {after_size}，增加: {after_size - before_size}")
+                    
+                    if after_size > before_size:
+                        logger.info(f"成功添加图片URL到FAISS索引 {username}/{article_id}: {img_src[:50]}...")
+                    else:
+                        logger.warning(f"图片URL似乎未成功添加到FAISS索引: {img_src[:50]}...")
+                        
+                except Exception as e:
+                    logger.error(f"添加图片URL到FAISS索引失败: {str(e)}")
+                    logger.exception("详细错误信息:")
+                
+                # 缓存结果并返回图片URL
+                result = {
+                    "image_url": img_src,
+                    "embedding_method": "direct_embedding"
+                }
+                image_hash_cache[img_src] = result
+                return result
+                
+            except Exception as e:
+                logger.error(f"Error processing image URL for direct embedding: {str(e)}")
+                image_hash_cache[img_src] = None
+                return None
+                
         # 如果是多模态处理模式，在通过大小和尺寸检查后再进行多模态处理
-        if is_multimodal:
+        elif is_multimodal:
             logger.info(f"Processing image with multimodal model: {img_src}")
             
             # 调用Qwen模型进行图片识别
@@ -882,7 +932,7 @@ def normalize_image_url(img_src: str, base_url: str = None) -> str:
             
     return img_src
 
-async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str, is_multimodal: bool = False, theme: str = "", page_url: str = None, username: str = None, article_id: str = None) -> Dict[str, any]:
+async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str, is_multimodal: bool = False, use_direct_image_embedding: bool = False, theme: str = "", page_url: str = None, username: str = None, article_id: str = None) -> Dict[str, any]:
     """
     从HTML内容中提取文本和图片
     """
@@ -965,12 +1015,22 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
                 # 直接传递原始img_src，让download_image函数处理URL规范化
                 
                 # 创建异步任务，传递base_url、用户名和文章ID
-                task = download_image(session, img_src, image_hash_cache, task_id, is_multimodal, theme, stats, base_url, username, article_id)
+                task = download_image(session, img_src, image_hash_cache, task_id, is_multimodal, use_direct_image_embedding, theme, stats, base_url, username, article_id)
                 img_tasks.append(task)
             
             # 等待所有图片下载完成
             img_paths = await asyncio.gather(*img_tasks)
-            img_paths = [path for path in img_paths if path]  # 过滤空路径
+            
+            # 处理直接嵌入模式下的字典结果
+            processed_paths = []
+            for path in img_paths:
+                if path:
+                    if isinstance(path, dict) and 'image_url' in path:
+                        # 如果是直接嵌入模式下的字典结果，提取URL
+                        processed_paths.append(path['image_url'])
+                    else:
+                        # 普通字符串路径
+                        processed_paths.append(path)
             
             # 输出图片下载统计信息
             logger.info(f"图片下载统计: 总计 {stats['total']} 张, 成功 {stats['success']} 张, 失败 {stats['failed']} 张, 使用缓存 {stats['cached']} 张, 跳过 {stats['skipped']} 张, 去重 {stats.get('duplicate', 0)} 张")
@@ -980,14 +1040,14 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
         
         return {
             'text': text_content,
-            'images': img_paths
+            'images': processed_paths
         }
         
     except Exception as e:
         logger.error(f"Error processing HTML content: {str(e)}")
         return {'text': '', 'images': []}
 
-async def fetch(browser, url: str, task_id: str, is_multimodal: bool = False, theme: str = "", retry_count: int = 0, username: str = None, article_id: str = None) -> Dict[str, any]:
+async def fetch(browser, url, task_id=None, is_multimodal=False, use_direct_image_embedding=False, theme="", username=None, article_id=None) -> Dict[str, any]:
     """
     获取页面内容
     """
@@ -1006,14 +1066,14 @@ async def fetch(browser, url: str, task_id: str, is_multimodal: bool = False, th
             await page.route("**/*", lambda route: route.continue_())
             
             # 访问 URL，并等待完成所有重定向
-            timeout = 30000 + retry_count * 10000  # 毫秒，随重试次数增加
+            timeout = 30000  # 固定超时时间，毫秒
             response = await page.goto(url, timeout=timeout, wait_until="networkidle")
             
             # 获取最终 URL（重定向后）
             final_url = page.url
             
             if final_url != url:
-                logger.info(f"URL redirected: {url} -> {final_url}")
+                logger.debug(f"URL redirected: {url} -> {final_url}")
                 
             # 等待页面完全加载，包括动态内容
             await asyncio.sleep(2)  # 给JavaScript一些时间来加载内容
@@ -1046,25 +1106,18 @@ async def fetch(browser, url: str, task_id: str, is_multimodal: bool = False, th
             content = await page.content()
             
             # 处理页面内容
-            result = await text_from_html(content, session, task_id, is_multimodal, theme, final_url, username, article_id)  # 使用最终URL，传递用户名和文章ID
+            result = await text_from_html(content, session, task_id, is_multimodal, use_direct_image_embedding, theme, final_url, username, article_id)  # 使用最终URL，传递用户名和文章ID
             result['url'] = final_url  # 使用最终URL而不是原始URL
             result['original_url'] = url  # 保存原始URL以便跟踪
             return result
         except Exception as e:
             logger.error(f"Error fetching {url}: {str(e)}")
-            
-            # 重试逻辑
-            if retry_count < MAX_RETRIES:
-                logger.info(f"Retrying {url}, attempt {retry_count + 1}/{MAX_RETRIES}")
-                await asyncio.sleep(RETRY_DELAY * (retry_count + 1))  # 指数退避
-                return await fetch(browser, url, task_id, is_multimodal, theme, retry_count + 1, username, article_id)
-                
             return {"url": url, "text": "", "images": [], "error": str(e)}
         finally:
             await page.close()
             await context.close()
 
-async def get_main_content(url_list: List[str], task_id: str = None, is_multimodal: bool = False, theme: str = "", progress_callback: Optional[callable] = None, username: str = None, article_id: str = None) -> List[Dict[str, any]]:
+async def get_main_content(url_list: List[str], task_id: str = None, is_multimodal: bool = False, use_direct_image_embedding: bool = False, theme: str = "", progress_callback: Optional[callable] = None, username: str = None, article_id: str = None) -> List[Dict[str, any]]:
     """
     获取多个URL的内容，并提供进度回调
     :param url_list: URL列表
@@ -1079,7 +1132,7 @@ async def get_main_content(url_list: List[str], task_id: str = None, is_multimod
             if task_id is None:
                 task_id = f"task_{int(asyncio.get_event_loop().time())}"
             
-            tasks = [fetch(browser, url, task_id, is_multimodal=is_multimodal, theme=theme, username=username, article_id=article_id) for url in url_list]
+            tasks = [fetch(browser, url, task_id, is_multimodal=is_multimodal, use_direct_image_embedding=use_direct_image_embedding, theme=theme, username=username, article_id=article_id) for url in url_list]
             
             results = []
             completed_count = 0

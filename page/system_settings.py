@@ -103,13 +103,13 @@ def main():
             'timeout': 10
         },
         'gitee': {
-            'model': 'text-embedding-ada-002',
-            'dimension': 1536,
+            'model': 'jina-embeddings-v4',
+            'dimension': 2048,
             'timeout': 10
         },
         'jina': {
-            'model': 'jina-embeddings-v2-base-en',
-            'dimension': 768,
+            'model': 'jina-embeddings-v4',
+            'dimension': 2048,
             'timeout': 10
         }
     }

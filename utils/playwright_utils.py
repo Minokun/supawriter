@@ -36,26 +36,26 @@ async def take_webpage_screenshot(url, username, filename=None, full_page=True, 
             page = await context.new_page()
             
             # Set default timeout for all operations - increased to handle complex pages
-            page.set_default_timeout(30000)
+            page.set_default_timeout(60000)  # Increased timeout
             
             # Set specific timeout just for navigation - increased for better reliability
-            page.set_default_navigation_timeout(40000)
+            page.set_default_navigation_timeout(60000)  # Increased timeout
             
             # Navigate to the URL with a more reliable wait strategy
             try:
                 logger.info(f"Navigating to {url}")
                 # First try with 'domcontentloaded' which is faster
-                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                await page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 
                 # Then wait for network to be idle with a separate call
                 logger.info("Waiting for network idle")
-                await page.wait_for_load_state("networkidle", timeout=15000)
+                await page.wait_for_load_state("networkidle", timeout=30000)
             except Exception as nav_error:
                 logger.warning(f"Navigation with networkidle failed: {nav_error}. Continuing with screenshot anyway.")
             
             # Wait longer for animations, fonts, and dynamic content to load
             logger.info("Waiting for additional content to load")
-            await asyncio.sleep(5)
+            await asyncio.sleep(8)  # Increased wait time
             
             # Wait for fonts to be loaded
             logger.info("Waiting for fonts to load")
@@ -73,9 +73,66 @@ async def take_webpage_screenshot(url, username, filename=None, full_page=True, 
             except Exception as font_error:
                 logger.warning(f"Error waiting for fonts: {font_error}")
             
+            # Scroll through the entire page to trigger lazy loading of content
+            logger.info("Scrolling through page to trigger lazy loading")
+            await page.evaluate('''
+                () => {
+                    return new Promise((resolve) => {
+                        let totalHeight = 0;
+                        const distance = 200;
+                        const timer = setInterval(() => {
+                            const scrollHeight = document.body.scrollHeight;
+                            window.scrollBy(0, distance);
+                            totalHeight += distance;
+                            
+                            if(totalHeight >= scrollHeight){
+                                clearInterval(timer);
+                                // Wait at the bottom for a moment
+                                setTimeout(() => {
+                                    window.scrollTo(0, 0); // Scroll back to top
+                                    setTimeout(resolve, 2000);
+                                }, 2000);
+                            }
+                        }, 300);
+                    });
+                }
+            ''')
+            
+            # Wait for any additional content to load after scrolling
+            logger.info("Waiting for additional content after scrolling")
+            await asyncio.sleep(5)  # Increased wait time
+            
+            # Try to ensure data visualization components are fully rendered
+            logger.info("Attempting to ensure data components are rendered")
+            await page.evaluate('''
+                () => {
+                    // Force redraw on charts and data elements
+                    const dataElements = document.querySelectorAll('.stDataFrame, .stChart, [data-testid="stTable"], canvas, svg');
+                    if (dataElements.length > 0) {
+                        // Trigger window resize event which often causes visualizations to redraw
+                        window.dispatchEvent(new Event('resize'));
+                    }
+                    
+                    // Try to interact with Streamlit-specific elements
+                    const streamlitElements = document.querySelectorAll('.streamlit-expanderContent');
+                    streamlitElements.forEach(el => {
+                        // For expandable elements, try to expand them if collapsed
+                        if (el.style.maxHeight === '0px') {
+                            const header = el.previousElementSibling;
+                            if (header) header.click();
+                        }
+                    });
+                    
+                    return true;
+                }
+            ''')
+            
+            # Additional wait for data components to render
+            await asyncio.sleep(3)
+            
             # Take screenshot with longer timeout
             logger.info("Taking screenshot")
-            screenshot_bytes = await page.screenshot(full_page=full_page, timeout=60000)
+            screenshot_bytes = await page.screenshot(full_page=full_page, timeout=90000)
             
             # Close browser
             await browser.close()

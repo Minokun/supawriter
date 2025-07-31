@@ -78,7 +78,7 @@ except ImportError:
 EMBEDDING_CONFIG = {
     'gitee': {
         'model': EMBEDDING_MODEL,
-        'host': st.secrets['gitee']['base_url'],
+        'host': st.secrets['gitee']['base_url'] + '/embeddings',
         'api_key': st.secrets['gitee']['api_key'],
         'timeout': EMBEDDING_TIMEOUT
     },
@@ -117,8 +117,8 @@ PROCESS_CONFIG = {
 
 # 文章生成设置
 # 爬取网页数量默认值
-DEFAULT_SPIDER_NUM = 2
+DEFAULT_SPIDER_NUM = 30
 # 是否自动插入相关图片默认值
 DEFAULT_ENABLE_IMAGES = True
-# 是否将图片下载至本地默认值
-DEFAULT_DOWNLOAD_IMAGES = True
+# 图片嵌入方式 ('multimodal' 或 'direct_embedding')
+DEFAULT_IMAGE_EMBEDDING_METHOD = 'direct_embedding'

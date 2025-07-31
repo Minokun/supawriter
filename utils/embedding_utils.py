@@ -3,85 +3,58 @@ import sys
 import logging
 import numpy as np
 import faiss
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Union
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from settings import EMBEDDING_TYPE, EMBEDDING_CONFIG, EMBEDDING_D
-from openai import OpenAI
+from settings import EMBEDDING_TYPE, EMBEDDING_CONFIG, EMBEDDING_D, DEFAULT_IMAGE_EMBEDDING_METHOD
 import requests
 
 logger = logging.getLogger(__name__)
     
 class Embedding:
-    def get_embedding(self, data):
-        try:
-            if EMBEDDING_TYPE == "gitee":
-                response = OpenAI(
-                    base_url=EMBEDDING_CONFIG[EMBEDDING_TYPE]['host'],
-                    api_key=EMBEDDING_CONFIG[EMBEDDING_TYPE]['api_key'],
-                    timeout=EMBEDDING_CONFIG[EMBEDDING_TYPE]['timeout']
-                ).embeddings.create(
-                    model=EMBEDDING_CONFIG[EMBEDDING_TYPE]['model'],
-                    input=data
-                )
-                return [i.embedding for i in response.data]
-            else:
-                url = EMBEDDING_CONFIG[EMBEDDING_TYPE]['host']
-                headers = {
-                    'Authorization': f'Bearer {EMBEDDING_CONFIG[EMBEDDING_TYPE]["api_key"]}',
-                    'Content-Type': 'application/json'
-                }
-                task = "retrieval" if EMBEDDING_TYPE == "xinference" else "retrieval.passage"
-                request_data = {
-                    'model': EMBEDDING_CONFIG[EMBEDDING_TYPE]['model'],
-                    'task': task,
-                    'input': data
-                }
-                
-                logger.debug(f"发送嵌入请求到 {url}，模型: {EMBEDDING_CONFIG[EMBEDDING_TYPE]['model']}")
-                logger.info(f"发送嵌入请求到 {url}，请求体: {str(request_data)}")
-                response = requests.post(url, headers=headers, json=request_data, timeout=EMBEDDING_CONFIG[EMBEDDING_TYPE]['timeout'])
-                response.raise_for_status()  # 检查HTTP错误
-                
-                # 尝试解析JSON响应
-                try:
-                    response_json = response.json()
-                    # 打印完整响应以便调试
-                    logger.info(f"嵌入API响应状态码: {response.status_code}")
-                    # logger.info(f"嵌入API响应头部: {dict(response.headers)}")
-                    # logger.info(f"嵌入API完整响应: {str(response_json)}")
-                except Exception as e:
-                    logger.error(f"解析API响应JSON失败: {str(e)}")
-                    logger.info(f"原始响应内容: {response.text[:1000]}")
-                    raise
-                
-                # 根据不同API格式解析响应
-                if 'data' in response_json:
-                    # 标准格式: {'data': [{'embedding': [...]}]}
-                    return [i['embedding'] for i in response_json['data']]
-                elif 'embeddings' in response_json:
-                    # 替代格式: {'embeddings': [...]}
-                    return response_json['embeddings']
-                elif 'embedding' in response_json:
-                    # 单一嵌入格式: {'embedding': [...]}
-                    return [response_json['embedding']]
-                else:
-                    # 尝试直接解析响应体作为嵌入向量
-                    if isinstance(response_json, list) and len(response_json) > 0:
-                        if isinstance(response_json[0], list):
-                            # 响应是嵌入向量列表
-                            return response_json
-                        elif isinstance(response_json[0], dict) and 'embedding' in response_json[0]:
-                            # 响应是包含嵌入的对象列表
-                            return [item['embedding'] for item in response_json]
-                    
-                    # 如果无法解析，记录错误并返回空列表
-                    logger.error(f"无法从API响应中解析嵌入向量: {str(response_json)[:500]}")
-                    return []
-                    
-        except Exception as e:
-            logger.error(f"获取嵌入向量时出错: {str(e)}")
-            logger.exception("详细错误信息:")
-            return []
+    def get_embedding(self, data, is_image_url=False):
+        if is_image_url:
+            data = [{"image": url} for url in data]
+        url = EMBEDDING_CONFIG[EMBEDDING_TYPE]['host']
+        headers = {
+            'Authorization': f'Bearer {EMBEDDING_CONFIG[EMBEDDING_TYPE]["api_key"]}',
+            'Content-Type': 'application/json'
+        }
+
+        # Handle direct image URL embedding with jina-embeddings-v4
+        # 只要模型是jina-embeddings-v4且is_image_url为true就可以直接图片用嵌入向量的方式，与EMBEDDING_TYPE无关
+        if EMBEDDING_TYPE == "gitee":
+            request_data = {
+                'model': EMBEDDING_CONFIG[EMBEDDING_TYPE]['model'],
+                'input': data   # data should be a list of image URLs
+            }
+        elif EMBEDDING_TYPE == "jina":
+            request_data = {
+                'model': EMBEDDING_CONFIG[EMBEDDING_TYPE]['model'],
+                "task": "retrieval.passage",
+                'input': data   # data should be a list of image URLs
+            }
+        else:
+            request_data = {
+                'model': EMBEDDING_CONFIG[EMBEDDING_TYPE]['model'],
+                'task': "retrieval",
+                'input': data   # data should be a list of image URLs
+            }
+            
+        logger.info(f"发送请求到 {url}，模型: {EMBEDDING_CONFIG[EMBEDDING_TYPE]['model']}")
+        response = requests.post(url, headers=headers, json=request_data, timeout=EMBEDDING_CONFIG[EMBEDDING_TYPE]['timeout'])
+        
+        response_json = response.json()
+        logger.info(f"API响应状态码: {response.status_code}")
+        
+        # Parse response for image embeddings with better handling of different formats
+        if 'data' in response_json:
+            # Standard format
+            embeddings = [i.get('embedding', []) for i in response_json.get('data', [])]
+            if embeddings and any(embeddings):
+                logger.info(f"成功从'data'字段提取嵌入向量，维度: {len(embeddings[0])}")
+                return embeddings
+        logger.warning("'data'字段中没有找到嵌入向量")
+        return []
             
     def cosine_similarity(self, text1, text2):
         """
@@ -171,14 +144,14 @@ class FAISSIndex:
     
     def search(self, query_embedding: List[float], k: int = 5) -> Tuple[List[int], List[float], List[Any]]:
         """
-        Search for similar embeddings in the index.
+        搜索与查询向量最相似的k个项目
         
         Args:
-            query_embedding: The query embedding vector.
-            k: Number of results to return.
+            query_embedding: 查询向量
+            k: 返回的最相似项目数量
             
         Returns:
-            Tuple containing (indices, distances, data)
+            Tuple[List[int], List[float], List[Any]]: 索引、相似度分数（越大越相似）和对应数据的元组
         """
         # Ensure k doesn't exceed the number of items in the index
         k = min(k, len(self.data))
@@ -193,20 +166,19 @@ class FAISSIndex:
         faiss.normalize_L2(query_np)
         
         # Perform search
-        distances, indices = self.index.search(query_np, k)
+        similarities, indices = self.index.search(query_np, k)
         
         # Flatten results
         indices = indices[0].tolist()
-        distances = distances[0].tolist()
+        similarities = similarities[0].tolist()
         
-        # 由于我们使用内积索引，距离实际上是相似度分数（越大越相似）
-        # 转换为标准距离格式（越小越相似）
-        distances = [1 - d for d in distances]
+        # 注意：由于我们使用内积索引和L2归一化，这里返回的是余弦相似度分数
+        # 相似度范围为-1到1，值越大表示越相似
         
         # Get corresponding data
         result_data = [self.data[i] for i in indices]
         
-        return indices, distances, result_data
+        return indices, similarities, result_data
         
     def get_size(self) -> int:
         """
@@ -436,65 +408,103 @@ def save_faiss_index(faiss_index: FAISSIndex, index_dir: str = 'data/faiss', use
     # 设置索引文件路径 - 统一使用index.faiss和index_data.pkl命名
     index_path = os.path.join(actual_index_dir, 'index.faiss')
     data_path = os.path.join(actual_index_dir, 'index_data.pkl')
-        
-    # 保存到磁盘
+    
+    # 保存索引和数据
+    logger.info(f"保存FAISS索引到: {index_path}")
+    logger.info(f"保存FAISS数据到: {data_path}")
     return faiss_index.save_to_disk(index_path, data_path)
 
 
-def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex, auto_save: bool = True, username: str = None, article_id: str = None) -> None:
+def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex, auto_save: bool = False, username: str = None, article_id: str = None, is_image_url: bool = False) -> bool:
     """
-    Add a text string and its corresponding data to the provided FAISS index.
+    Add a single text or image URL and its corresponding data to the provided FAISS index.
     The text will be converted to an embedding vector automatically.
-        
+    
     Args:
-        text: The text string to be embedded.
-        data: The data object corresponding to the text.
-        faiss_index: The FAISS index instance to add the embedding to.
-        auto_save: Whether to automatically save the index after adding the embedding.
-        username: Optional username for saving the index to a user-specific location.
-        article_id: Optional article ID for saving the index to an article-specific location.
+        text: Text string to be embedded or image URL if is_image_url=True
+        data: Corresponding data object
+        faiss_index: The FAISS index instance to add the embedding to
+        auto_save: Whether to automatically save the index after adding
+        username: Optional username for saving the index to a user-specific location
+        article_id: Optional article ID for saving the index to an article-specific location
+        is_image_url: Whether the input is an image URL (for direct embedding)
+        
+    Returns:
+        bool: Whether the operation was successful
     """
-    # 记录当前索引大小
-    before_size = faiss_index.get_size()
-    logger.info(f"添加前FAISS索引大小: {before_size}")
-    
-    # 记录文本信息
-    text_preview = text[:50] + "..." if len(text) > 50 else text
-    logger.info(f"正在为文本生成嵌入向量: {text_preview}")
-    
     try:
-        # 获取文本的embedding向量
-        embedding_vectors = Embedding().get_embedding([text])
+        # Log what we're adding to the index
+        input_type = "image URL" if is_image_url else "text"
+        logger.info(f"Adding {input_type} to FAISS index: {text[:50]}...")
+        logger.info(f"Current FAISS index size: {faiss_index.get_size()}")
         
-        # 检查embedding是否成功
-        if not embedding_vectors or len(embedding_vectors) == 0:
-            logger.warning(f"无法为文本创建嵌入向量: {text_preview}")
-            return
+        # Get embedding for the text or image URL
+        embedding_vectors = Embedding().get_embedding([text], is_image_url=is_image_url)
         
-        logger.info(f"成功生成嵌入向量，维度: {len(embedding_vectors[0])}")
+        # More detailed logging about the embedding vectors
+        if not embedding_vectors:
+            logger.error(f"Failed to get embedding for {input_type}: {text[:50]}... (embedding_vectors is None or empty)")
+            return False
         
-        # 添加到索引
+        if len(embedding_vectors) == 0:
+            logger.error(f"Empty embedding vector list returned for {input_type}: {text[:50]}...")
+            return False
+            
+        # Check if the first embedding is valid
+        if not embedding_vectors[0] or len(embedding_vectors[0]) == 0:
+            logger.error(f"Empty embedding vector returned for {input_type}: {text[:50]}...")
+            return False
+            
+        logger.info(f"Successfully generated embedding vector for {input_type}: {text[:50]}... with dimension {len(embedding_vectors[0])}")
+        
+        # Validate embedding dimension
+        if len(embedding_vectors[0]) != EMBEDDING_D:
+            logger.warning(f"Embedding dimension mismatch! Expected {EMBEDDING_D}, got {len(embedding_vectors[0])}. Attempting to proceed anyway.")
+            
+        # Add the embedding to the FAISS index
+        embedding = embedding_vectors[0]
+        logger.info(f"Generated embedding vector with dimension: {len(embedding)}")
+        
         try:
-            faiss_index.add_embedding(embedding_vectors[0], data)
-            after_size = faiss_index.get_size()
-            logger.info(f"添加后FAISS索引大小: {after_size}，增加: {after_size - before_size}")
+            # Log the embedding vector details
+            logger.info(f"Adding embedding vector to FAISS index. Vector type: {type(embedding)}, dimension: {len(embedding)}")
+            
+            # Check if the embedding vector is valid
+            if not all(isinstance(x, (int, float)) for x in embedding):
+                logger.error(f"Invalid embedding vector contains non-numeric values: {embedding[:10]}...")
+                return False
+                
+            # Add the embedding to the index
+            faiss_index.add_embedding(embedding, data)
+            
+            # Verify the addition was successful
+            new_size = faiss_index.get_size()
+            logger.info(f"Successfully added embedding to FAISS index. New size: {new_size}")
+            
+            # Double-check if the size actually increased
+            if new_size <= 0:
+                logger.warning("FAISS index size is still 0 or negative after adding embedding!")
         except Exception as e:
-            logger.error(f"添加嵌入向量到FAISS索引失败: {str(e)}")
-            return
+            logger.error(f"Failed to add embedding vector to FAISS index: {str(e)}")
+            logger.exception("Detailed error information:")
+            return False
         
-        # 自动保存到磁盘
+        # Auto save to disk if requested
         if auto_save:
             try:
                 save_path = f"{username}/{article_id}" if username and article_id else "global"
-                logger.info(f"正在保存FAISS索引到: {save_path}")
+                logger.info(f"Auto-saving FAISS index to: {save_path}")
                 save_faiss_index(faiss_index, username=username, article_id=article_id)
-                logger.info(f"成功保存FAISS索引，大小: {faiss_index.get_size()}")
+                logger.info(f"Successfully saved FAISS index, size: {faiss_index.get_size()}")
             except Exception as e:
-                logger.error(f"保存FAISS索引失败: {str(e)}")
+                logger.error(f"Failed to save FAISS index: {str(e)}")
+                return False
+                
+        return True
     except Exception as e:
-        logger.error(f"生成嵌入向量过程中出错: {str(e)}")
-        logger.exception("详细错误信息:")
-        return
+        logger.error(f"Error during embedding generation process: {str(e)}")
+        logger.exception("Detailed error information:")
+        return False
 
 
 def add_batch_to_faiss_index(texts: List[str], data: List[Any], faiss_index: FAISSIndex) -> None:
@@ -547,23 +557,25 @@ def add_batch_embeddings_to_faiss_index(embeddings: List[List[float]], data: Lis
     faiss_index.add_embeddings(embeddings, data)
 
 
-def search_similar_text(query_text: str, faiss_index: FAISSIndex, k: int = 5) -> Tuple[List[int], List[float], List[Any]]:
+def search_similar_text(query_text: str, faiss_index: FAISSIndex, k: int = 5, is_image_url: bool = False) -> Tuple[List[int], List[float], List[Any]]:
     """
-    Search for similar items in the provided FAISS index using a text query.
+    Search for similar items in the provided FAISS index using a text query or image URL.
     
     Args:
-        query_text: The text to search for similar items.
+        query_text: The text to search for similar items or image URL if is_image_url=True.
         faiss_index: The FAISS index instance to search in.
         k: Number of similar items to retrieve.
+        is_image_url: If True, treats query_text as an image URL for direct embedding.
         
     Returns:
-        Tuple containing (indices, distances, data)
+        Tuple containing (indices, similarities, data) where similarities are cosine similarity scores (higher is more similar)
     """
-    # 获取查询文本的embedding
-    embedding_vectors = Embedding().get_embedding([query_text])
+    # 获取查询文本或图片URL的embedding
+    embedding_vectors = Embedding().get_embedding([query_text], is_image_url=is_image_url)
     
     if not embedding_vectors or len(embedding_vectors) == 0:
-        logger.warning(f"Failed to create embedding for query text: {query_text[:50]}...")
+        input_type = "image URL" if is_image_url else "query text"
+        logger.warning(f"Failed to create embedding for {input_type}: {query_text[:50]}...")
         return [], [], []
     
     # 使用embedding进行搜索
@@ -583,16 +595,6 @@ def search_similar(query_embedding: List[float], faiss_index: FAISSIndex, k: int
         Tuple containing (indices, distances, data)
     """
     return faiss_index.search(query_embedding, k)
-
-# 提供get_embedding_instance函数以保持与现有代码的向后兼容性
-def get_embedding_instance():
-    """
-    返回Embedding类的实例，用于向后兼容
-    
-    Returns:
-        Embedding: Embedding类的实例
-    """
-    return Embedding()
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -665,14 +667,13 @@ if __name__ == "__main__":
     indices, distances, data = search_similar_text("神经网络如何在计算机视觉中应用", test_index, k=3)
     for i, (dist, item) in enumerate(zip(distances, data)):
         print(f"  结果 {i+1}: {item['text']} (ID: {item['id']}, 类别: {item.get('category', 'N/A')}, 距离: {dist})")
-
     
     # 测试4: 使用预先计算的embedding进行搜索
     print("\n4. 使用预先计算的embedding进行搜索:")
-    query_text = "人工智能的发展趋势"
-    embedding_vectors = Embedding().get_embedding([query_text])
+    query_image_url = "https://pic.rmb.bdstatic.com/bjh/bb86a146718/241201/ab354f89a3d0cbe739ade4ef981eb060.jpeg?for=bg"
+    embedding_vectors = Embedding().get_embedding([query_image_url], is_image_url=True)
     query_embedding = embedding_vectors[0]
-    print(f"查询: '{query_text}'")
+    print(f"查询: '{query_image_url}'")
     indices, distances, data = search_similar(query_embedding, test_index, k=3)
     for i, (dist, item) in enumerate(zip(distances, data)):
         print(f"  结果 {i+1}: {item['text']} (ID: {item['id']}, 类别: {item.get('category', 'N/A')}, 距离: {dist})")

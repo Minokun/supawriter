@@ -11,7 +11,7 @@ from utils.image_utils import download_image, get_image_save_directory
 import concurrent.futures
 import asyncio
 import nest_asyncio
-from settings import LLM_MODEL, HTML_NGINX_BASE_URL, DEFAULT_SPIDER_NUM, DEFAULT_ENABLE_IMAGES, DEFAULT_DOWNLOAD_IMAGES
+from settings import LLM_MODEL, HTML_NGINX_BASE_URL, DEFAULT_SPIDER_NUM, DEFAULT_ENABLE_IMAGES, DEFAULT_IMAGE_EMBEDDING_METHOD
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
 from utils.history_utils import add_history_record
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 from streamlit.runtime.scriptrunner import add_script_run_ctx
 
-def generate_article_background(ctx, task_state, text_input, model_type, model_name, spider_num, custom_style, enable_images, download_images, article_title):
+def generate_article_background(ctx, task_state, text_input, model_type, model_name, spider_num, custom_style, enable_images, article_title):
     """
     在后台线程中运行的文章生成函数。
     通过更新共享的task_state字典来报告进度。
@@ -83,7 +83,21 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
 
         search_result = []
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(Search(result_num=spider_num).get_search_result, text_input, is_multimodal=enable_images, theme=article_title, progress_callback=spider_progress_callback, username=username, article_id=article_id)
+            # Determine if we should use direct image URL embedding based on settings
+            use_direct_image_embedding = enable_images and DEFAULT_IMAGE_EMBEDDING_METHOD == 'direct_embedding'
+            is_multimodal = enable_images and DEFAULT_IMAGE_EMBEDDING_METHOD == 'multimodal'
+            
+            log('info', f"使用图片嵌入方式: {DEFAULT_IMAGE_EMBEDDING_METHOD}")
+            future = executor.submit(
+                Search(result_num=spider_num).get_search_result, 
+                text_input, 
+                is_multimodal=is_multimodal,
+                use_direct_image_embedding=use_direct_image_embedding,
+                theme=article_title, 
+                progress_callback=spider_progress_callback, 
+                username=username, 
+                article_id=article_id
+            )
             search_result = future.result()
         
         # 检查搜索结果是否为空
@@ -179,23 +193,30 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
                     try:
                         log('info', f"开始为章节 '{outline_block.get('h1', '')}' 搜索图片，当前FAISS索引大小: {faiss_index.get_size()}")
                         outline_block_str = outline_block.get('h1', '') + "".join(outline_block.get('h2', [])) + outline_block_content_final
-                        _, distances, matched_data = search_similar_text(outline_block_str, faiss_index, k=10)
-                        log('info', f"图片搜索完成，找到 {len(matched_data)} 个匹配结果")
+                        # 根据图片嵌入方式决定是否使用直接图片URL嵌入
+                        # 确保is_image_url_search是布尔值
+                        is_image_url_search = bool(DEFAULT_IMAGE_EMBEDDING_METHOD == 'direct_embedding')
+                        log('debug', f"is_image_url_search类型: {type(is_image_url_search)}, 值: {is_image_url_search}")
+                        _, similarities, matched_data = search_similar_text(outline_block_str, faiss_index, k=10, is_image_url=is_image_url_search)
+                        log('info', f"图片搜索完成，找到 {len(matched_data)} 个匹配结果，使用{'直接图片URL嵌入' if is_image_url_search else '多模态嵌入'}方式")
                         
                         image_inserted = False
                         if matched_data:
-                            for dist, data in zip(distances, matched_data):
+                            n = 0
+                            for similarity, data in zip(similarities, matched_data):
                                 if isinstance(data, dict) and 'image_url' in data:
                                     image_url = data['image_url']
                                     if image_url not in used_images:
-                                        similarity = 1.0 - min(dist / 2.0, 0.99)
-                                        if similarity >= 0.15:
+                                        # 相似度分数范围为-1到1，值越大表示越相似
+                                        if similarity >= 0.1:  # 调整阈值，因为现在直接使用余弦相似度
                                             used_images.add(image_url)
                                             image_markdown = f"![图片]({image_url})\n\n"
                                             outline_block_content_final = image_markdown + outline_block_content_final
                                             log('info', f"为章节 '{outline_block.get('h1', '')}' 插入图片，相似度: {similarity:.2f}")
                                             image_inserted = True
-                                            break # 每个章节只插入一张最匹配的
+                                n += 1
+                                if n >= 2:
+                                    break
                             if not image_inserted:
                                 log('warn', f"章节 '{outline_block.get('h1', '')}' 未找到合适的未使用图片。")
                     except Exception as e:
@@ -354,7 +375,6 @@ def main():
         # 从UI收集所有需要的参数
         article_title = text_input # 使用主题作为标题
         enable_images = DEFAULT_ENABLE_IMAGES
-        download_images = DEFAULT_DOWNLOAD_IMAGES
         spider_num = DEFAULT_SPIDER_NUM
 
         # 获取当前线程的上下文
@@ -381,7 +401,7 @@ def main():
             args=(
                 ctx, # 传递上下文
                 st.session_state.article_task, text_input, model_type, model_name, 
-                spider_num, custom_style, enable_images, download_images, article_title
+                spider_num, custom_style, enable_images, article_title
             )
         )
         thread.start()

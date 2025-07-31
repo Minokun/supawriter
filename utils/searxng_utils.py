@@ -236,16 +236,7 @@ class Search:
         :param question: 查询问题
         :return: JSON数据
         """
-        # 使用LLM优化查询问题，专门针对搜索引擎进行优化
-        try:
-            # 使用格式化字符串正确插入时间
-            current_time = time.strftime("%H:%M:%S", time.localtime())
-            
-            print(f"\原始查询: {question}")
-            self.search_query = question
-        except Exception as e:
-            print(f"LLM查询优化失败: {e}")
-            self.search_query = question
+        self.search_query = question
             
         # 发送请求到SearXNG搜索引擎
         params = {
@@ -260,11 +251,11 @@ class Search:
         try:
             response = requests.get(self.search_url, params=params, verify=False)
             data = response.json()
-            
+            logger.info(f"SearXNG search results: {len(data['results'])}")
             # 同时获取搜狗搜索结果
             try:
                 sogou_results = sougou_search.query_search(self.search_query)
-                print(f"搜狗搜索返回 {len(sogou_results)} 条结果")
+                logger.info(f"Sogou search results: {len(sogou_results)}")
                 
                 # 将搜狗结果转换为与SearXNG相同的格式并添加到结果中
                 if sogou_results and isinstance(sogou_results, list) and len(sogou_results) > 0:
@@ -291,9 +282,9 @@ class Search:
                                 
                                 # 将结果与相似度分数一起存储
                                 scored_sogou_results.append((result, similarity))
-                                print(f"Sogou result: {title[:30]}... - 相似度: {similarity:.4f}")
+                                logger.info(f"Sogou result: {title[:30]}... - 相似度: {similarity:.4f}")
                             except Exception as e:
-                                print(f"Error calculating similarity for sogou result: {str(e)}")
+                                logger.error(f"Error calculating similarity for sogou result: {str(e)}")
                     
                     # 按相似度降序排序
                     scored_sogou_results.sort(key=lambda x: x[1], reverse=True)
@@ -304,13 +295,13 @@ class Search:
                         min_score = min(all_scores)
                         max_score = max(all_scores)
                         avg_score = sum(all_scores) / len(all_scores)
-                        print(f"搜狗结果相似度统计: 最小={min_score:.4f}, 最大={max_score:.4f}, 平均={avg_score:.4f}")
+                        logger.info(f"Sogou result similarity statistics: Min={min_score:.4f}, Max={max_score:.4f}, Avg={avg_score:.4f}")
                         
                         # 使用标准阈值，因为相似度分数实际上很好
-                        SIMILARITY_THRESHOLD = 0.1  # 相似度阈值
+                        SIMILARITY_THRESHOLD = 0.2  # 相似度阈值
                         filtered_results = [(result, score) for result, score in scored_sogou_results if score >= SIMILARITY_THRESHOLD]
                         
-                        print(f"搜狗结果相似度过滤: {len(filtered_results)}/{len(scored_sogou_results)} 结果通过阈值 {SIMILARITY_THRESHOLD}")
+                        logger.info(f"Sogou result similarity filtering: {len(filtered_results)}/{len(scored_sogou_results)} results passed threshold {SIMILARITY_THRESHOLD}")
                     
                     # 处理过滤后的搜狗结果
                     for result, similarity in filtered_results:
@@ -319,7 +310,7 @@ class Search:
                         
                         # 确保URL是完整的并且有效
                         if not url:
-                            print(f"跳过无效URL的搜狗结果: {title[:30]}...")
+                            logger.info(f"跳过无效URL的搜狗结果: {title[:30]}...")
                             continue
                             
                         if not url.startswith(('http://', 'https://')):
@@ -328,7 +319,7 @@ class Search:
                                 url = 'https://weixin.sogou.com' + url
                             else:
                                 url = 'https://' + url
-                            print(f"修正URL: {url}")
+                            logger.info(f"修正URL: {url}")
                         
                         data['results'].append({
                             'title': title,
@@ -339,26 +330,26 @@ class Search:
                             'sogou_result': True  # 标记为搜狗结果，方便后续处理
                         })
                         sogou_count += 1
-                        print(f"添加搜狗结果: {title[:30]}... - URL: {url}")
+                        logger.info(f"添加搜狗结果: {title[:30]}... - URL: {url}")
                     
-                    print(f"成功添加 {sogou_count} 条搜狗搜索结果 (相似度阈值: {SIMILARITY_THRESHOLD}), 总计{len(data['results'])}条结果")
+                    logger.info(f"成功添加 {sogou_count} 条搜狗搜索结果 (相似度阈值: {SIMILARITY_THRESHOLD}), 总计{len(data['results'])}条结果")
                     
                     # 如果没有添加任何搜狗结果，检查可能的原因
                     if sogou_count == 0 and len(filtered_results) > 0:
-                        print("警告: 有符合相似度阈值的搜狗结果，但没有被添加。可能是URL格式问题或其他条件限制。")
+                        logger.warning("警告: 有符合相似度阈值的搜狗结果，但没有被添加。可能是URL格式问题或其他条件限制。")
                         for result, similarity in filtered_results[:3]:  # 只打印前3个作为示例
                             title = result.get('title', 'No Title')
                             url = result.get('url', 'No URL')
-                            print(f"未添加的结果示例: {title[:30]}... - URL: {url} - 相似度: {similarity:.4f}")
+                            logger.info(f"未添加的结果示例: {title[:30]}... - URL: {url} - 相似度: {similarity:.4f}")
             except Exception as e:
-                print(f"搜狗搜索失败: {e}")
+                logger.error(f"搜狗搜索失败: {e}")
                 
             return data
         except Exception as e:
-            print(f"SearXNG搜索失败: {e}")
+            logger.error(f"SearXNG搜索失败: {e}")
             return None
 
-    def get_search_result(self, question: str, is_multimodal=False, theme="", spider_mode=False, progress_callback: Optional[callable] = None, username: str = None, article_id: str = None):
+    def get_search_result(self, question: str, is_multimodal=False, use_direct_image_embedding=False, theme="", spider_mode=False, progress_callback: Optional[callable] = None, username: str = None, article_id: str = None):
         data = self.query_search(question)
         search_result = []
         search_engine_urls = []
@@ -381,28 +372,6 @@ class Search:
             search_engine_items = self.deduplicate_urls(search_engine_items)
             search_result.extend(search_engine_items)
             logger.info(f"Added {len(search_engine_items)} deduplicated search engine results")
-            
-            # 添加搜狗搜索的结果（已在sougou_search模块中进行了初步去重）
-            sougou_result = sougou_search.query_search(question)
-            if sougou_result:
-                sougou_items = []
-                for item in sougou_result:
-                    if item['url'] not in search_engine_urls:
-                        search_engine_urls.append(item['url'])
-                        sougou_items.append({
-                            'title': item.get('title', ''),
-                            'url': item['url'],
-                            'html_content': '',
-                        })
-                
-                # Deduplicate Sogou results against global processed URLs
-                sougou_items = self.deduplicate_urls(sougou_items)
-                search_result.extend(sougou_items)
-                logger.info(f"Added {len(sougou_items)} deduplicated Sogou search results")
-                    
-            # Deduplicate search engine results
-            search_engine_items = self.deduplicate_urls(search_engine_items)
-            search_result.extend(search_engine_items)
             
             # 从原始查询文本中提取关键词，用于相关性过滤
             original_keywords = set(re.findall(r'\w+', question))
@@ -464,7 +433,7 @@ class Search:
                 logger.info(f"Final deduplicated URLs for content grabbing: {len(final_urls)}")
                 
                 # 爬取内容
-                result, task_id = asyncio.run(get_main_content(final_urls, is_multimodal=is_multimodal, theme=theme, progress_callback=progress_callback, username=username, article_id=article_id))
+                result, task_id = asyncio.run(get_main_content(final_urls, is_multimodal=is_multimodal, use_direct_image_embedding=use_direct_image_embedding, theme=theme, progress_callback=progress_callback, username=username, article_id=article_id))
                 
                 # 创建字典，存储爬取到的内容和图片
                 html_content_dict = {}
@@ -508,8 +477,6 @@ class Search:
                                 logger.info(f"Found partial match for content: {url} -> {crawled_url}")
                                 matched = True
                                 break
-                        if not matched:
-                            logger.warning(f"No content found for URL: {url}")
                     
                     # 添加图片
                     if 'images' not in item:

@@ -180,7 +180,7 @@ def deduplicate_results(results):
             url_hash_map[url_hash] = result
             unique_results.append(result)
         else:
-            logger.info(f"发现重复URL (哈希): {url}")
+            logger.debug(f"发现重复URL (哈希): {url}")
     
     # 然后基于URL相似度进行进一步去重
     final_results = []
@@ -192,7 +192,7 @@ def deduplicate_results(results):
         is_duplicate = False
         for processed_url in processed_urls:
             if is_similar_url(normalized_url, processed_url):
-                logger.info(f"发现相似URL: {url} 与 {processed_url}")
+                logger.debug(f"发现相似URL: {url} 与 {processed_url}")
                 is_duplicate = True
                 break
                 

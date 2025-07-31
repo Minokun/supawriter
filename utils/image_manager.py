@@ -223,8 +223,14 @@ class ImageManager:
         
         try:
             # 批量获取段落的嵌入向量
+            # 检查是否使用直接图片URL嵌入
+            from settings import DEFAULT_IMAGE_EMBEDDING_METHOD
+            # 确保is_image_url是布尔值
+            is_image_url = (DEFAULT_IMAGE_EMBEDDING_METHOD == 'direct_embedding')
+            logger.info(f"使用图片嵌入方式: {DEFAULT_IMAGE_EMBEDDING_METHOD}, is_image_url={is_image_url}")
+            
             if valid_paragraphs:
-                batch_embeddings = embedding_instance.get_embedding(valid_paragraphs)
+                batch_embeddings = embedding_instance.get_embedding(valid_paragraphs, is_image_url=is_image_url)
                 
                 # 处理返回的嵌入向量列表
                 for i, (idx, embedding) in enumerate(zip(valid_indices, batch_embeddings)):
