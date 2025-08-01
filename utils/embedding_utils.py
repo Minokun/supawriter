@@ -5,43 +5,47 @@ import numpy as np
 import faiss
 from typing import List, Dict, Any, Tuple, Optional, Union
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from settings import EMBEDDING_TYPE, EMBEDDING_CONFIG, EMBEDDING_D, DEFAULT_IMAGE_EMBEDDING_METHOD
+from settings import get_embedding_type, get_embedding_config, get_embedding_dimension, DEFAULT_IMAGE_EMBEDDING_METHOD
 import requests
 
 logger = logging.getLogger(__name__)
     
 class Embedding:
     def get_embedding(self, data, is_image_url=False):
+        # Get the latest embedding configuration
+        embedding_type = get_embedding_type()
+        embedding_config = get_embedding_config()
+        
         if is_image_url:
             data = [{"image": url} for url in data]
-        url = EMBEDDING_CONFIG[EMBEDDING_TYPE]['host']
+        url = embedding_config[embedding_type]['host']
         headers = {
-            'Authorization': f'Bearer {EMBEDDING_CONFIG[EMBEDDING_TYPE]["api_key"]}',
+            'Authorization': f'Bearer {embedding_config[embedding_type]["api_key"]}',
             'Content-Type': 'application/json'
         }
 
         # Handle direct image URL embedding with jina-embeddings-v4
-        # 只要模型是jina-embeddings-v4且is_image_url为true就可以直接图片用嵌入向量的方式，与EMBEDDING_TYPE无关
-        if EMBEDDING_TYPE == "gitee":
+        # 只要模型是jina-embeddings-v4且is_image_url为true就可以直接图片用嵌入向量的方式，与embedding_type无关
+        if embedding_type == "gitee":
             request_data = {
-                'model': EMBEDDING_CONFIG[EMBEDDING_TYPE]['model'],
+                'model': embedding_config[embedding_type]['model'],
                 'input': data   # data should be a list of image URLs
             }
-        elif EMBEDDING_TYPE == "jina":
+        elif embedding_type == "jina":
             request_data = {
-                'model': EMBEDDING_CONFIG[EMBEDDING_TYPE]['model'],
+                'model': embedding_config[embedding_type]['model'],
                 "task": "retrieval.passage",
                 'input': data   # data should be a list of image URLs
             }
         else:
             request_data = {
-                'model': EMBEDDING_CONFIG[EMBEDDING_TYPE]['model'],
+                'model': embedding_config[embedding_type]['model'],
                 'task': "retrieval",
                 'input': data   # data should be a list of image URLs
             }
             
-        logger.info(f"发送请求到 {url}，模型: {EMBEDDING_CONFIG[EMBEDDING_TYPE]['model']}")
-        response = requests.post(url, headers=headers, json=request_data, timeout=EMBEDDING_CONFIG[EMBEDDING_TYPE]['timeout'])
+        logger.info(f"发送请求到 {url}，模型: {embedding_config[embedding_type]['model']}")
+        response = requests.post(url, headers=headers, json=request_data, timeout=embedding_config[embedding_type]['timeout'])
         
         response_json = response.json()
         logger.info(f"API响应状态码: {response.status_code}")
@@ -101,11 +105,11 @@ class FAISSIndex:
     def __init__(self):
         """
         Initialize a FAISS index for storing and retrieving embeddings.
-        使用内积(IP)索引计算余弦相似度，向量维度固定为EMBEDDING_D。
+        使用内积(IP)索引计算余弦相似度，向量维度动态获取。
         """
-        self.index = faiss.IndexFlatIP(EMBEDDING_D)  # 使用内积索引计算余弦相似度
+        self.index = None
         self.data = []  # Store original data corresponding to embeddings
-        logger.info(f"FAISS index initialized with dimension: {EMBEDDING_D} using IndexFlatIP")
+        logger.info("FAISS index initialized")
     
     def add_embeddings(self, embeddings: List[List[float]], data: List[Any]) -> None:
         """
@@ -121,6 +125,13 @@ class FAISSIndex:
             
         # Convert embeddings to numpy array
         embeddings_np = np.array(embeddings).astype('float32')
+        
+        # Initialize the index if it's not already initialized
+        if self.index is None:
+            # Get the current embedding dimension from the first embedding
+            embedding_dim = embeddings_np.shape[1]
+            self.index = faiss.IndexFlatIP(embedding_dim)
+            logger.info(f"FAISS index initialized with dimension: {embedding_dim} using IndexFlatIP")
         
         # 对向量进行L2归一化，使内积等价于余弦相似度
         faiss.normalize_L2(embeddings_np)
@@ -196,11 +207,12 @@ class FAISSIndex:
         Returns:
             None
         """
-        # 重新初始化索引
-        self.index = faiss.IndexFlatIP(EMBEDDING_D)
+        # 重新初始化索引，使用当前的嵌入维度
+        embedding_dim = get_embedding_dimension()
+        self.index = faiss.IndexFlatIP(embedding_dim)
         # 清空数据
         self.data = []
-        logger.info("FAISS索引已清空")
+        logger.info(f"FAISS索引已清空，使用维度: {embedding_dim}")
             
         # 将空索引保存到磁盘
         try:
@@ -457,9 +469,10 @@ def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex, auto_save:
             
         logger.info(f"Successfully generated embedding vector for {input_type}: {text[:50]}... with dimension {len(embedding_vectors[0])}")
         
-        # Validate embedding dimension
-        if len(embedding_vectors[0]) != EMBEDDING_D:
-            logger.warning(f"Embedding dimension mismatch! Expected {EMBEDDING_D}, got {len(embedding_vectors[0])}. Attempting to proceed anyway.")
+        # Validate embedding dimension against current setting
+        current_dim = get_embedding_dimension()
+        if len(embedding_vectors[0]) != current_dim:
+            logger.warning(f"Embedding dimension mismatch! Expected {current_dim}, got {len(embedding_vectors[0])}. Attempting to proceed anyway.")
             
         # Add the embedding to the FAISS index
         embedding = embedding_vectors[0]

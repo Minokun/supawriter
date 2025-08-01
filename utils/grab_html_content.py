@@ -83,9 +83,9 @@ def get_streamlit_faiss_index(username: str = None, article_id: str = None):
         try:
             article_faiss_index = create_faiss_index(load_from_disk=True, index_dir=INDEX_DIR, username=username, article_id=article_id)
             index_size = article_faiss_index.get_size()
-            logger.info(f"Loaded article-specific FAISS index for {username}/{article_id} with {index_size} items")
+            logger.debug(f"Loaded article-specific FAISS index for {username}/{article_id} with {index_size} items")
             if index_size == 0:
-                logger.warning(f"Article-specific index for {username}/{article_id} is empty")
+                logger.debug(f"Article-specific index for {username}/{article_id} is empty")
             # 将加载的索引添加到缓存
             faiss_index_cache[cache_key] = article_faiss_index
             return article_faiss_index
@@ -98,9 +98,9 @@ def get_streamlit_faiss_index(username: str = None, article_id: str = None):
             user_cache_key = f"{username}/default"
             user_faiss_index = create_faiss_index(load_from_disk=True, index_dir=INDEX_DIR, username=username)
             index_size = user_faiss_index.get_size()
-            logger.info(f"Loaded user-specific FAISS index for {username} with {index_size} items")
+            logger.debug(f"Loaded user-specific FAISS index for {username} with {index_size} items")
             if index_size == 0:
-                logger.warning(f"User-specific index for {username} is empty")
+                logger.debug(f"User-specific index for {username} is empty")
             # 将加载的索引添加到缓存
             faiss_index_cache[user_cache_key] = user_faiss_index
             return user_faiss_index
@@ -229,7 +229,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
     # 检查URL是否已经在当前会话缓存中
     if normalized_img_src in image_hash_cache:
         stats['cached'] += 1
-        logger.info(f"Using cached image URL: {normalized_img_src}")
+        logger.debug(f"Using cached image URL: {normalized_img_src}")
         return image_hash_cache[normalized_img_src]
         
     # 检查URL是否在全局缓存中
@@ -242,7 +242,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
             # 将缓存信息添加到当前会话缓存
             image_hash_cache[normalized_img_src] = file_path
             stats['cached'] += 1
-            logger.info(f"Using globally cached image URL: {normalized_img_src}")
+            logger.debug(f"Using globally cached image URL: {normalized_img_src}")
             return file_path
     
     # 提取域名用于特殊处理
@@ -260,7 +260,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
             # 如果基础URL相同（忽略查询参数），使用已缓存的图片
             if base_img_url == base_cached_url and image_hash_cache[cached_url]:
                 stats['duplicate'] = stats.get('duplicate', 0) + 1
-                logger.info(f"Found similar URL pattern, using cached: {cached_url}")
+                logger.debug(f"Found similar URL pattern, using cached: {cached_url}")
                 image_hash_cache[normalized_img_src] = image_hash_cache[cached_url]
                 return image_hash_cache[cached_url]
         
@@ -351,11 +351,11 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
         if any(fail_domain in domain for fail_domain in high_failure_domains):
             # 对于已知的高失败率域名，减少重试次数但不完全放弃
             max_retries = 1
-            logger.info(f"Reducing retries for high-failure domain {domain}: {img_src}")
+            logger.debug(f"Reducing retries for high-failure domain {domain}: {img_src}")
         elif any(fail_domain in domain for fail_domain in medium_failure_domains):
             # 对于中等失败率的域名，保持适中的重试次数
             max_retries = 2
-            logger.info(f"Using medium retry count for domain {domain}: {img_src}")
+            logger.debug(f"Using medium retry count for domain {domain}: {img_src}")
         
         while retry_count <= max_retries and not success:
             try:
@@ -401,7 +401,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                         else:
                             alt_img_src = img_src
                             
-                        logger.info(f"Trying alternative protocol for gov.cn domain: {alt_img_src}")
+                        logger.debug(f"Trying alternative protocol for gov.cn domain: {alt_img_src}")
                         img_src = alt_img_src
                     
                     # 使用超时保护进行请求
@@ -413,7 +413,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                                 break
                             else:
                                 status_code = response.status
-                                logger.warning(f"Failed to download image {img_src}, status: {status_code}, retry: {retry_count+1}/{max_retries+1}")
+                                logger.debug(f"Failed to download image {img_src}, status: {status_code}, retry: {retry_count+1}/{max_retries+1}")
                                 last_error = f"HTTP status {status_code}"
                                 
                                 # 对于特定状态码，不再重试
@@ -427,17 +427,17 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                                     logger.debug(f"Following redirect from {img_src} to {redirect_url}")
                                     img_src = redirect_url
                     except aiohttp.ClientError as e:
-                        logger.warning(f"Client error for {img_src}: {str(e)}, retry: {retry_count+1}/{max_retries+1}")
+                        logger.debug(f"Client error for {img_src}: {str(e)}, retry: {retry_count+1}/{max_retries+1}")
                         last_error = str(e)
                 except aiohttp.ClientConnectorError as e:
                     # 特殊处理连接错误
                     error_msg = str(e)
-                    logger.warning(f"Connection error for {img_src}: {error_msg}, retry: {retry_count+1}/{max_retries+1}")
+                    logger.debug(f"Connection error for {img_src}: {error_msg}, retry: {retry_count+1}/{max_retries+1}")
                     last_error = error_msg
                         
             except Exception as e:
                 error_msg = str(e)
-                logger.warning(f"Error downloading image {img_src}: {error_msg}, retry: {retry_count+1}/{max_retries+1}")
+                logger.debug(f"Error downloading image {img_src}: {error_msg}, retry: {retry_count+1}/{max_retries+1}")
                 last_error = error_msg
                 
                 # 检查是否是不应该重试的错误类型
@@ -449,7 +449,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 # 检查是否是应该重试的错误类型
                 should_retry = any(pattern in error_msg.lower() for pattern in RETRYABLE_ERROR_PATTERNS)
                 if should_retry:
-                    logger.info(f"Will retry for retryable error pattern: {error_msg}")
+                    logger.debug(f"Will retry for retryable error pattern: {error_msg}")
                     # 对于超时错误，增加额外的等待时间
                     if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
                         await asyncio.sleep(retry_count + 2)  # 额外等待时间
@@ -460,18 +460,18 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 # 使用指数退避策略，但添加随机抖动以避免同时重试
                 jitter = random.uniform(0.5, 1.5)  # 随机抖动因子
                 delay = RETRY_DELAY * (2 ** (retry_count - 1)) * jitter  # 指数退避 + 随机抖动
-                logger.info(f"Waiting {delay:.2f}s before retry {retry_count} for {img_src}")
+                logger.debug(f"Waiting {delay:.2f}s before retry {retry_count} for {img_src}")
                 await asyncio.sleep(delay)
         
         if not success:
             # 使用warning级别记录，以便更容易在日志中发现
-            logger.warning(f"Failed to download image after {retry_count} attempts: {img_src}, last error: {last_error}")
+            logger.debug(f"Failed to download image after {retry_count} attempts: {img_src}, last error: {last_error}")
             stats['failed'] += 1 if stats else 0
             
             # 检查是否是特定域名的错误，可能需要特殊处理
             if any(special_domain in domain for special_domain in ['gov.cn', 'chinadaily.com.cn', 'jschina.com.cn']):
                 # 对于这些特定域名，我们不将其标记为永久失败，以便将来可能重试
-                logger.info(f"Not caching failure for special domain {domain}: {img_src}")
+                logger.debug(f"Not caching failure for special domain {domain}: {img_src}")
                 return '' if not is_multimodal else None
             else:
                 # 将URL添加到图片哈希缓存中，标记为失败，避免将来重试
@@ -535,7 +535,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
         
         # 如果是直接图片URL嵌入模式
         if use_direct_image_embedding:
-            logger.info(f"Processing image with direct URL embedding: {img_src}")
+            logger.debug(f"Processing image with direct URL embedding: {img_src}")
             
             try:
                 # 准备要存储的数据
@@ -547,12 +547,12 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 # 添加到FAISS索引，使用is_image_url=True标记这是一个图片URL
                 try:
                     # 获取用户和文章特定的FAISS索引实例
-                    logger.info(f"正在获取FAISS索引实例用于直接图片URL嵌入: {username}/{article_id}")
+                    logger.debug(f"正在获取FAISS索引实例用于直接图片URL嵌入: {username}/{article_id}")
                     current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
                     
                     # 记录添加前的索引大小
                     before_size = current_faiss_index.get_size()
-                    logger.info(f"添加图片URL前FAISS索引大小: {before_size}")
+                    logger.debug(f"添加图片URL前FAISS索引大小: {before_size}")
                     
                     # 直接添加图片URL到索引，使用is_image_url=True
                     add_to_faiss_index(img_src, data, current_faiss_index, username=username, article_id=article_id, auto_save=True, is_image_url=True)
@@ -568,7 +568,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                         
                 except Exception as e:
                     logger.error(f"添加图片URL到FAISS索引失败: {str(e)}")
-                    logger.exception("详细错误信息:")
+                    logger.exception("详细错误信息:" + str(e))
                 
                 # 缓存结果并返回图片URL
                 result = {
@@ -659,7 +659,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 image_hash_cache[normalized_img_src] = cached_path
                 GLOBAL_URL_MAPPING[normalized_img_src] = {'content_hash': content_hash, 'path': cached_path}
                 
-                logger.info(f"Duplicate image content detected. Using existing file: {cached_path}")
+                logger.debug(f"Duplicate image content detected. Using existing file: {cached_path}")
                 stats['duplicate'] = stats.get('duplicate', 0) + 1
                 return cached_path
                 
@@ -681,7 +681,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 image_hash_cache[normalized_img_src] = cached_path
                 GLOBAL_URL_MAPPING[normalized_img_src] = {'content_hash': content_hash, 'path': cached_path}
                 
-                logger.info(f"Duplicate image content detected. Using existing file: {cached_path}")
+                logger.debug(f"Duplicate image content detected. Using existing file: {cached_path}")
                 stats['duplicate'] = stats.get('duplicate', 0) + 1
                 return cached_path
         
@@ -709,7 +709,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                                 'urls': [normalized_img_src]
                             }
                             
-                            logger.info(f"Duplicate image content detected. Using existing file: {value}")
+                            logger.debug(f"Duplicate image content detected. Using existing file: {value}")
                             stats['duplicate'] = stats.get('duplicate', 0) + 1
                             return value
                 except Exception as e:
@@ -732,7 +732,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
         
         # 检查文件是否已存在（基于哈希值的文件名）
         if file_path.exists():
-            logger.info(f"File with same hash already exists: {file_path}")
+            logger.debug(f"File with same hash already exists: {file_path}")
             
             # 创建内容哈希缓存项
             content_hash_key = f"content_hash:{content_hash}"
@@ -765,7 +765,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
         try:
             url_mapper = ImageUrlMapper(IMAGES_DIR)
             url_mapper.save_url_mapping(task_id, file_name, img_src)
-            logger.info(f"Saved URL mapping: {file_name} -> {img_src}")
+            logger.debug(f"Saved URL mapping: {file_name} -> {img_src}")
         except Exception as e:
             logger.error(f"Failed to save URL mapping: {str(e)}")
             
@@ -925,7 +925,7 @@ def normalize_image_url(img_src: str, base_url: str = None) -> str:
             if '_ORIGIN' in img_src:
                 # 尝试移除_ORIGIN后缀，获取原始图片
                 clean_url = img_src.replace('_ORIGIN', '')
-                logger.info(f"Cleaned chinadaily URL: {img_src} -> {clean_url}")
+                logger.debug(f"Cleaned chinadaily URL: {img_src} -> {clean_url}")
                 return clean_url
         except:
             pass
@@ -947,6 +947,7 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
         # 提取图片
         img_tags = soup.find_all('img')
         img_paths = []
+        processed_paths = []  # Initialize processed_paths here to ensure it's always defined
         
         if img_tags:
             # 创建一个字典来存储图片哈希和路径

@@ -65,36 +65,94 @@ HISTORY_FILTER_BASE_OPTIONS = [
 # 导入配置管理器，如果导入失败则使用默认值
 try:
     from utils.config_manager import get_embedding_type, get_embedding_model, get_embedding_dimension, get_embedding_timeout
-    EMBEDDING_TYPE = get_embedding_type()  # Options: gitee, xinference, jina, local
-    EMBEDDING_D = get_embedding_dimension()
-    EMBEDDING_MODEL = get_embedding_model()
-    EMBEDDING_TIMEOUT = get_embedding_timeout()
 except ImportError:
     # 如果配置管理器未导入成功，使用默认值
-    EMBEDDING_TYPE = 'xinference'
-    EMBEDDING_D = 2048
-    EMBEDDING_MODEL = 'jina-embeddings-v4'
-    EMBEDDING_TIMEOUT = 10
-EMBEDDING_CONFIG = {
-    'gitee': {
-        'model': EMBEDDING_MODEL,
-        'host': st.secrets['gitee']['base_url'] + '/embeddings',
-        'api_key': st.secrets['gitee']['api_key'],
-        'timeout': EMBEDDING_TIMEOUT
-    },
-    'xinference': {
-        'model': EMBEDDING_MODEL,
-        'host': st.secrets['xinference']['base_url'] + '/embeddings',
-        'api_key': st.secrets['xinference']['api_key'],
-        'timeout': EMBEDDING_TIMEOUT
-    },
-    'jina': {
-        'model': EMBEDDING_MODEL,
-        'host': st.secrets['jina']['base_url'] + '/embeddings',
-        'api_key': st.secrets['jina']['api_key'],
-        'timeout': EMBEDDING_TIMEOUT
+    def get_embedding_type():
+        return 'gitee'
+        
+    def get_embedding_dimension():
+        return 2048
+        
+    def get_embedding_model():
+        return 'jina-embeddings-v4'
+        
+    def get_embedding_timeout():
+        return 10
+
+# Initial values for startup
+EMBEDDING_TYPE = get_embedding_type()
+EMBEDDING_D = get_embedding_dimension()
+EMBEDDING_MODEL = get_embedding_model()
+EMBEDDING_TIMEOUT = get_embedding_timeout()
+
+# Import streamlit at the module level
+import streamlit as st
+
+# Cache secrets at module initialization to avoid accessing st.secrets in threads
+try:
+    SECRETS = {
+        'gitee': {
+            'base_url': st.secrets['gitee']['base_url'],
+            'api_key': st.secrets['gitee']['api_key']
+        },
+        'xinference': {
+            'base_url': st.secrets['xinference']['base_url'],
+            'api_key': st.secrets['xinference']['api_key']
+        },
+        'jina': {
+            'base_url': st.secrets['jina']['base_url'],
+            'api_key': st.secrets['jina']['api_key']
+        },
+        'dashscope': {
+            'base_url': st.secrets['dashscope']['base_url'],
+            'api_key': st.secrets['dashscope']['api_key']
+        },
+        'glm': {
+            'base_url': st.secrets['glm']['base_url'],
+            'api_key': st.secrets['glm']['api_key']
+        }
     }
-}
+except Exception as e:
+    import logging
+    logging.warning(f"Failed to load secrets: {e}. Using empty placeholders.")
+    # Provide empty placeholders if secrets can't be loaded
+    SECRETS = {
+        'gitee': {'base_url': '', 'api_key': ''},
+        'xinference': {'base_url': '', 'api_key': ''},
+        'jina': {'base_url': '', 'api_key': ''},
+        'dashscope': {'base_url': '', 'api_key': ''},
+        'glm': {'base_url': '', 'api_key': ''}
+    }
+
+# Dynamic EMBEDDING_CONFIG that will use the latest settings
+def get_embedding_config():
+    # Get the latest settings
+    current_model = get_embedding_model()
+    current_timeout = get_embedding_timeout()
+    
+    return {
+        'gitee': {
+            'model': current_model,
+            'host': SECRETS['gitee']['base_url'] + '/embeddings',
+            'api_key': SECRETS['gitee']['api_key'],
+            'timeout': current_timeout
+        },
+        'xinference': {
+            'model': current_model,
+            'host': SECRETS['xinference']['base_url'] + '/embeddings',
+            'api_key': SECRETS['xinference']['api_key'],
+            'timeout': current_timeout
+        },
+        'jina': {
+            'model': current_model,
+            'host': SECRETS['jina']['base_url'] + '/embeddings',
+            'api_key': SECRETS['jina']['api_key'],
+            'timeout': current_timeout
+        }
+    }
+
+# Initial configuration
+EMBEDDING_CONFIG = get_embedding_config()
 
 # 网页显示设置
 HTML_NGINX_BASE_URL = 'http://localhost:80/'
@@ -105,13 +163,13 @@ PROCESS_IMAGE_TYPE = "glm" # 使用qwen glm模型
 PROCESS_CONFIG = {
     "qwen": {
         "model": "qwen-vl-plus-2025-01-25",
-        "api_key": st.secrets['dashscope']['api_key'],
-        "base_url": st.secrets['dashscope']['base_url']
+        "api_key": SECRETS['dashscope']['api_key'],
+        "base_url": SECRETS['dashscope']['base_url']
     },
     "glm": {
         "model": "glm-4.1v-thinking-flash",
-        "api_key": st.secrets['glm']['api_key'],
-        "base_url": st.secrets['glm']['base_url']
+        "api_key": SECRETS['glm']['api_key'],
+        "base_url": SECRETS['glm']['base_url']
     }
 }
 

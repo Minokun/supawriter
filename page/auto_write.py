@@ -51,8 +51,7 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
         task_state['progress'] = 0
         task_state['progress_text'] = "任务初始化..."
         
-        # --- 在任务开始时，加载用户和文章特定的FAISS索引 ---
-        # 获取当前用户信息
+        # --- 获取用户信息和生成文章ID ---
         current_user = get_current_user()
         username = current_user if current_user else "anonymous"
         
@@ -60,14 +59,12 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
         article_hash = hashlib.md5(f"{article_title}_{int(time.time())}".encode()).hexdigest()[:8]
         article_id = f"article_{article_hash}"
         
+        # 记录用户和文章ID信息，方便后续调试
+        log('info', f"用户: {username}, 文章ID: {article_id}")
+        
+        # 初始化FAISS索引变量，但不加载索引
+        # 索引将在搜索完成后加载，以确保获取最新数据
         faiss_index = None
-        if enable_images:
-            try:
-                # 尝试加载文章特定的索引，如果不存在则回退到用户索引或全局索引
-                faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss', username=username, article_id=article_id)
-                log('info', f"FAISS索引加载成功（{username}/{article_id}），共 {faiss_index.get_size()} 张图片数据。")
-            except Exception as e:
-                log('error', f"FAISS索引加载失败: {e}")
 
         # 1. 抓取网页内容
         task_state['progress'] = 10
@@ -83,22 +80,35 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
 
         search_result = []
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            # Determine if we should use direct image URL embedding based on settings
-            use_direct_image_embedding = enable_images and DEFAULT_IMAGE_EMBEDDING_METHOD == 'direct_embedding'
-            is_multimodal = enable_images and DEFAULT_IMAGE_EMBEDDING_METHOD == 'multimodal'
+            # 确定图片嵌入方式
+            image_embedding_method = DEFAULT_IMAGE_EMBEDDING_METHOD if enable_images else 'none'
+            use_direct_image_embedding = image_embedding_method == 'direct_embedding'
+            is_multimodal = image_embedding_method == 'multimodal'
             
-            log('info', f"使用图片嵌入方式: {DEFAULT_IMAGE_EMBEDDING_METHOD}")
-            future = executor.submit(
-                Search(result_num=spider_num).get_search_result, 
-                text_input, 
-                is_multimodal=is_multimodal,
-                use_direct_image_embedding=use_direct_image_embedding,
-                theme=article_title, 
-                progress_callback=spider_progress_callback, 
-                username=username, 
-                article_id=article_id
-            )
-            search_result = future.result()
+            log('info', f"图片处理状态: 启用={enable_images}, 嵌入方式={image_embedding_method}")
+            
+            # 确保传递正确的spider_num参数
+            log('info', f"设置爬虫数量: {spider_num}")
+            
+            try:
+                future = executor.submit(
+                    Search(result_num=spider_num).get_search_result, 
+                    text_input, 
+                    is_multimodal=is_multimodal,
+                    use_direct_image_embedding=use_direct_image_embedding,
+                    theme=article_title, 
+                    progress_callback=spider_progress_callback, 
+                    username=username, 
+                    article_id=article_id
+                )
+                search_result = future.result()
+                log('info', f"搜索成功完成，获取结果数: {len(search_result)}")
+            except Exception as e:
+                log('error', f"搜索过程出错: {str(e)}")
+                task_state['status'] = 'error'
+                task_state['progress'] = 0
+                task_state['progress_text'] = f"搜索过程出错: {str(e)}"
+                return
         
         # 检查搜索结果是否为空
         if not search_result or len(search_result) == 0:
@@ -111,20 +121,26 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
         log('info', f"网页抓取完成，共找到 {len(search_result)} 个结果。UI即将更新...")
         task_state['search_result'] = search_result # 保存结果以供预览
         
-        # 搜索完成后，重新加载FAISS索引以获取最新的图片数据
+        # 搜索完成后，加载FAISS索引以获取图片数据
         if enable_images:
             try:
+                # 等待一小段时间，确保索引文件写入完成
+                time.sleep(1)
+                
                 # 使用用户和文章特定的索引路径
                 expected_index_path = f"data/faiss/{username}/{article_id}/index.faiss"
                 log('info', f"尝试加载用户和文章特定的FAISS索引: {expected_index_path}")
+                
+                # 加载索引
                 faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss', username=username, article_id=article_id)
-                log('info', f"搜索后重新加载FAISS索引成功，共 {faiss_index.get_size()} 张图片数据。")
+                index_size = faiss_index.get_size()
+                log('info', f"加载FAISS索引成功，共 {index_size} 张图片数据。")
                 
                 # 检查索引是否为空
-                if faiss_index.get_size() == 0:
-                    log('warn', f"用户和文章特定的FAISS索引为空，可能图片数据未正确保存。")
+                if index_size == 0:
+                    log('warn', f"警告: FAISS索引为空，可能图片数据未正确保存或未找到相关图片。")
             except Exception as e:
-                log('error', f"搜索后重新加载FAISS索引失败: {e}")
+                log('error', f"加载FAISS索引失败: {str(e)}")
                 faiss_index = None
 
         # 2. 生成大纲
@@ -191,37 +207,87 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
                 # 图像处理逻辑
                 if enable_images and faiss_index and faiss_index.get_size() > 0:
                     try:
-                        log('info', f"开始为章节 '{outline_block.get('h1', '')}' 搜索图片，当前FAISS索引大小: {faiss_index.get_size()}")
-                        outline_block_str = outline_block.get('h1', '') + "".join(outline_block.get('h2', [])) + outline_block_content_final
-                        # 根据图片嵌入方式决定是否使用直接图片URL嵌入
-                        # 确保is_image_url_search是布尔值
-                        is_image_url_search = bool(DEFAULT_IMAGE_EMBEDDING_METHOD == 'direct_embedding')
-                        log('debug', f"is_image_url_search类型: {type(is_image_url_search)}, 值: {is_image_url_search}")
-                        _, similarities, matched_data = search_similar_text(outline_block_str, faiss_index, k=10, is_image_url=is_image_url_search)
-                        log('info', f"图片搜索完成，找到 {len(matched_data)} 个匹配结果，使用{'直接图片URL嵌入' if is_image_url_search else '多模态嵌入'}方式")
+                        chapter_title = outline_block.get('h1', '')
+                        log('info', f"开始为章节 '{chapter_title}' 搜索图片，当前FAISS索引大小: {faiss_index.get_size()}")
                         
+                        # 构建章节内容字符串用于图片匹配
+                        outline_block_str = chapter_title + "".join(outline_block.get('h2', [])) + outline_block_content_final
+                        
+                        # 根据配置确定图片嵌入方式
+                        is_image_url_search = DEFAULT_IMAGE_EMBEDDING_METHOD == 'direct_embedding'
+                        embedding_method_name = '直接图片URL嵌入' if is_image_url_search else '多模态嵌入'
+                        
+                        # 设置相似度阈值 - 从配置获取或使用默认值
+                        # 可以从settings.py中获取，或在此处设置默认值
+                        similarity_threshold = 0.15  # 提高默认阈值以确保更好的匹配质量
+                        
+                        # 搜索相似图片
+                        _, similarities, matched_data = search_similar_text(
+                            outline_block_str, 
+                            faiss_index, 
+                            k=10, 
+                            is_image_url=is_image_url_search
+                        )
+                        log('info', f"图片搜索完成，找到 {len(matched_data)} 个匹配结果，使用{embedding_method_name}方式")
+                        
+                        # 处理匹配结果
                         image_inserted = False
+                        max_images_per_chapter = 3  # 每个章节最多插入的图片数量
+                        images_inserted = 0
+                        
                         if matched_data:
-                            n = 0
+                            # 按相似度排序处理匹配结果
                             for similarity, data in zip(similarities, matched_data):
+                                if images_inserted >= max_images_per_chapter:
+                                    break
+                                    
                                 if isinstance(data, dict) and 'image_url' in data:
                                     image_url = data['image_url']
+                                    
+                                    # 检查图片URL是否已被使用
                                     if image_url not in used_images:
-                                        log.info(f"找到相似度为{similarity}的图片：{image_url}")
-                                        # 相似度分数范围为-1到1，值越大表示越相似
-                                        if similarity >= 0.1:  # 调整阈值，因为现在直接使用余弦相似度
+                                        log('info', f"找到相似度为{similarity:.4f}的图片：{image_url}")
+                                        
+                                        # 检查相似度是否达到阈值
+                                        if similarity >= similarity_threshold:
                                             used_images.add(image_url)
-                                            image_markdown = f"![图片]({image_url})\n\n"
-                                            outline_block_content_final = image_markdown + outline_block_content_final
-                                            log('info', f"为章节 '{outline_block.get('h1', '')}' 插入图片，相似度: {similarity:.2f}")
+                                            
+                                            # 根据已插入图片数量决定插入位置
+                                            if images_inserted == 0:
+                                                # 第一张图片放在章节开头
+                                                image_markdown = f"![图片]({image_url})\n\n"
+                                                outline_block_content_final = image_markdown + outline_block_content_final
+                                            else:
+                                                # 后续图片尝试插入到段落之间
+                                                paragraphs = outline_block_content_final.split('\n\n')
+                                                if len(paragraphs) >= 3:
+                                                    # 计算插入位置 - 尝试均匀分布
+                                                    insert_position = len(paragraphs) // (max_images_per_chapter) * images_inserted
+                                                    # 确保位置有效
+                                                    insert_position = min(insert_position, len(paragraphs) - 1)
+                                                    insert_position = max(insert_position, 1)  # 至少从第二段开始
+                                                    
+                                                    # 插入图片
+                                                    image_markdown = f"\n\n![图片]({image_url})"
+                                                    paragraphs[insert_position] = paragraphs[insert_position] + image_markdown
+                                                    outline_block_content_final = '\n\n'.join(paragraphs)
+                                                else:
+                                                    # 如果段落不够，就添加到末尾
+                                                    image_markdown = f"\n\n![图片]({image_url})"
+                                                    outline_block_content_final += image_markdown
+                                            
+                                            log('info', f"为章节 '{chapter_title}' 插入第 {images_inserted+1} 张图片，相似度: {similarity:.4f}")
+                                            images_inserted += 1
                                             image_inserted = True
-                                n += 1
-                                if n >= 2:
-                                    break
+                            
+                            # 如果未插入图片，记录警告
                             if not image_inserted:
-                                log('warn', f"章节 '{outline_block.get('h1', '')}' 未找到合适的未使用图片。")
+                                log('warn', f"章节 '{chapter_title}' 未找到符合相似度阈值({similarity_threshold})的未使用图片。")
                     except Exception as e:
                         log('error', f"图片匹配时出错: {str(e)}")
+                        # 记录详细的错误堆栈以便调试
+                        import traceback
+                        log('debug', traceback.format_exc())
                 elif enable_images:
                     log('warn', "FAISS索引为空或加载失败，跳过本章节的图片匹配。")
 
