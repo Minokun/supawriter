@@ -63,13 +63,19 @@ PAGE_SYSTEM_SETTINGS = st.Page(
     icon=":material/settings:"
 )
 
+PAGE_DDGS_SEARCH = st.Page(
+    "page/ddgs_search.py",
+    title="坤塔搜索",
+    icon=":material/search:"
+)
+
 # Chatbot functionality has been integrated into the home page
 # PAGE_CHATBOT definition removed
 
 # ******************菜单配置********************
 PAGES = {
     "APP": [PAGE_HOME],  # Chatbot functionality integrated into home page
-    "GPTS": [PAGE_GPTS, PAGE_GPTS_AUTOWITER, PAGE_ARTICLE_RECREATION],
+    "GPTS": [PAGE_GPTS, PAGE_GPTS_AUTOWITER, PAGE_ARTICLE_RECREATION, PAGE_DDGS_SEARCH],
     "Toolkits": [PAGE_DOCUMENT_UTIL, PAGE_ASR, PAGE_TTS],
     "用户": [PAGE_PROFILE, PAGE_HISTORY, PAGE_SYSTEM_SETTINGS]
 }
