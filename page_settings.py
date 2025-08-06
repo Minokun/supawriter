@@ -2,7 +2,7 @@ import streamlit as st
 
 PAGE_HOME = st.Page(
     "page/home.py",
-    title='首页',
+    title='超能AI助手',
     icon=':material/home:'
 )
 
@@ -74,9 +74,9 @@ PAGE_DDGS_SEARCH = st.Page(
 
 # ******************菜单配置********************
 PAGES = {
-    "APP": [PAGE_HOME],  # Chatbot functionality integrated into home page
-    "GPTS": [PAGE_GPTS, PAGE_GPTS_AUTOWITER, PAGE_ARTICLE_RECREATION, PAGE_DDGS_SEARCH],
-    "Toolkits": [PAGE_DOCUMENT_UTIL, PAGE_ASR, PAGE_TTS],
+    "应用": [PAGE_HOME, PAGE_GPTS, PAGE_DDGS_SEARCH],  # Chatbot functionality integrated into home page
+    "内容创作": [PAGE_GPTS_AUTOWITER, PAGE_ARTICLE_RECREATION],
+    "工具": [PAGE_DOCUMENT_UTIL, PAGE_ASR, PAGE_TTS],
     "用户": [PAGE_PROFILE, PAGE_HISTORY, PAGE_SYSTEM_SETTINGS]
 }
 

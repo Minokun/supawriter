@@ -5,7 +5,8 @@ import os
 import uuid
 import re
 from pathlib import Path
-from utils.searxng_utils import Search, llm_task, chat, parse_outline_json
+from utils.searxng_utils import llm_task, chat, parse_outline_json
+from utils.searxng_utils import Search
 import utils.prompt_template as pt
 from utils.image_utils import download_image, get_image_save_directory
 import concurrent.futures
@@ -17,6 +18,7 @@ from utils.auth import get_current_user
 from utils.history_utils import add_history_record
 from utils.embedding_utils import create_faiss_index, search_similar_text
 from utils.config_manager import get_config
+from utils.streamlit_thread_helper import create_thread_safe_callback
 import streamlit.components.v1 as components
 import threading
 import time
@@ -71,12 +73,15 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
         task_state['progress_text'] = "正在抓取网页内容 (0/未知)..."
         log('info', "开始抓取网页...")
         
-        # 定义进度回调函数
-        def spider_progress_callback(completed, total):
-            progress_percentage = 10 + int((completed / total) * 20) # 抓取占10%-30%的进度
-            task_state['progress'] = progress_percentage
-            task_state['progress_text'] = f"正在抓取网页内容 ({completed}/{total})"
-            log('info', f"抓取进度: {completed}/{total}")
+        # 定义线程安全的进度回调函数
+        spider_progress_callback = create_thread_safe_callback(
+            task_state=task_state,
+            progress_key='progress',
+            text_key='progress_text',
+            start_percent=10,
+            end_percent=30,
+            log_prefix="正在抓取网页内容"
+        )
 
         search_result = []
         with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -148,11 +153,14 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
         task_state['progress_text'] = "正在生成大纲 (0/未知)..."
         log('info', "开始生成文章大纲...")
 
-        def outline_progress_callback(completed, total):
-            progress_percentage = 30 + int((completed / total) * 30) # 大纲生成占30%-60%的进度
-            task_state['progress'] = progress_percentage
-            task_state['progress_text'] = f"正在生成大纲 ({completed}/{total})"
-            log('info', f"大纲生成进度: {completed}/{total}")
+        outline_progress_callback = create_thread_safe_callback(
+            task_state=task_state,
+            progress_key='progress',
+            text_key='progress_text',
+            start_percent=30,
+            end_percent=60,
+            log_prefix="正在生成大纲"
+        )
 
         outlines = llm_task(search_result, text_input, pt.ARTICLE_OUTLINE_GEN, model_type=model_type, model_name=model_name, progress_callback=outline_progress_callback)
         log('info', "大纲初稿生成完毕。")
@@ -219,7 +227,7 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
                         
                         # 设置相似度阈值 - 从配置获取或使用默认值
                         # 可以从settings.py中获取，或在此处设置默认值
-                        similarity_threshold = 0.15  # 提高默认阈值以确保更好的匹配质量
+                        similarity_threshold = 0  # 提高默认阈值以确保更好的匹配质量
                         
                         # 搜索相似图片
                         _, similarities, matched_data = search_similar_text(
@@ -329,6 +337,8 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
                         custom_style=custom_style,
                         is_transformed=False,
                         image_enabled=enable_images,
+                        tags=outline_summary_json.get('tags', ''),
+                        article_topic=text_input,
                     )
                     log('info', "成功保存到历史记录。")
                 except Exception as e:

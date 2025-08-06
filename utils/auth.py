@@ -14,12 +14,13 @@ USER_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 os.makedirs(os.path.dirname(USER_DB_PATH), exist_ok=True)
 
 class User:
-    def __init__(self, username, password_hash, email=None, created_at=None):
+    def __init__(self, username, password_hash, email=None, created_at=None, motto=None):
         self.username = username
         self.password_hash = password_hash
         self.email = email
         self.created_at = created_at or datetime.now()
         self.last_login = None
+        self.motto = motto or "创作改变世界"  # 默认座右铭
     
     def update_last_login(self):
         self.last_login = datetime.now()
@@ -40,7 +41,7 @@ def save_users(users):
     with open(USER_DB_PATH, 'wb') as f:
         pickle.dump(users, f)
 
-def register_user(username, password, email=None):
+def register_user(username, password, email=None, motto=None):
     """Register a new user."""
     users = load_users()
     
@@ -50,7 +51,7 @@ def register_user(username, password, email=None):
     
     # Create new user
     password_hash = hash_password(password)
-    users[username] = User(username, password_hash, email)
+    users[username] = User(username, password_hash, email, motto=motto)
     save_users(users)
     return True, "注册成功"
 
@@ -135,6 +136,25 @@ def get_current_user():
         return st.session_state.user
     return None
 
+def get_user_motto(username=None):
+    """Get user's motto. If username is None, get current user's motto."""
+    if username is None:
+        username = get_current_user()
+        if not username:
+            return "创作改变世界"  # 默认座右铭
+    
+    users = load_users()
+    if username in users:
+        # 兼容旧用户对象可能没有motto属性
+        try:
+            return users[username].motto or "创作改变世界"
+        except AttributeError:
+            # 给旧用户对象添加motto属性
+            users[username].motto = "创作改变世界"
+            save_users(users)  # 保存更新
+            return "创作改变世界"
+    return "创作改变世界"  # 默认座右铭
+
 def logout():
     """Log out the current user."""
     if "user" in st.session_state:
@@ -166,3 +186,16 @@ def change_password(username, old_password, new_password):
     save_users(users)
     
     return True, "密码修改成功"
+
+def update_user_motto(username, motto):
+    """Update user's motto."""
+    users = load_users()
+    
+    if username not in users:
+        return False, "用户不存在"
+    
+    user = users[username]
+    user.motto = motto
+    save_users(users)
+    
+    return True, "座右铭更新成功"

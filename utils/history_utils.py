@@ -1,6 +1,7 @@
 import os
 import json
 import uuid
+import logging
 from datetime import datetime
 import streamlit as st
 
@@ -39,7 +40,7 @@ def save_user_history(username, history):
     with open(history_file, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-def add_history_record(username, topic, article_content, summary=None, model_type=None, model_name=None, write_type=None, spider_num=None, custom_style=None, is_transformed=False, original_article_id=None, image_task_id=None, image_enabled=False, image_similarity_threshold=None, image_max_count=None):
+def add_history_record(username, topic, article_content, summary=None, model_type=None, model_name=None, write_type=None, spider_num=None, custom_style=None, is_transformed=False, original_article_id=None, image_task_id=None, image_enabled=False, image_similarity_threshold=None, image_max_count=None, tags=None, article_topic=None):
     """
     Add a new record to the user's history, with configurable parameters.
     
@@ -59,6 +60,8 @@ def add_history_record(username, topic, article_content, summary=None, model_typ
         image_enabled: Whether images were enabled for this article
         image_similarity_threshold: The similarity threshold used for image matching
         image_max_count: The maximum number of images to analyze
+        tags: Tags from the article outline
+        article_topic: Original topic entered by user for article generation
     """
     history = load_user_history(username)
     # 生成唯一ID（避免删除后ID重复）
@@ -79,7 +82,9 @@ def add_history_record(username, topic, article_content, summary=None, model_typ
         "image_task_id": image_task_id,
         "image_enabled": image_enabled,
         "image_similarity_threshold": image_similarity_threshold,
-        "image_max_count": image_max_count
+        "image_max_count": image_max_count,
+        "tags": tags,
+        "article_topic": article_topic
     }
     history.append(record)
     save_user_history(username, history)
@@ -97,6 +102,7 @@ def delete_history_record(username, record_id):
 def save_html_to_user_dir(username, html_content, filename=None):
     """
     Save HTML content to the user's HTML directory.
+    If a file with the same name already exists, it will be overwritten.
     
     Args:
         username (str): The username of the user
@@ -118,6 +124,14 @@ def save_html_to_user_dir(username, html_content, filename=None):
     
     # Full path to save the file
     file_path = os.path.join(user_html_dir, filename)
+    
+    # Check if file already exists and remove it
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+            logging.info(f"Removed existing file: {file_path}")
+        except Exception as e:
+            logging.error(f"Error removing existing file {file_path}: {str(e)}")
     
     # Save the HTML content
     with open(file_path, 'w', encoding='utf-8') as f:

@@ -51,10 +51,10 @@ def process_result(content, question, output_type=prompt_template.ARTICLE, model
     :return: 摘要内容
     """
     # print(f'字数统计：{len(content)}')
-    if len(content) < 20000:
+    if len(content) < 25000:
         html_content = content
     else:
-        html_content = content[:20000]
+        html_content = content[:25000]
     # 创建对话提示
     # 这里不捕获异常，让它向上传播
     logger.info(f"处理任务: 模型={model_type}/{model_name}, 内容长度={len(html_content)}")
@@ -89,7 +89,7 @@ def llm_task(search_result, question, output_type, model_type, model_name, max_w
     
     logger.info(f"开始处理LLM任务: 模型={model_type}/{model_name}, 任务类型=---任务---{task_description}---, 搜索结果数量={len(search_result)}")
     
-    MAX_CONTENT_LENGTH = 20000
+    MAX_CONTENT_LENGTH = 25000
     optimized_search_result = []
     current_chunk = ""
     current_titles = []

@@ -69,6 +69,14 @@ def main():
             # 展示配置信息，单行显示并加粗类别
             st.markdown(f"**模型供应商**: {record.get('model_type', '-')} &nbsp;&nbsp;&nbsp; **模型名称**: {record.get('model_name', '-')} &nbsp;&nbsp;&nbsp; **写作模式**: {record.get('write_type', '-')} &nbsp;&nbsp;&nbsp; **爬取数量**: {record.get('spider_num', '-')} &nbsp;&nbsp;&nbsp; **写作风格**: {record.get('custom_style', '-')}")
             
+            # 显示文章标签和原始主题（如果存在）
+            if record.get('tags'):
+                st.markdown(f"**文章标签**: {record.get('tags', '-')}")
+                
+            if record.get('article_topic'):
+                st.markdown(f"**原始主题**: {record.get('article_topic', '-')}")
+            
+            
             if record.get('is_transformed') and record.get('original_article_id') is not None:
                 st.markdown(f"**源文章ID**: {record.get('original_article_id')}")
                 

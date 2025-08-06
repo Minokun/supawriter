@@ -1,7 +1,6 @@
 import streamlit as st
 import os
 import sys
-import page_settings
 
 # Add the parent directory to sys.path to ensure imports work correctly
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -12,8 +11,7 @@ if parent_dir not in sys.path:
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
 from utils.history_utils import load_user_history, add_history_record, save_html_to_user_dir
-from utils.searxng_utils import chat
-import utils.prompt_template as pt
+from llm_chat import chat
 from settings import LLM_MODEL, ARTICLE_TRANSFORMATIONS
 from utils.config_manager import get_config
 
@@ -144,7 +142,7 @@ def main():
                 
             # 添加导航到历史记录的按钮
             if st.button("前往历史记录查看"):
-                st.switch_page(page_settings.PAGE_HISTORY)
+                st.experimental_set_url("/history")
         else:
             st.error("转换后内容为空，未保存。")
 

@@ -312,9 +312,6 @@ def display_news_results(results):
         </div>
         """, unsafe_allow_html=True)
 
-# 执行主函数
+# 确保页面在Streamlit导航中正确加载
 if __name__ == "__main__":
     main()
-
-# 确保页面在Streamlit导航中正确加载
-main()

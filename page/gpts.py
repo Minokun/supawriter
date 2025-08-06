@@ -153,7 +153,7 @@ def main():
             <div class="nav-icon" style="font-size: 2.8rem; color: #8E54E9;">🔎</div>
             <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">坤塔搜索</div>
             <div class="nav-desc" style="height: 40px;">多功能搜索引擎，支持文本、图片、视频和新闻</div>
-            <a href="/坤塔搜索" target="_self" class="nav-button" style="background: linear-gradient(45deg, #667eea, #764ba2); font-weight: 700;">打开搜索</a>
+            <a href="/ddgs_search" target="_self" class="nav-button" style="background: linear-gradient(45deg, #667eea, #764ba2); font-weight: 700;">打开搜索</a>
         </div>
         """, unsafe_allow_html=True)
     
@@ -192,6 +192,31 @@ def main():
     
     with col3:
         st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #1A73E8;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #1A73E8;">🐟</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">大鱼号</div>
+            <div class="nav-desc" style="height: 40px;">UC大鱼号内容平台，流量变现能力强</div>
+            <a href="https://mp.dayu.com/dashboard/index" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #1A73E8, #6C5CE7); font-weight: 700;">进入平台</a>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #9C27B0;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #9C27B0;">🐟</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">企鹅号</div>
+            <div class="nav-desc" style="height: 40px;">企鹅号内容平台，流量变现能力强</div>
+            <a href="https://om.qq.com/main" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #9C27B0, #BA68C8); font-weight: 700;">打开扩展</a>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # 第二行：其他平台
+    col5, col6, col7, col8 = st.columns(4)
+    
+    with col5:
+        st.markdown("""
         <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #2932e1;">
             <div class="nav-icon" style="font-size: 2.8rem; color: #2932e1;">📝</div>
             <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">百家号</div>
@@ -200,7 +225,7 @@ def main():
         </div>
         """, unsafe_allow_html=True)
     
-    with col4:
+    with col6:
         st.markdown("""
         <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #CA0C16;">
             <div class="nav-icon" style="font-size: 2.8rem; color: #CA0C16;">📚</div>
@@ -210,6 +235,26 @@ def main():
         </div>
         """, unsafe_allow_html=True)
     
+    with col7:
+        st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #0066FF;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #0066FF;">📱</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">知乎</div>
+            <div class="nav-desc" style="height: 40px;">高质量问答社区，聚集专业内容创作者</div>
+            <a href="https://www.zhihu.com/creator" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #0066FF, #0099FF); font-weight: 700;">进入平台</a>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col8:
+        st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #EA6F5A;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #EA6F5A;">📊</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">简书</div>
+            <div class="nav-desc" style="height: 40px;">优质创作社区，聚焦原创文学内容</div>
+            <a href="https://www.jianshu.com/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #EA6F5A, #FF7E79); font-weight: 700;">进入平台</a>
+        </div>
+        """, unsafe_allow_html=True)
+
     st.markdown("<br>", unsafe_allow_html=True)
     
     # AI视频工具区域
@@ -220,12 +265,20 @@ def main():
     <p style="text-align: center; margin-bottom: 2rem; color: #555; font-size: 1rem;">智能视频生成和编辑工具，轻松创建专业级视频内容</p>
     """, unsafe_allow_html=True)
     
-    st.markdown("<br>", unsafe_allow_html=True)
+    # AI视频创作工具
+    video_col1, video_col2, video_col3 = st.columns(3)
     
-    # 第二行：其他平台
-    col5, col6, col7, col8 = st.columns(4)
-    
-    with col5:
+    with video_col1:
+        st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #00B4DB;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #00B4DB;">🎞️</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">海螺AI视频</div>
+            <div class="nav-desc" style="height: 40px;">文本一键生成精美视频，支持多种风格和模板</div>
+            <a href="https://hailuoai.com/create" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #00B4DB, #0083B0); font-weight: 700;">进入平台</a>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with video_col2:
         st.markdown("""
         <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #FF6B6B;">
             <div class="nav-icon" style="font-size: 2.8rem; color: #FF6B6B;">🎥</div>
@@ -235,33 +288,13 @@ def main():
         </div>
         """, unsafe_allow_html=True)
     
-    with col6:
+    with video_col3:
         st.markdown("""
         <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #4ECDC4;">
             <div class="nav-icon" style="font-size: 2.8rem; color: #4ECDC4;">🎬</div>
             <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">剪映</div>
             <div class="nav-desc" style="height: 40px;">专业视频剪辑工具，AI一键生成精美视频内容</div>
             <a href="https://www.jianying.com/ai-creator/start" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #4ECDC4, #26C6DA); font-weight: 700;">进入平台</a>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col7:
-        st.markdown("""
-        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #1A73E8;">
-            <div class="nav-icon" style="font-size: 2.8rem; color: #1A73E8;">🐟</div>
-            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">大鱼号</div>
-            <div class="nav-desc" style="height: 40px;">UC大鱼号视频内容平台，流量变现能力强</div>
-            <a href="https://mp.dayu.com/dashboard/index" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #1A73E8, #6C5CE7); font-weight: 700;">进入平台</a>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col8:
-        st.markdown("""
-        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #9C27B0;">
-            <div class="nav-icon" style="font-size: 2.8rem; color: #9C27B0;">🔧</div>
-            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">爱贝克助手</div>
-            <div class="nav-desc" style="height: 40px;">多平台内容同步工具，一键分发视频内容</div>
-            <a href="chrome-extension://jejejajkcbhejfiocemmddgbkdlhhngm/options.html" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #9C27B0, #BA68C8); font-weight: 700;">打开扩展</a>
         </div>
         """, unsafe_allow_html=True)
     
@@ -309,11 +342,11 @@ def main():
     
     with col12:
         st.markdown("""
-        <div class="nav-card">
-            <div class="nav-icon">⚙️</div>
-            <div class="nav-title">系统设置</div>
-            <div class="nav-desc">个人偏好配置</div>
-            <a href="/settings" target="_self" class="nav-button">打开设置</a>
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #3498db;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #3498db;">🎨</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">LiblibAI 生图</div>
+            <div class="nav-desc" style="height: 40px;">专业AI图像生成工具，释放创意无限可能</div>
+            <a href="https://www.liblib.art/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #3498db, #2980b9); font-weight: 700;">开始创作</a>
         </div>
         """, unsafe_allow_html=True)
     
@@ -396,10 +429,10 @@ def main():
     with ai_col7:
         st.markdown("""
         <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #00B4DB;">
-            <div class="nav-icon" style="font-size: 2.8rem; color: #00B4DB;">🐚</div>
-            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">海螺AI</div>
-            <div class="nav-desc" style="height: 40px;">专注于内容创作的智能助手与大模型应用</div>
-            <a href="https://hailuoai.com/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #00B4DB, #0083B0); font-weight: 700;">进入平台</a>
+            <div class="nav-icon" style="font-size: 2.8rem; color: #00B4DB;">🧠</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">ChatGPT</div>
+            <div class="nav-desc" style="height: 40px;">全球领先的AI对话平台，提供智能对话与生成能力</div>
+            <a href="https://chatgpt.com/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #00B4DB, #0083B0); font-weight: 700;">进入平台</a>
         </div>
         """, unsafe_allow_html=True)
     
