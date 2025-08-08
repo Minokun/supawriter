@@ -20,7 +20,7 @@ openai_model = None  # Will be set after LLM_MODEL is defined
 
 LLM_PROVIDERS = [
     key for key in st.secrets.keys()
-    if hasattr(st.secrets[key], 'keys')
+    if hasattr(st.secrets[key], 'keys') and not key.startswith('auth')
 ]
 
 # Import prompt templates for transformations
@@ -179,4 +179,4 @@ DEFAULT_SPIDER_NUM = 30
 # 是否自动插入相关图片默认值
 DEFAULT_ENABLE_IMAGES = True
 # 图片嵌入方式 ('multimodal' 或 'direct_embedding')
-DEFAULT_IMAGE_EMBEDDING_METHOD = 'direct_embedding'
+DEFAULT_IMAGE_EMBEDDING_METHOD = 'multimodal'

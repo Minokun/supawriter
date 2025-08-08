@@ -44,18 +44,18 @@ class Embedding:
                 'input': data   # data should be a list of image URLs
             }
             
-        logger.info(f"发送请求到 {url}，模型: {embedding_config[embedding_type]['model']}")
+        logger.debug(f"发送请求到 {url}，模型: {embedding_config[embedding_type]['model']}")
         response = requests.post(url, headers=headers, json=request_data, timeout=embedding_config[embedding_type]['timeout'])
         
         response_json = response.json()
-        logger.info(f"API响应状态码: {response.status_code}")
+        logger.debug(f"API响应状态码: {response.status_code}")
         
         # Parse response for image embeddings with better handling of different formats
         if 'data' in response_json:
             # Standard format
             embeddings = [i.get('embedding', []) for i in response_json.get('data', [])]
             if embeddings and any(embeddings):
-                logger.info(f"成功从'data'字段提取嵌入向量，维度: {len(embeddings[0])}")
+                logger.debug(f"成功从'data'字段提取嵌入向量，维度: {len(embeddings[0])}")
                 return embeddings
         logger.warning("'data'字段中没有找到嵌入向量")
         return []
@@ -109,7 +109,7 @@ class FAISSIndex:
         """
         self.index = None
         self.data = []  # Store original data corresponding to embeddings
-        logger.info("FAISS index initialized")
+        logger.debug("FAISS index initialized")
     
     def add_embeddings(self, embeddings: List[List[float]], data: List[Any]) -> None:
         """
@@ -131,7 +131,7 @@ class FAISSIndex:
             # Get the current embedding dimension from the first embedding
             embedding_dim = embeddings_np.shape[1]
             self.index = faiss.IndexFlatIP(embedding_dim)
-            logger.info(f"FAISS index initialized with dimension: {embedding_dim} using IndexFlatIP")
+            logger.debug(f"FAISS index initialized with dimension: {embedding_dim} using IndexFlatIP")
         
         # 对向量进行L2归一化，使内积等价于余弦相似度
         faiss.normalize_L2(embeddings_np)
@@ -212,7 +212,7 @@ class FAISSIndex:
         self.index = faiss.IndexFlatIP(embedding_dim)
         # 清空数据
         self.data = []
-        logger.info(f"FAISS索引已清空，使用维度: {embedding_dim}")
+        logger.debug(f"FAISS索引已清空，使用维度: {embedding_dim}")
             
         # 将空索引保存到磁盘
         try:
@@ -228,7 +228,7 @@ class FAISSIndex:
             # 保存空索引到磁盘
             success = self.save_to_disk(index_path, data_path)
             if success:
-                logger.info(f"空FAISS索引已保存到磁盘: {index_path}")
+                logger.debug(f"空FAISS索引已保存到磁盘: {index_path}")
             else:
                 logger.warning(f"保存空FAISS索引到磁盘失败")
         except Exception as e:
@@ -262,7 +262,7 @@ class FAISSIndex:
             with open(data_path, 'wb') as f:
                 pickle.dump(data_dict, f)
                 
-            logger.info(f"Successfully saved FAISS index to {index_path} and data to {data_path} (items: {len(self.data)})")
+            logger.debug(f"Successfully saved FAISS index to {index_path} and data to {data_path} (items: {len(self.data)})")
             return True
             
         except Exception as e:
@@ -298,7 +298,7 @@ class FAISSIndex:
                 self.data = data_dict['data']
                 # 兼容旧版本数据，忽略dimension字段
             
-            logger.info(f"Successfully loaded FAISS index from {index_path} with {len(self.data)} items")
+            logger.debug(f"Successfully loaded FAISS index from {index_path} with {len(self.data)} items")
             return True
             
         except Exception as e:
@@ -370,7 +370,7 @@ def create_faiss_index(load_from_disk: bool = False, index_dir: str = 'data/fais
         if index_exists and data_exists:
             success = faiss_index.load_from_disk(index_path, data_path)
             if success:
-                logger.info(f"Loaded existing FAISS index from {index_path} with {faiss_index.get_size()} items")
+                logger.debug(f"Loaded existing FAISS index from {index_path} with {faiss_index.get_size()} items")
                 # 更新全局缓存
                 global_faiss_index_cache[cache_key] = faiss_index
                 logger.debug(f"Updated global FAISS index cache for {cache_key}")
@@ -378,10 +378,10 @@ def create_faiss_index(load_from_disk: bool = False, index_dir: str = 'data/fais
             else:
                 logger.warning("Failed to load FAISS index from disk, creating a new one")
         else:
-            logger.info(f"No existing FAISS index found at {index_path}, creating a new one")
+            logger.debug(f"No existing FAISS index found at {index_path}, creating a new one")
     
     # 如果没有指定从磁盘加载或加载失败，创建新的索引实例
-    logger.info("Created new FAISS index instance")
+    logger.debug("Created new FAISS index instance")
     # 将新创建的索引添加到缓存
     global_faiss_index_cache[cache_key] = faiss_index
     return faiss_index
@@ -422,8 +422,8 @@ def save_faiss_index(faiss_index: FAISSIndex, index_dir: str = 'data/faiss', use
     data_path = os.path.join(actual_index_dir, 'index_data.pkl')
     
     # 保存索引和数据
-    logger.info(f"保存FAISS索引到: {index_path}")
-    logger.info(f"保存FAISS数据到: {data_path}")
+    logger.debug(f"保存FAISS索引到: {index_path}")
+    logger.debug(f"保存FAISS数据到: {data_path}")
     return faiss_index.save_to_disk(index_path, data_path)
 
 
@@ -447,8 +447,8 @@ def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex, auto_save:
     try:
         # Log what we're adding to the index
         input_type = "image URL" if is_image_url else "text"
-        logger.info(f"Adding {input_type} to FAISS index: {text[:50]}...")
-        logger.info(f"Current FAISS index size: {faiss_index.get_size()}")
+        logger.debug(f"Adding {input_type} to FAISS index: {text[:50]}...")
+        logger.debug(f"Current FAISS index size: {faiss_index.get_size()}")
         
         # Get embedding for the text or image URL
         embedding_vectors = Embedding().get_embedding([text], is_image_url=is_image_url)
@@ -467,7 +467,7 @@ def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex, auto_save:
             logger.error(f"Empty embedding vector returned for {input_type}: {text[:50]}...")
             return False
             
-        logger.info(f"Successfully generated embedding vector for {input_type}: {text[:50]}... with dimension {len(embedding_vectors[0])}")
+        logger.debug(f"Successfully generated embedding vector for {input_type}: {text[:50]}... with dimension {len(embedding_vectors[0])}")
         
         # Validate embedding dimension against current setting
         current_dim = get_embedding_dimension()
@@ -476,11 +476,11 @@ def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex, auto_save:
             
         # Add the embedding to the FAISS index
         embedding = embedding_vectors[0]
-        logger.info(f"Generated embedding vector with dimension: {len(embedding)}")
+        logger.debug(f"Generated embedding vector with dimension: {len(embedding)}")
         
         try:
             # Log the embedding vector details
-            logger.info(f"Adding embedding vector to FAISS index. Vector type: {type(embedding)}, dimension: {len(embedding)}")
+            logger.debug(f"Adding embedding vector to FAISS index. Vector type: {type(embedding)}, dimension: {len(embedding)}")
             
             # Check if the embedding vector is valid
             if not all(isinstance(x, (int, float)) for x in embedding):
@@ -492,7 +492,7 @@ def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex, auto_save:
             
             # Verify the addition was successful
             new_size = faiss_index.get_size()
-            logger.info(f"Successfully added embedding to FAISS index. New size: {new_size}")
+            logger.debug(f"Successfully added embedding to FAISS index. New size: {new_size}")
             
             # Double-check if the size actually increased
             if new_size <= 0:
@@ -506,9 +506,9 @@ def add_to_faiss_index(text: str, data: Any, faiss_index: FAISSIndex, auto_save:
         if auto_save:
             try:
                 save_path = f"{username}/{article_id}" if username and article_id else "global"
-                logger.info(f"Auto-saving FAISS index to: {save_path}")
+                logger.debug(f"Auto-saving FAISS index to: {save_path}")
                 save_faiss_index(faiss_index, username=username, article_id=article_id)
-                logger.info(f"Successfully saved FAISS index, size: {faiss_index.get_size()}")
+                logger.debug(f"Successfully saved FAISS index, size: {faiss_index.get_size()}")
             except Exception as e:
                 logger.error(f"Failed to save FAISS index: {str(e)}")
                 return False

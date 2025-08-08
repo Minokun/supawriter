@@ -54,6 +54,22 @@ def main():
             st.session_state.messages = []
             st.session_state.chat_title = "新对话"
         st.rerun()
+        
+    def convert_conversation_to_markdown():
+        """将当前对话转换为Markdown格式"""
+        if not st.session_state.messages:
+            return "# 空对话\n\n当前没有对话内容。"
+            
+        markdown_content = f"# {st.session_state.chat_title}\n\n"
+        markdown_content += f"*生成时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n\n"
+        
+        for idx, msg in enumerate(st.session_state.messages):
+            if msg["role"] == "user":
+                markdown_content += f"## 👤 用户\n\n{msg['content']}\n\n"
+            else:  # assistant
+                markdown_content += f"## 🤖 AI助手\n\n{msg['content']}\n\n"
+                
+        return markdown_content
     
     
     # 在侧边栏添加模型选择和清空按钮
@@ -147,6 +163,20 @@ def main():
             # 如果有活动聊天ID，不需要保存空对话
             # 直接重新加载页面
             st.rerun()
+            
+        # 下载当前对话按钮
+        if st.session_state.messages and len(st.session_state.messages) > 0:
+            markdown_content = convert_conversation_to_markdown()
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"对话_{st.session_state.chat_title[:10]}_{timestamp}.md"
+            st.download_button(
+                label="📥 下载当前对话",
+                data=markdown_content,
+                file_name=filename,
+                mime="text/markdown",
+                type="secondary",
+                use_container_width=True
+            )
         
         # 添加分隔线
         st.markdown("<hr>", unsafe_allow_html=True)
@@ -266,12 +296,20 @@ def main():
                             messages.append({"role": "user", "content": m["content"]})
                     
                     try:
-                        stream = client.chat.completions.create(
-                            model=model_name,
-                            messages=messages,
-                            stream=True,
-                            max_tokens=8000,
-                        )
+                        if model_type == 'openai':
+                            stream = client.chat.completions.create(
+                                model=model_name,
+                                messages=messages,
+                                stream=True,
+                                max_completion_tokens=8000,
+                            )
+                        elif model_type == 'qwen':
+                            stream = client.chat.completions.create(
+                                model=model_name,
+                                messages=messages,
+                                stream=True,
+                                max_tokens=8000,
+                            )
                         
                         # 处理流式响应
                         for chunk in stream:

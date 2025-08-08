@@ -45,3 +45,4 @@ faiss-cpu>=1.7.4
 huggingface_hub>=0.16.0
 
 streamlit_markdown
+Authlib

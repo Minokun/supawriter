@@ -62,7 +62,7 @@ def get_streamlit_faiss_index(username: str = None, article_id: str = None):
     else:
         expected_path = INDEX_DIR
     
-    logger.info(f"Requesting FAISS index for path: {expected_path}")
+    logger.debug(f"Requesting FAISS index for path: {expected_path}")
     
     # 首先检查缓存中是否已有该索引
     if cache_key in faiss_index_cache:
@@ -109,10 +109,10 @@ def get_streamlit_faiss_index(username: str = None, article_id: str = None):
     
     # 如果全局索引为None，初始化它
     if faiss_index is None:
-        logger.info("Initializing global FAISS index for the first time")
+        logger.debug("Initializing global FAISS index for the first time")
         faiss_index = create_faiss_index(load_from_disk=True, index_dir=INDEX_DIR)
         index_size = faiss_index.get_size()
-        logger.info(f"Global FAISS index initialized with {index_size} items")
+        logger.debug(f"Global FAISS index initialized with {index_size} items")
         if index_size == 0:
             logger.warning("Global FAISS index is empty")
         # 将全局索引添加到缓存
@@ -318,7 +318,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
             })
         elif '126.net' in domain:
             # 网易图片特殊处理
-            logger.info(f"处理网易图片URL: {img_src}")
+            logger.debug(f"处理网易图片URL: {img_src}")
             # 如果是网易的URL，尝试提取实际图片URL
             if 'url=' in img_src:
                 try:
@@ -559,10 +559,10 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                     
                     # 记录添加后的索引大小
                     after_size = current_faiss_index.get_size()
-                    logger.info(f"添加图片URL后FAISS索引大小: {after_size}，增加: {after_size - before_size}")
+                    logger.debug(f"添加图片URL后FAISS索引大小: {after_size}，增加: {after_size - before_size}")
                     
                     if after_size > before_size:
-                        logger.info(f"成功添加图片URL到FAISS索引 {username}/{article_id}: {img_src[:50]}...")
+                        logger.debug(f"成功添加图片URL到FAISS索引 {username}/{article_id}: {img_src[:50]}...")
                     else:
                         logger.warning(f"图片URL似乎未成功添加到FAISS索引: {img_src[:50]}...")
                         
@@ -585,7 +585,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 
         # 如果是多模态处理模式，在通过大小和尺寸检查后再进行多模态处理
         elif is_multimodal:
-            logger.info(f"Processing image with multimodal model: {img_src}")
+            logger.debug(f"Processing image with multimodal model: {img_src}")
             
             # 调用Qwen模型进行图片识别
             try:
@@ -605,22 +605,22 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                         # 添加到FAISS索引
                         try:
                             # 获取用户和文章特定的FAISS索引实例
-                            logger.info(f"正在获取FAISS索引实例: {username}/{article_id}")
+                            logger.debug(f"正在获取FAISS索引实例: {username}/{article_id}")
                             current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
                             
                             # 记录添加前的索引大小
                             before_size = current_faiss_index.get_size()
-                            logger.info(f"添加图片前FAISS索引大小: {before_size}")
+                            logger.debug(f"添加图片前FAISS索引大小: {before_size}")
                             
                             # 添加到索引
                             add_to_faiss_index(description, data, current_faiss_index, username=username, article_id=article_id, auto_save=True)
                             
                             # 记录添加后的索引大小
                             after_size = current_faiss_index.get_size()
-                            logger.info(f"添加图片后FAISS索引大小: {after_size}，增加: {after_size - before_size}")
+                            logger.debug(f"添加图片后FAISS索引大小: {after_size}，增加: {after_size - before_size}")
                             
                             if after_size > before_size:
-                                logger.info(f"成功添加图片到FAISS索引 {username}/{article_id}: {img_src[:50]}...")
+                                logger.debug(f"成功添加图片到FAISS索引 {username}/{article_id}: {img_src[:50]}...")
                             else:
                                 logger.warning(f"图片似乎未成功添加到FAISS索引: {img_src[:50]}...")
                                 
@@ -913,7 +913,7 @@ def normalize_image_url(img_src: str, base_url: str = None) -> str:
                 if 'v=' in parsed_url.query:
                     clean_url = urllib.parse.urlunparse((parsed_url.scheme, parsed_url.netloc, 
                                                        parsed_url.path, '', '', ''))
-                    logger.info(f"Cleaned gov.cn URL: {img_src} -> {clean_url}")
+                    logger.debug(f"Cleaned gov.cn URL: {img_src} -> {clean_url}")
                     return clean_url
         except:
             pass
@@ -1034,10 +1034,10 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
                         processed_paths.append(path)
             
             # 输出图片下载统计信息
-            logger.info(f"图片下载统计: 总计 {stats['total']} 张, 成功 {stats['success']} 张, 失败 {stats['failed']} 张, 使用缓存 {stats['cached']} 张, 跳过 {stats['skipped']} 张, 去重 {stats.get('duplicate', 0)} 张")
+            logger.debug(f"图片下载统计: 总计 {stats['total']} 张, 成功 {stats['success']} 张, 失败 {stats['failed']} 张, 使用缓存 {stats['cached']} 张, 跳过 {stats['skipped']} 张, 去重 {stats.get('duplicate', 0)} 张")
             
             # 输出全局缓存统计信息
-            logger.info(f"全局URL映射缓存大小: {len(GLOBAL_URL_MAPPING)}, 全局内容哈希映射大小: {len(GLOBAL_CONTENT_HASH_MAPPING)}")
+            logger.debug(f"全局URL映射缓存大小: {len(GLOBAL_URL_MAPPING)}, 全局内容哈希映射大小: {len(GLOBAL_CONTENT_HASH_MAPPING)}")
         
         return {
             'text': text_content,
@@ -1112,8 +1112,15 @@ async def fetch(browser, url, task_id=None, is_multimodal=False, use_direct_imag
             result['original_url'] = url  # 保存原始URL以便跟踪
             return result
         except Exception as e:
-            logger.error(f"Error fetching {url}: {str(e)}")
-            return {"url": url, "text": "", "images": [], "error": str(e)}
+            error_message = str(e)
+            # 过滤掉PDF下载的错误日志
+            if "Download is starting" in error_message:
+                # 对于PDF下载，使用debug级别记录，而不是error
+                logger.debug(f"Skipping PDF download for {url}: {error_message}")
+            else:
+                # 其他错误仍然使用error级别记录
+                logger.error(f"Error fetching {url}: {error_message}")
+            return {"url": url, "text": "", "images": [], "error": error_message}
         finally:
             await page.close()
             await context.close()

@@ -138,10 +138,14 @@ def main():
                 
                 with col1:
                     # 使用Streamlit的按钮来打开预览链接
-                    if st.button("👁️ 预览网页", key=f"history_preview_{record['id']}", type="primary", use_container_width=True):
-                        # 使用JavaScript打开新标签页
-                        js = f"window.open('{article_url}', '_blank').focus();"
-                        st.components.v1.html(f"<script>{js}</script>", height=0)
+                    # 使用原生链接按钮，避免在受限iframe中注入JS导致无效点击
+                    st.link_button(
+                        label="👁️ 预览网页",
+                        url=article_url,
+                        use_container_width=True,
+                        type="primary",
+                        help="在新标签页打开预览"
+                    )
                 
                 with col2:
                     # 下载按钮

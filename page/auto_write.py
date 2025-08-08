@@ -205,7 +205,7 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
                 
                 custom_prompt = pt.ARTICLE_OUTLINE_BLOCK
                 if custom_style and custom_style.strip():
-                    custom_prompt = custom_prompt.replace('---要求---', f'---要求---\n        - {custom_style}')
+                    custom_prompt = custom_prompt.replace('---要求---', f'---要求---\n        - 请围绕这个这个中心主题来编写当前章节内容：{custom_style} \n')
                 
                 final_instruction = '，注意不要包含任何标题（不要包含h1和h2标题），直接开始正文内容' if is_first_chapter else ''
                 outline_block_content_final = chat(

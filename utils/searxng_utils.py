@@ -33,7 +33,6 @@ from settings import base_path, LLM_MODEL
 from grab_html_content import get_main_content
 from llm_chat import chat
 import prompt_template
-from . import sougou_search
 from utils.embedding_utils import Embedding
 
 max_workers = 20
@@ -51,10 +50,10 @@ def process_result(content, question, output_type=prompt_template.ARTICLE, model
     :return: 摘要内容
     """
     # print(f'字数统计：{len(content)}')
-    if len(content) < 25000:
+    if len(content) < 30000:
         html_content = content
     else:
-        html_content = content[:25000]
+        html_content = content[:30000]
     # 创建对话提示
     # 这里不捕获异常，让它向上传播
     logger.info(f"处理任务: 模型={model_type}/{model_name}, 内容长度={len(html_content)}")
@@ -89,37 +88,113 @@ def llm_task(search_result, question, output_type, model_type, model_name, max_w
     
     logger.info(f"开始处理LLM任务: 模型={model_type}/{model_name}, 任务类型=---任务---{task_description}---, 搜索结果数量={len(search_result)}")
     
-    MAX_CONTENT_LENGTH = 25000
+    MAX_CONTENT_LENGTH = 30000
     optimized_search_result = []
     current_chunk = ""
     current_titles = []
+    current_urls = []
     
-    sorted_results = sorted(search_result, key=lambda x: len(x.get('html_content', ''))) 
+    # 计算内容相关性得分
+    def calculate_relevance_score(content, title, query):
+        # 提取查询中的关键词
+        query_keywords = set(re.findall(r'\w+', query.lower()))
+        # 移除常见的停用词
+        stopwords = {'的', '了', '和', '与', '或', '在', '是', '有', '什么', '如何', '怎么', 'the', 'a', 'an', 'and', 'or', 'in', 'on', 'at', 'to', 'for'}
+        query_keywords = query_keywords - stopwords
+        
+        # 计算标题中关键词匹配数
+        title_score = sum(1 for keyword in query_keywords if keyword in title.lower()) * 2
+        
+        # 计算内容中关键词匹配数（只检查前1000个字符以提高效率）
+        content_preview = content[:1000].lower()
+        content_score = sum(1 for keyword in query_keywords if keyword in content_preview)
+        
+        # 计算总分
+        return title_score + content_score
+    
+    # 为每个结果添加相关性得分
+    for item in search_result:
+        content = item.get('html_content', '')
+        title = item.get('title', 'Untitled')
+        item['relevance_score'] = calculate_relevance_score(content, title, question)
+    
+    # 首先按相关性得分排序（降序），然后按内容长度排序（升序）
+    sorted_results = sorted(search_result, 
+                           key=lambda x: (-x.get('relevance_score', 0), len(x.get('html_content', ''))))
     
     for item in sorted_results:
         content = item.get('html_content', '')
         title = item.get('title', 'Untitled')
         
+        # 记录处理的内容信息
+        logger.info(f"处理搜索结果: 标题='{title[:30]}...', 内容长度={len(content)}, 相关性得分={item.get('relevance_score', 0)}")
+        
         if len(content) >= MAX_CONTENT_LENGTH:
-            optimized_search_result.append({'title': title, 'html_content': content[:MAX_CONTENT_LENGTH], 'url': item.get('url', '')})
+            # 对于大型内容，保留原始URL和相关性得分
+            optimized_search_result.append({
+                'title': title, 
+                'html_content': content[:MAX_CONTENT_LENGTH], 
+                'url': item.get('url', ''),
+                'relevance_score': item.get('relevance_score', 0),
+                'is_truncated': True
+            })
             continue
         
         if len(current_chunk) + len(content) > MAX_CONTENT_LENGTH:
             if current_chunk:
-                optimized_search_result.append({'title': ' | '.join(current_titles), 'html_content': current_chunk, 'url': 'combined'})
+                # 计算组合内容的平均相关性得分
+                avg_relevance = sum(search_result[i].get('relevance_score', 0) 
+                                  for i, _ in enumerate(search_result) 
+                                  if search_result[i].get('url', '') in current_urls) / len(current_urls) if current_urls else 0
+                
+                optimized_search_result.append({
+                    'title': ' | '.join(current_titles), 
+                    'html_content': current_chunk, 
+                    'url': 'combined', 
+                    'source_urls': current_urls,
+                    'relevance_score': avg_relevance,
+                    'combined_count': len(current_urls)
+                })
             current_chunk = content
             current_titles = [title]
+            current_urls = [item.get('url', '')]
         else:
             if current_chunk:
-                current_chunk += "\n\n---\n\n"
+                # 使用更清晰的分隔符，包含标题信息
+                separator = f"\n\n{'='*40}\n## {title}\n{'='*40}\n\n"
+                current_chunk += separator
+            else:
+                # 第一个内容添加标题
+                current_chunk = f"## {title}\n\n"
             current_chunk += content
             current_titles.append(title)
+            current_urls.append(item.get('url', ''))
     
     if current_chunk:
-        optimized_search_result.append({'title': ' | '.join(current_titles), 'html_content': current_chunk, 'url': 'combined'})
+        # 计算组合内容的平均相关性得分
+        avg_relevance = sum(search_result[i].get('relevance_score', 0) 
+                          for i, _ in enumerate(search_result) 
+                          if search_result[i].get('url', '') in current_urls) / len(current_urls) if current_urls else 0
+        
+        optimized_search_result.append({
+            'title': ' | '.join(current_titles), 
+            'html_content': current_chunk, 
+            'url': 'combined', 
+            'source_urls': current_urls,
+            'relevance_score': avg_relevance,
+            'combined_count': len(current_urls)
+        })
     
-    logger.info(f"搜索结果优化: 原始数量={len(search_result)}, 优化后数量={len(optimized_search_result)}")
+    # 记录优化详情
+    top_relevance = sorted([item.get('relevance_score', 0) for item in search_result], reverse=True)[:5] if search_result else []
+    # 计算优化前后的字数变化
+    original_length = sum(len(item.get('html_content', '')) for item in search_result)
+    optimized_length = sum(len(item.get('html_content', '')) for item in optimized_search_result)
+    length_diff = optimized_length - original_length
     
+    logger.info(f"搜索结果优化: 原始数量={len(search_result)}, 优化后数量={len(optimized_search_result)}, "
+                f"前5相关性得分={top_relevance}, 字数变化={length_diff:+}, "
+                f"原字数={original_length}, 优字数={optimized_length}")
     connection_error = None
     
     def process_result_wrapper(content, question, output_type, model_type, model_name):
@@ -168,9 +243,9 @@ def llm_task(search_result, question, output_type, model_type, model_name, max_w
         return outlines
     else:
         outlines = '\n'.join([res for res in results if res != "CONNECTION_ERROR"])
-        if len(outlines) > 25000:
-            logger.info(f"结果过长({len(outlines)}字符)，截断至25000字符")
-            outlines = outlines[:25000]
+        if len(outlines) > MAX_CONTENT_LENGTH:
+            logger.info(f"结果过长({len(outlines)}字符)，截断至{MAX_CONTENT_LENGTH}字符")
+            outlines = outlines[:MAX_CONTENT_LENGTH]
         return outlines
 
 class Search:
@@ -208,7 +283,6 @@ class Search:
                 
             url = item[key]
             normalized_url = sougou_search.normalize_url(url)
-            url_hash = sougou_search.calculate_url_hash(url)
             
             # 不再检查全局已处理URL，确保每次搜索都是独立的
             # 原全局去重逻辑已移除，避免跨用户和跨任务的数据污染
@@ -237,10 +311,14 @@ class Search:
         :return: JSON数据
         """
         self.search_query = question
-            
+
+        # 搜索词优化
+        optimizeq = chat(self.search_query, system_prompt="对这句话做一个搜索查询语句优化：“简明扼要的介绍一下openai发布最新的gpt-5模型性能水平和提升”。请优化一下变成输入搜索引擎用的查询词，以便更好的抓住重点信息的查询，直接生成一个适合用在谷歌或必应上的高效搜索语法版本，把它做成带引号和逻辑运算符的高级搜索。直接输出优化后的语句，不要解释")
+        logger.info(f"优化后的搜索词: {optimizeq}") 
+        
         # 发送请求到SearXNG搜索引擎
         params = {
-            "q": self.search_query,
+            "q": optimizeq,
             "format": "json",
             "pageno": 1,
             "engines": ','.join(["google", "bing", "duckduckgo", "yahoo", "qwant", "presearch"]),  # 减少搜索引擎数量，提高相关性
@@ -252,98 +330,6 @@ class Search:
             response = requests.get(self.search_url, params=params, verify=False)
             data = response.json()
             logger.info(f"SearXNG search results: {len(data['results'])}")
-            # 同时获取搜狗搜索结果
-            try:
-                sogou_results = sougou_search.query_search(self.search_query)
-                logger.info(f"Sogou search results: {len(sogou_results)}")
-                
-                # 将搜狗结果转换为与SearXNG相同的格式并添加到结果中
-                if sogou_results and isinstance(sogou_results, list) and len(sogou_results) > 0:
-                    # 确保数据中有results字段
-                    if 'results' not in data:
-                        data['results'] = []
-                    
-                    # 只取10条搜狗结果
-                    sogou_count = 0
-                    embedding = Embedding()
-                    
-                    # 存储搜狗结果及其相似度分数
-                    scored_sogou_results = []
-                    
-                    for result in sogou_results[:10]:
-                        # 检查是否是字典格式并包含标题和URL
-                        if isinstance(result, dict) and 'title' in result and 'url' in result:
-                            title = result['title']
-                            url = result['url']
-                            
-                            # 计算标题与查询词的相似度
-                            try:
-                                similarity = embedding.cosine_similarity(title, self.search_query)
-                                
-                                # 将结果与相似度分数一起存储
-                                scored_sogou_results.append((result, similarity))
-                                logger.info(f"Sogou result: {title[:30]}... - 相似度: {similarity:.4f}")
-                            except Exception as e:
-                                logger.error(f"Error calculating similarity for sogou result: {str(e)}")
-                    
-                    # 按相似度降序排序
-                    scored_sogou_results.sort(key=lambda x: x[1], reverse=True)
-                    
-                    # 收集所有相似度分数以便分析
-                    all_scores = [score for _, score in scored_sogou_results]
-                    if all_scores:
-                        min_score = min(all_scores)
-                        max_score = max(all_scores)
-                        avg_score = sum(all_scores) / len(all_scores)
-                        logger.info(f"Sogou result similarity statistics: Min={min_score:.4f}, Max={max_score:.4f}, Avg={avg_score:.4f}")
-                        
-                        # 使用标准阈值，因为相似度分数实际上很好
-                        SIMILARITY_THRESHOLD = 0.2  # 相似度阈值
-                        filtered_results = [(result, score) for result, score in scored_sogou_results if score >= SIMILARITY_THRESHOLD]
-                        
-                        logger.info(f"Sogou result similarity filtering: {len(filtered_results)}/{len(scored_sogou_results)} results passed threshold {SIMILARITY_THRESHOLD}")
-                    
-                    # 处理过滤后的搜狗结果
-                    for result, similarity in filtered_results:
-                        title = result['title']
-                        url = result['url']
-                        
-                        # 确保URL是完整的并且有效
-                        if not url:
-                            logger.info(f"跳过无效URL的搜狗结果: {title[:30]}...")
-                            continue
-                            
-                        if not url.startswith(('http://', 'https://')):
-                            # 如果是相对路径，添加域名
-                            if url.startswith('/'):
-                                url = 'https://weixin.sogou.com' + url
-                            else:
-                                url = 'https://' + url
-                            logger.info(f"修正URL: {url}")
-                        
-                        data['results'].append({
-                            'title': title,
-                            'url': url,  # 使用实际的URL，允许重定向
-                            'content': f"Sogou Search Result: {title}",
-                            'score': similarity,  # 使用计算出的相似度作为分数
-                            'engine': 'sogou',
-                            'sogou_result': True  # 标记为搜狗结果，方便后续处理
-                        })
-                        sogou_count += 1
-                        logger.info(f"添加搜狗结果: {title[:30]}... - URL: {url}")
-                    
-                    logger.info(f"成功添加 {sogou_count} 条搜狗搜索结果 (相似度阈值: {SIMILARITY_THRESHOLD}), 总计{len(data['results'])}条结果")
-                    
-                    # 如果没有添加任何搜狗结果，检查可能的原因
-                    if sogou_count == 0 and len(filtered_results) > 0:
-                        logger.warning("警告: 有符合相似度阈值的搜狗结果，但没有被添加。可能是URL格式问题或其他条件限制。")
-                        for result, similarity in filtered_results[:3]:  # 只打印前3个作为示例
-                            title = result.get('title', 'No Title')
-                            url = result.get('url', 'No URL')
-                            logger.info(f"未添加的结果示例: {title[:30]}... - URL: {url} - 相似度: {similarity:.4f}")
-            except Exception as e:
-                logger.error(f"搜狗搜索失败: {e}")
-                
             return data
         except Exception as e:
             logger.error(f"SearXNG搜索失败: {e}")
@@ -441,16 +427,26 @@ class Search:
                 
                 # 处理爬取结果，将内容和图片映射到URL
                 for item in result:
-                    content = item.get('content', '').replace('\n', '').replace(' ', '')
+                    # 修复：grab_html_content.py中的text_from_html函数返回的是'text'键，不是'content'键
+                    content = item.get('text', '')
+                    # 保留原始内容用于日志记录
+                    original_content = content
+                    # 仅在存储时移除空白字符，保留原始格式用于日志
+                    content_for_storage = content.replace('\n', '').replace(' ', '') if content else ''
                     url = item.get('url', '')
                     original_url = item.get('original_url', url)
                     images = item.get('images', [])
                     
+                    # 记录内容长度，帮助诊断零长度内容问题
+                    logger.info(f"Content for URL {url}: original length={len(original_content)}, processed length={len(content_for_storage)}")
+                    
                     # 存储内容和图片
-                    if content:
-                        html_content_dict[url] = content
+                    if content_for_storage:
+                        html_content_dict[url] = content_for_storage
                         if original_url != url:
-                            html_content_dict[original_url] = content
+                            html_content_dict[original_url] = content_for_storage
+                    else:
+                        logger.warning(f"Empty content for URL: {url} (original URL: {original_url})")
                     
                     # 存储图片
                     if images:
@@ -465,7 +461,7 @@ class Search:
                     # 添加HTML内容
                     if url in html_content_dict:
                         item['html_content'] += html_content_dict[url]
-                        logger.debug(f"Added content for URL: {url}")
+                        logger.info(f"Added content for URL: {url}, content length: {len(html_content_dict[url])}")
                     else:
                         # 尝试匹配部分URL
                         matched = False
@@ -474,7 +470,7 @@ class Search:
                             if url in crawled_url or crawled_url in url or \
                                urlparse(url).netloc == urlparse(crawled_url).netloc:
                                 item['html_content'] += html_content_dict[crawled_url]
-                                logger.info(f"Found partial match for content: {url} -> {crawled_url}")
+                                logger.info(f"Found partial match for content: {url} -> {crawled_url}, content length: {len(html_content_dict[crawled_url])}")
                                 matched = True
                                 break
                     

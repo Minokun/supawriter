@@ -139,11 +139,11 @@ def main():
         
     with search_col3:
         st.markdown("""
-        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #EA4335;">
-            <div class="nav-icon" style="font-size: 2.8rem; color: #EA4335;">🌎</div>
-            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">Google搜索</div>
-            <div class="nav-desc" style="height: 40px;">全球最大的搜索引擎，浏览器直达结果</div>
-            <a href="https://www.google.com/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #EA4335, #FBBC05); font-weight: 700;">打开搜索</a>
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #1e90ff;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #1e90ff;">🏆</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">大模型排行榜</div>
+            <div class="nav-desc" style="height: 40px;">领先AI模型排行榜与评测（LM Arena）</div>
+            <a href="https://lmarena.ai/leaderboard" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #1e90ff, #00bcd4); font-weight: 700;">打开网站</a>
         </div>
         """, unsafe_allow_html=True)
         
