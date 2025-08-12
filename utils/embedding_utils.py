@@ -18,6 +18,10 @@ class Embedding:
         
         if is_image_url:
             data = [{"image": url} for url in data]
+        # Defensive: ensure selected embedding_type exists in config
+        if embedding_type not in embedding_config:
+            logger.error(f"未在EMBEDDING_CONFIG中找到embedding类型: {embedding_type}")
+            return []
         url = embedding_config[embedding_type]['host']
         headers = {
             'Authorization': f'Bearer {embedding_config[embedding_type]["api_key"]}',
@@ -26,25 +30,28 @@ class Embedding:
 
         # Handle direct image URL embedding with jina-embeddings-v4
         # 只要模型是jina-embeddings-v4且is_image_url为true就可以直接图片用嵌入向量的方式，与embedding_type无关
-        if embedding_type == "gitee":
+        if embedding_type in ("gitee", "xinference"):
+            # OpenAI-compatible providers usually require only model + input
             request_data = {
                 'model': embedding_config[embedding_type]['model'],
-                'input': data   # data should be a list of image URLs
+                'input': data
             }
         elif embedding_type == "jina":
+            # Jina embeddings may accept an optional task for text retrieval
             request_data = {
                 'model': embedding_config[embedding_type]['model'],
-                "task": "retrieval.passage",
-                'input': data   # data should be a list of image URLs
+                # 保持与原实现一致，仅对jina提供task参数
+                'task': "retrieval.passage",
+                'input': data
             }
         else:
+            # Fallback: do not send unsupported fields like 'task'
             request_data = {
                 'model': embedding_config[embedding_type]['model'],
-                'task': "retrieval",
-                'input': data   # data should be a list of image URLs
+                'input': data
             }
             
-        logger.debug(f"发送请求到 {url}，模型: {embedding_config[embedding_type]['model']}")
+        logger.info(f"发送请求到 {url}，提供商: {embedding_type}，模型: {embedding_config[embedding_type]['model']}")
         response = requests.post(url, headers=headers, json=request_data, timeout=embedding_config[embedding_type]['timeout'])
         
         response_json = response.json()

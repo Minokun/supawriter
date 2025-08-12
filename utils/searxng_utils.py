@@ -16,7 +16,7 @@ import hashlib
 import threading
 import asyncio
 import concurrent.futures
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 # 配置日志
 logging.basicConfig(
@@ -27,6 +27,68 @@ logger = logging.getLogger(__name__)
 
 # 禁用SSL警告
 urllib3.disable_warnings()
+
+# ----------------------
+# URL 规范化与相似性判断工具（替代 sougou_search）
+# ----------------------
+def normalize_url(url: str) -> str:
+    """将 URL 进行规范化，便于去重与相似性判断。
+    规则：
+    - 小写 scheme 和 host
+    - 去除 fragment
+    - 去除常见追踪参数（utm_*、gclid、fbclid 等）
+    - 规范化路径的多余斜杠与结尾斜杠
+    - 对于无效 URL，返回原始字符串以避免崩溃
+    """
+    try:
+        pr = urlparse(url)
+        scheme = (pr.scheme or 'http').lower()
+        netloc = pr.netloc.lower()
+
+        # 规范化路径：去除多余斜杠
+        path = re.sub(r'/+', '/', pr.path or '/')
+        # 移除结尾斜杠，根路径保留 '/'
+        if path != '/' and path.endswith('/'):
+            path = path[:-1]
+
+        # 清理查询参数
+        tracking_keys = {
+            'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+            'gclid', 'fbclid', 'igshid', 'spm', 'mkt_tok'
+        }
+        query_pairs = [(k, v) for k, v in parse_qsl(pr.query, keep_blank_values=True) if k not in tracking_keys]
+        # 按键排序，避免顺序影响去重
+        query_pairs.sort(key=lambda x: x[0])
+        query = urlencode(query_pairs, doseq=True)
+
+        # 去除 fragment
+        fragment = ''
+
+        normalized = urlunparse((scheme, netloc, path, '', query, fragment))
+        return normalized
+    except Exception:
+        return url
+
+
+def is_similar_url(a: str, b: str) -> bool:
+    """判断两个 URL 是否相似。
+    规则：
+    - 完全相等直接相似
+    - 域名与路径相同（忽略查询参数顺序与追踪参数）判定为相似
+    - 常见的 www 前缀差异等也视为相似
+    """
+    na = normalize_url(a)
+    nb = normalize_url(b)
+    if na == nb:
+        return True
+    pra, prb = urlparse(na), urlparse(nb)
+    # 去掉 www 前缀对比
+    host_a = pra.netloc[4:] if pra.netloc.startswith('www.') else pra.netloc
+    host_b = prb.netloc[4:] if prb.netloc.startswith('www.') else prb.netloc
+    if host_a != host_b:
+        return False
+    # 路径一致则认为相似（查询参数差异忽略）
+    return pra.path == prb.path
 
 # 本地导入
 from settings import base_path, LLM_MODEL
@@ -56,9 +118,9 @@ def process_result(content, question, output_type=prompt_template.ARTICLE, model
         html_content = content[:30000]
     # 创建对话提示
     # 这里不捕获异常，让它向上传播
-    logger.info(f"处理任务: 模型={model_type}/{model_name}, 内容长度={len(html_content)}")
+    logger.debug(f"处理任务: 模型={model_type}/{model_name}, 内容长度={len(html_content)}")
     chat_result = chat(f'## 参考的上下文资料：<content>{html_content}</content> ## 请严格依据topic完成相关任务：<topic>{question}</topic> ', output_type, model_type, model_name)
-    logger.info(f"任务完成: 结果长度={len(chat_result)}")
+    logger.debug(f"任务完成: 结果长度={len(chat_result)}")
     # print(f'总结后的字数统计：{len(chat_result)}')
     return chat_result
 
@@ -282,7 +344,7 @@ class Search:
                 continue
                 
             url = item[key]
-            normalized_url = sougou_search.normalize_url(url)
+            normalized_url = normalize_url(url)
             
             # 不再检查全局已处理URL，确保每次搜索都是独立的
             # 原全局去重逻辑已移除，避免跨用户和跨任务的数据污染
@@ -290,7 +352,7 @@ class Search:
             # Skip if URL has been processed in this batch
             is_duplicate = False
             for processed_url in processed_urls:
-                if sougou_search.is_similar_url(normalized_url, processed_url):
+                if is_similar_url(normalized_url, processed_url):
                     logger.info(f"Skipping similar URL in batch: {url} similar to {processed_url}")
                     is_duplicate = True
                     break
@@ -409,7 +471,7 @@ class Search:
                 # 构建最终去重的URL列表
                 for item in search_result:
                     url = item['url']
-                    normalized_url = sougou_search.normalize_url(url)
+                    normalized_url = normalize_url(url)
                     
                     # 如果URL还未被处理，添加到最终列表
                     if normalized_url not in final_url_map:

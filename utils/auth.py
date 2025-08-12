@@ -6,6 +6,11 @@ import hashlib
 import base64
 import json
 import extra_streamlit_components as stx
+try:
+    # Streamlit 1.29+ provides this to detect if we're in a ScriptRunContext
+    from streamlit.runtime.scriptrun_context import get_script_run_ctx as _get_src
+except Exception:
+    _get_src = None
 
 # Path to the user database file
 USER_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'users.pkl')
@@ -64,6 +69,24 @@ def get_cookie_manager():
         _cookie_manager = stx.CookieManager(key="supawriter_auth_cookies")
     return _cookie_manager
 
+def _has_streamlit_context() -> bool:
+    """Return True if running inside a Streamlit ScriptRunContext.
+    Tries both new and legacy locations; never assumes True in unknown cases.
+    """
+    # Try new API
+    try:
+        if _get_src is not None:
+            return _get_src() is not None
+    except Exception:
+        pass
+    # Try legacy API
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx as _legacy_src  # type: ignore
+        return _legacy_src() is not None
+    except Exception:
+        pass
+    return False
+
 def authenticate_user(username, password, remember_me=False):
     """Authenticate a user."""
     users = load_users()
@@ -103,38 +126,89 @@ def authenticate_user(username, password, remember_me=False):
     return True, "登录成功"
 
 def is_authenticated():
-    """Check if user is authenticated."""
-    # Check if user is in session state
-    if "user" in st.session_state and st.session_state.user is not None:
-        return True
-    
-    # If not in session state, try to load from cookie
+    """Check if user is authenticated.
+
+    Priority:
+    1) OAuth2 via Streamlit: st.user.is_logged_in
+    2) Legacy session/cookie fallback
+    """
+    # 1) Prefer Streamlit OAuth2 user state if available
     try:
-        cookie_manager = get_cookie_manager()
-        auth_token = cookie_manager.get("auth_token")
-        
-        if auth_token:
-            # Decode the auth token
-            auth_data = json.loads(base64.b64decode(auth_token).decode("utf-8"))
-            username = auth_data.get("username")
-            expiry = auth_data.get("expiry")
-            
-            # Check if token is still valid
-            if expiry and datetime.fromisoformat(expiry) > datetime.now():
-                # Set the user in session state
-                st.session_state.user = username
-                return True
-    except Exception as e:
+        if _has_streamlit_context() and hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
+            return True
+    except Exception:
+        pass
+
+    # 2) Legacy: Check if user is in session state (only when context exists)
+    if _has_streamlit_context():
+        if "user" in st.session_state and st.session_state.user is not None:
+            return True
+
+    # 3) Legacy: Try to load from cookie
+    try:
+        # Avoid touching Streamlit components outside context
+        if _has_streamlit_context():
+            cookie_manager = get_cookie_manager()
+            auth_token = cookie_manager.get("auth_token")
+
+            if auth_token:
+                # Decode the auth token
+                auth_data = json.loads(base64.b64decode(auth_token).decode("utf-8"))
+                username = auth_data.get("username")
+                expiry = auth_data.get("expiry")
+
+                # Check if token is still valid
+                if expiry and datetime.fromisoformat(expiry) > datetime.now():
+                    # Set the user in session state
+                    st.session_state.user = username
+                    return True
+    except Exception:
         # If there's any error parsing the auth token, ignore it
         pass
-    
+
     return False
 
-def get_current_user():
-    """Get current authenticated user."""
-    if is_authenticated():
-        return st.session_state.user
+def get_user_id():
+    """Return a stable user ID for storage and paths.
+
+    Priority: OAuth subject (sub) -> email -> legacy session username -> name.
+    """
+    try:
+        if _has_streamlit_context() and hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
+            if hasattr(st.user, "sub") and st.user.sub:
+                return st.user.sub
+            if hasattr(st.user, "email") and st.user.email:
+                return st.user.email
+            if hasattr(st.user, "name") and st.user.name:
+                return st.user.name
+    except Exception:
+        pass
+    # Avoid touching Streamlit state when no context (e.g., background threads)
+    if _has_streamlit_context():
+        if "user" in st.session_state and st.session_state.user:
+            return st.session_state.user
     return None
+
+def get_user_display_name():
+    """Return a friendly display name for UI.
+
+    Priority: OAuth name -> email -> legacy session username.
+    """
+    try:
+        if _has_streamlit_context() and hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
+            if getattr(st.user, "name", None):
+                return st.user.name
+            if getattr(st.user, "email", None):
+                return st.user.email
+    except Exception:
+        pass
+    if _has_streamlit_context() and "user" in st.session_state and st.session_state.user:
+        return st.session_state.user
+    return "用户"
+
+def get_current_user():
+    """Get current authenticated user identifier (stable ID)."""
+    return get_user_id()
 
 def get_user_motto(username=None):
     """Get user's motto. If username is None, get current user's motto."""
@@ -156,16 +230,27 @@ def get_user_motto(username=None):
     return "创作改变世界"  # 默认座右铭
 
 def logout():
-    """Log out the current user."""
-    if "user" in st.session_state:
-        st.session_state.user = None
-    
-    # Clear auth token from cookie
+    """Log out the current user.
+
+    Prefer Streamlit OAuth2 logout; also clear legacy session/cookie.
+    """
+    # OAuth2 logout if available
     try:
-        cookie_manager = get_cookie_manager()
-        cookie_manager.delete("auth_token")
-    except Exception as e:
-        # If there's any error deleting the cookie, ignore it
+        if _has_streamlit_context() and hasattr(st, "logout"):
+            st.logout()
+    except Exception:
+        pass
+
+    # Legacy session cleanup (only when context exists)
+    if _has_streamlit_context() and "user" in st.session_state:
+        st.session_state.user = None
+
+    # Clear legacy auth token from cookie
+    try:
+        if _has_streamlit_context():
+            cookie_manager = get_cookie_manager()
+            cookie_manager.delete("auth_token")
+    except Exception:
         pass
 
 def change_password(username, old_password, new_password):
@@ -192,10 +277,16 @@ def update_user_motto(username, motto):
     users = load_users()
     
     if username not in users:
-        return False, "用户不存在"
-    
-    user = users[username]
-    user.motto = motto
+        # Create a minimal user record for OAuth accounts to persist motto
+        email = None
+        try:
+            if _has_streamlit_context() and hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
+                email = getattr(st.user, "email", None)
+        except Exception:
+            pass
+        users[username] = User(username=username, password_hash="", email=email, motto=motto)
+    else:
+        users[username].motto = motto
+
     save_users(users)
-    
     return True, "座右铭更新成功"

@@ -23,7 +23,7 @@ HIDDEN_PAGES = getattr(page_settings, 'HIDDEN_PAGES', [])
 import streamlit as st
 import importlib.util
 import extra_streamlit_components as stx
-from utils.auth import is_authenticated, logout, get_cookie_manager, get_user_motto, update_user_motto
+from utils.auth import is_authenticated, logout, get_user_motto, update_user_motto, get_user_display_name
 
 # Set page configuration at the very beginning
 st.set_page_config(
@@ -166,9 +166,6 @@ def load_module(path):
 
 login_module = load_module(os.path.join(current_dir, "auth_pages", "login.py"))
 
-# Initialize cookie manager
-cookie_manager = get_cookie_manager()
-
 # Initialize session state for user if not exists
 if "user" not in st.session_state:
     st.session_state.user = None
@@ -222,12 +219,17 @@ else:
     user_motto = get_user_motto()
     
     # 使用自定义HTML样式显示用户信息
+    # Determine display name using unified helper
+    display_name = get_user_display_name()
+
+    avatar_initial = (display_name[0].upper() if isinstance(display_name, str) and display_name else "U")
+
     st.sidebar.markdown(f"""
     <div class="user-info-container">
         <div class="user-info-header">
-            <div class="user-avatar">{st.session_state.user[0].upper()}</div>
+            <div class="user-avatar">{avatar_initial}</div>
             <div>
-                <p class="user-name">{st.session_state.user}</p>
+                <p class="user-name">{display_name}</p>
                 <p class="user-status" title="座右铭">"{user_motto}"</p>
             </div>
         </div>

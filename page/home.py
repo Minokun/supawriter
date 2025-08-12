@@ -252,6 +252,26 @@ def main():
     # 添加轻量级分隔线
     st.markdown("<hr style='margin: 0.5em 0; opacity: 0.3'>", unsafe_allow_html=True)
 
+    # 修复 chat_input 在长文本时高度无限增长的问题：限制最大高度并启用滚动
+    st.markdown(
+        """
+        <style>
+        /* 限制聊天输入框的最大高度，超出部分滚动显示 */
+        div[data-testid="stChatInput"] textarea,
+        div[data-baseweb="textarea"] textarea {
+            max-height: 140px !important;
+            overflow: auto !important;
+            resize: none !important;
+        }
+        /* 容器也限制高度，防止整体被撑大 */
+        div[data-testid="stChatInput"] > div {
+            max-height: 160px !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # 直接显示聊天消息，不使用固定高度容器
     if not st.session_state.messages:
         # 如果消息为空，显示简洁的欢迎信息
@@ -296,6 +316,8 @@ def main():
                             messages.append({"role": "user", "content": m["content"]})
                     
                     try:
+                        # 确保在使用前定义变量，避免未赋值引用
+                        stream = None
                         if model_type == 'openai':
                             stream = client.chat.completions.create(
                                 model=model_name,
@@ -303,14 +325,13 @@ def main():
                                 stream=True,
                                 max_completion_tokens=8000,
                             )
-                        elif model_type == 'qwen':
+                        else:
                             stream = client.chat.completions.create(
                                 model=model_name,
                                 messages=messages,
                                 stream=True,
                                 max_tokens=8000,
                             )
-                        
                         # 处理流式响应
                         for chunk in stream:
                             if chunk.choices and len(chunk.choices) > 0:

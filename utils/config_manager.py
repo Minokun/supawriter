@@ -7,6 +7,7 @@ import logging
 import time
 from pathlib import Path
 import streamlit as st
+from utils.auth import get_current_user as auth_get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -211,14 +212,10 @@ DEFAULT_CONFIG = {
 
 def get_current_user():
     """
-    获取当前登录用户
-    
-    Returns:
-        str: 当前用户名，如果未登录则返回None
+    获取当前登录用户（兼容OAuth身份）。
+    优先使用统一的认证层标识。
     """
-    if 'username' in st.session_state:
-        return st.session_state.username
-    return None
+    return auth_get_current_user()
 
 def get_config(key=None, default_value=None):
     """
@@ -232,7 +229,7 @@ def get_config(key=None, default_value=None):
         任意类型: 配置值或整个配置字典
     """
     username = get_current_user()
-    
+
     if key is None:
         # 返回整个配置
         user_config = config_manager.load_config(username)
@@ -244,9 +241,14 @@ def get_config(key=None, default_value=None):
     else:
         # 返回特定配置值
         value = config_manager.get_config_value(key, None, username)
-        if value is None and key in DEFAULT_CONFIG:
-            return DEFAULT_CONFIG[key]
-        elif value is None:
+        if value is None:
+            # 优先回退到默认配置文件（default用户）中已保存的值
+            default_profile_value = config_manager.get_config_value(key, None, None)
+            if default_profile_value is not None:
+                return default_profile_value
+            # 最后回退到编译时的DEFAULT_CONFIG
+            if key in DEFAULT_CONFIG:
+                return DEFAULT_CONFIG[key]
             return default_value
         return value
 
@@ -262,7 +264,16 @@ def set_config(key, value):
         bool: 设置是否成功
     """
     username = get_current_user()
-    return config_manager.set_config_value(key, value, username)
+    # 先保存到当前用户配置
+    ok = config_manager.set_config_value(key, value, username)
+    # 对全局关键配置，额外写入到默认配置文件，便于无会话/后台线程读取
+    if key in ("embedding_settings", "global_model_settings"):
+        try:
+            config_manager.set_config_value(key, value, None)
+        except Exception:
+            # 仅记录，不影响主流程
+            logger.debug("Failed to mirror global config to default profile", exc_info=True)
+    return ok
 
 def get_embedding_type():
     """

@@ -12,7 +12,7 @@ st.title("Google OAuth2 Login Example")
 if not st.user.is_logged_in:
     st.write("Please log in with your Google account to continue.")
     if st.button("Login with Google", key="login"):
-        st.login()
+        st.login("google")
 else:
     # User is logged in, display user info
     user = st.user

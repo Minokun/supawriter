@@ -167,7 +167,8 @@ PROCESS_CONFIG = {
         "base_url": SECRETS['dashscope']['base_url']
     },
     "glm": {
-        "model": "glm-4.1v-thinking-flash",
+        # "model": "glm-4.1v-thinking-flash",
+        "model": "glm-4.5v",
         "api_key": SECRETS['glm']['api_key'],
         "base_url": SECRETS['glm']['base_url']
     }
@@ -175,7 +176,7 @@ PROCESS_CONFIG = {
 
 # 文章生成设置
 # 爬取网页数量默认值
-DEFAULT_SPIDER_NUM = 30
+DEFAULT_SPIDER_NUM = 15
 # 是否自动插入相关图片默认值
 DEFAULT_ENABLE_IMAGES = True
 # 图片嵌入方式 ('multimodal' 或 'direct_embedding')
