@@ -11,7 +11,7 @@ if parent_dir not in sys.path:
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
 from utils.history_utils import load_user_history, add_history_record, save_html_to_user_dir
-from llm_chat import chat
+from utils.llm_chat import chat
 from settings import LLM_MODEL, ARTICLE_TRANSFORMATIONS
 from utils.config_manager import get_config
 

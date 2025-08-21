@@ -199,11 +199,11 @@ config_manager = ConfigManager()
 # 默认配置值
 DEFAULT_CONFIG = {
     'global_model_settings': {
-        'provider': 'openai',  # 默认提供商
-        'model_name': 'gpt-3.5-turbo'  # 默认模型
+        'provider': 'kimi',  # 默认提供商
+        'model_name': 'kimi-k2-0711-preview'  # 默认模型
     },
     'embedding_settings': {
-        'type': 'xinference',  # 默认嵌入类型: gitee, xinference, jina, local
+        'type': 'gitee',  # 默认嵌入类型: gitee, xinference, jina, local
         'model': 'jina-embeddings-v4',  # 默认嵌入模型
         'dimension': 2048,  # 默认嵌入维度
         'timeout': 10  # 默认超时时间

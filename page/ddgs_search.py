@@ -4,7 +4,7 @@ import json
 import time
 import asyncio
 import nest_asyncio
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 import traceback
 
 # 确保在Streamlit环境中可以运行异步代码
@@ -258,12 +258,31 @@ def display_text_results(results):
         title = result.get("title", "无标题")
         url = result.get("href", "#")
         snippet = result.get("body", "无描述")
+        # 提取来源与时间（不同结果可能字段名不同）
+        source = (
+            result.get("source")
+            or result.get("website")
+            or result.get("publisher")
+            or result.get("hostname")
+        )
+        if not source and url and url != "#":
+            try:
+                source = urlparse(url).netloc
+            except Exception:
+                source = ""
+        date = (
+            result.get("date")
+            or result.get("published")
+            or result.get("published_time")
+            or result.get("time")
+        )
         
         st.markdown(f"""
         <div class="result-card">
             <a href="{url}" target="_blank" class="result-title">{title}</a>
             <div class="result-url">{url}</div>
             <div class="result-snippet">{snippet}</div>
+            <div><small>{(source or '')}{(' · ' + date) if date else ''}</small></div>
         </div>
         """, unsafe_allow_html=True)
 

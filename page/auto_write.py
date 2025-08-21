@@ -9,6 +9,7 @@ from utils.searxng_utils import llm_task, chat, parse_outline_json
 from utils.searxng_utils import Search
 import utils.prompt_template as pt
 from utils.image_utils import download_image, get_image_save_directory
+from utils.qiniu_utils import ensure_public_image_url
 import concurrent.futures
 import asyncio
 import nest_asyncio
@@ -27,15 +28,14 @@ from datetime import datetime
 # 配置日志
 logger = logging.getLogger(__name__)
 
-from streamlit.runtime.scriptrunner import add_script_run_ctx
 
-def generate_article_background(ctx, task_state, text_input, model_type, model_name, spider_num, custom_style, enable_images, article_title):
+def generate_article_background(task_state, text_input, model_type, model_name, spider_num, custom_style, enable_images, article_title, username: str):
     """
     在后台线程中运行的文章生成函数。
     通过更新共享的task_state字典来报告进度。
     """
-    # 将主线程的上下文附加到当前线程
-    add_script_run_ctx(threading.current_thread(), ctx)
+    # 注意：不要在后台线程中调用任何 Streamlit 的 st.* API
+    # 仅更新传入的 task_state 字典，由主线程负责渲染 UI
     
     # 导入所需模块
     import hashlib
@@ -53,9 +53,8 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
         task_state['progress'] = 0
         task_state['progress_text'] = "任务初始化..."
         
-        # --- 获取用户信息和生成文章ID ---
-        current_user = get_current_user()
-        username = current_user if current_user else "anonymous"
+        # --- 使用主线程传入的用户信息，避免在子线程中访问 Streamlit 会话 ---
+        username = username or "anonymous"
         
         # 生成文章ID（基于标题和时间戳）
         article_hash = hashlib.md5(f"{article_title}_{int(time.time())}".encode()).hexdigest()[:8]
@@ -222,8 +221,10 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
                         outline_block_str = chapter_title + "".join(outline_block.get('h2', [])) + outline_block_content_final
                         
                         # 根据配置确定图片嵌入方式
-                        is_image_url_search = DEFAULT_IMAGE_EMBEDDING_METHOD == 'direct_embedding'
-                        embedding_method_name = '直接图片URL嵌入' if is_image_url_search else '多模态嵌入'
+                        # 查询内容是纯文本，不能按图片URL处理，否则会尝试将整段文本当作URL去下载，导致失败
+                        # 因此在检索阶段始终将查询作为文本向量来计算
+                        is_image_url_search = False
+                        embedding_method_name = '直接图片URL嵌入' if DEFAULT_IMAGE_EMBEDDING_METHOD == 'direct_embedding' else '多模态嵌入'
                         
                         # 设置相似度阈值 - 从配置获取或使用默认值
                         # 可以从settings.py中获取，或在此处设置默认值
@@ -251,19 +252,21 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
                                     
                                 if isinstance(data, dict) and 'image_url' in data:
                                     image_url = data['image_url']
+                                    # 将百度/CDN等受限链接上传到七牛云，获取可公开访问的URL
+                                    public_url = ensure_public_image_url(image_url)
                                     
-                                    # 检查图片URL是否已被使用
-                                    if image_url not in used_images:
+                                    # 检查图片URL是否已被使用（基于转换后的最终URL）
+                                    if public_url not in used_images:
                                         log('info', f"找到相似度为{similarity:.4f}的图片：{image_url}")
                                         
                                         # 检查相似度是否达到阈值
                                         if similarity >= similarity_threshold:
-                                            used_images.add(image_url)
+                                            used_images.add(public_url)
                                             
                                             # 根据已插入图片数量决定插入位置
                                             if images_inserted == 0:
                                                 # 第一张图片放在章节开头
-                                                image_markdown = f"![图片]({image_url})\n\n"
+                                                image_markdown = f"![图片]({public_url})\n\n"
                                                 outline_block_content_final = image_markdown + outline_block_content_final
                                             else:
                                                 # 后续图片尝试插入到段落之间
@@ -276,12 +279,12 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
                                                     insert_position = max(insert_position, 1)  # 至少从第二段开始
                                                     
                                                     # 插入图片
-                                                    image_markdown = f"\n\n![图片]({image_url})"
+                                                    image_markdown = f"\n\n![图片]({public_url})"
                                                     paragraphs[insert_position] = paragraphs[insert_position] + image_markdown
                                                     outline_block_content_final = '\n\n'.join(paragraphs)
                                                 else:
                                                     # 如果段落不够，就添加到末尾
-                                                    image_markdown = f"\n\n![图片]({image_url})"
+                                                    image_markdown = f"\n\n![图片]({public_url})"
                                                     outline_block_content_final += image_markdown
                                             
                                             log('info', f"为章节 '{chapter_title}' 插入第 {images_inserted+1} 张图片，相似度: {similarity:.4f}")
@@ -323,11 +326,10 @@ def generate_article_background(ctx, task_state, text_input, model_type, model_n
             summary_markdown = f"> **文章概要**\n> {summary_text}\n\n"
             final_article_content = summary_markdown + final_article_content
         if final_article_content.strip():
-            current_user = get_current_user()
-            if current_user:
+            if username and username != "anonymous":
                 try:
                     add_history_record(
-                        current_user, 
+                        username, 
                         outline_summary_json['title'], 
                         final_article_content, 
                         summary=outline_summary_json.get('summary', ''), 
@@ -454,9 +456,9 @@ def main():
         enable_images = DEFAULT_ENABLE_IMAGES
         spider_num = DEFAULT_SPIDER_NUM
 
-        # 获取当前线程的上下文
-        from streamlit.runtime.scriptrunner import get_script_run_ctx
-        ctx = get_script_run_ctx()
+        # 在主线程中获取当前用户，作为子线程的只读上下文数据
+        current_user = get_current_user()
+        username = current_user if current_user else "anonymous"
 
         # 获取全局模型设置 - 从配置管理器获取
         config = get_config()
@@ -471,14 +473,13 @@ def main():
             model_type = global_settings.get('provider')
             model_name = global_settings.get('model_name')
 
-        # 创建并启动后台线程
+        # 创建并启动后台线程（不传递 Streamlit 上下文，仅传递必要数据）
         thread = threading.Thread(
             target=generate_article_background,
             name="generate_article_background", # 为线程命名
             args=(
-                ctx, # 传递上下文
                 st.session_state.article_task, text_input, model_type, model_name, 
-                spider_num, custom_style, enable_images, article_title
+                spider_num, custom_style, enable_images, article_title, username
             )
         )
         thread.start()

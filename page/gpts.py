@@ -445,6 +445,29 @@ def main():
             <a href="https://platform.deepseek.com/usage" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #3498DB, #2980B9); font-weight: 700;">进入平台</a>
         </div>
         """, unsafe_allow_html=True)
+    
+    # 第三行：新增AI模型平台
+    ai_col9, ai_col10 = st.columns(2)
+    
+    with ai_col9:
+        st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #00B894;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #00B894;">💬</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">Qwen Chat</div>
+            <div class="nav-desc" style="height: 40px;">通义千问官方对话平台，体验前沿中文大模型</div>
+            <a href="https://chat.qwen.ai/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #00B894, #00CEC9); font-weight: 700;">进入平台</a>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with ai_col10:
+        st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #FF5722;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #FF5722;">🖥️</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">超算互联网</div>
+            <div class="nav-desc" style="height: 40px;">算力与AI服务商城，一站式算力资源平台</div>
+            <a href="https://www.scnet.cn/ui/mall/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #FF5722, #FF9800); font-weight: 700;">进入平台</a>
+        </div>
+        """, unsafe_allow_html=True)
         
     # 页脚信息
     st.markdown("<br><br>", unsafe_allow_html=True)

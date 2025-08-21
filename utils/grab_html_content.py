@@ -161,6 +161,64 @@ GLOBAL_URL_MAPPING = {}
 # 格式: {content_hash: {path: file_path, urls: [url1, url2, ...]}}
 GLOBAL_CONTENT_HASH_MAPPING = {}
 
+# 使用于模型校验的最小尺寸（HEAD Content-Length），更宽松
+MIN_MODEL_IMAGE_SIZE = 5 * 1024
+
+async def is_valid_image_url_for_model(session: aiohttp.ClientSession, url: str) -> bool:
+    """通过轻量校验避免将无效/不支持的图片URL传给多模态/嵌入模型。
+    规则：
+    - 必须是http/https
+    - 过滤data:、空URL
+    - 后缀或Content-Type不得为svg
+    - 通过HEAD获取Content-Type应为image/*；若有Content-Length则不小于MIN_MODEL_IMAGE_SIZE
+    """
+    if not url:
+        return False
+    u = url.strip()
+    if u.startswith('data:'):
+        return False
+    if not (u.startswith('http://') or u.startswith('https://')):
+        return False
+    lower = u.lower()
+    # 先用后缀粗过滤svg
+    if lower.endswith('.svg') or 'format=svg' in lower:
+        return False
+    # 用HEAD验证资源可达和类型
+    try:
+        timeout = aiohttp.ClientTimeout(total=8, connect=5)
+        async with session.head(u, ssl=False, allow_redirects=True, timeout=timeout) as resp:
+            if resp.status != 200:
+                return False
+            ctype = resp.headers.get('Content-Type', '').lower()
+            # 过滤svg
+            if 'image/svg' in ctype:
+                return False
+            if not ctype.startswith('image/'):
+                return False
+            cl = resp.headers.get('Content-Length')
+            if cl is not None:
+                try:
+                    if int(cl) < MIN_MODEL_IMAGE_SIZE:
+                        return False
+                except Exception:
+                    pass
+            return True
+    except Exception:
+        # 有些服务器不支持HEAD，尝试GET前几个字节
+        try:
+            timeout = aiohttp.ClientTimeout(total=8, connect=5)
+            async with session.get(u, ssl=False, allow_redirects=True, timeout=timeout) as resp:
+                if resp.status != 200:
+                    return False
+                ctype = resp.headers.get('Content-Type', '').lower()
+                if 'image/svg' in ctype:
+                    return False
+                if not ctype.startswith('image/'):
+                    return False
+                return True
+        except Exception:
+            return False
+
 # 创建一个全局的ThreadPoolExecutor，使用线程锁保护其访问
 _EXECUTOR_LOCK = threading.Lock()
 _EXECUTOR = None
@@ -264,6 +322,86 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 image_hash_cache[normalized_img_src] = image_hash_cache[cached_url]
                 return image_hash_cache[cached_url]
         
+    # 直接URL嵌入模式：先校验，合格则无需下载，直接记录并返回
+    if use_direct_image_embedding:
+        try:
+            valid = await is_valid_image_url_for_model(session, normalized_img_src)
+        except Exception:
+            valid = False
+        if not valid:
+            logger.debug(f"Skip direct embedding due to validation failure: {normalized_img_src}")
+            if stats is not None:
+                stats['skipped'] = stats.get('skipped', 0) + 1
+            image_hash_cache[normalized_img_src] = None
+            return None
+        logger.debug(f"Fast-path direct embedding for image URL: {normalized_img_src}")
+        try:
+            data = {
+                "image_url": normalized_img_src,
+                "task_id": task_id
+            }
+            try:
+                logger.debug(f"获取FAISS索引以记录图片URL: {username}/{article_id}")
+                current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
+                before_size = current_faiss_index.get_size()
+                add_to_faiss_index(normalized_img_src, data, current_faiss_index, username=username, article_id=article_id, auto_save=True, is_image_url=True)
+                after_size = current_faiss_index.get_size()
+                if after_size > before_size:
+                    logger.debug(f"已添加图片URL到FAISS索引: {normalized_img_src}")
+            except Exception as e:
+                logger.error(f"记录图片URL到FAISS索引失败: {str(e)}")
+            result = {"image_url": normalized_img_src, "embedding_method": "direct_embedding"}
+            image_hash_cache[normalized_img_src] = result
+            stats['success'] += 1 if stats else 0
+            return result
+        except Exception as e:
+            logger.error(f"Direct embedding fast-path error: {str(e)}")
+            stats['failed'] += 1 if stats else 0
+            image_hash_cache[normalized_img_src] = None
+            return None
+
+    # 多模态模式：先校验，合格则无需下载图片内容，直接调用识别并入库
+    if is_multimodal:
+        try:
+            valid = await is_valid_image_url_for_model(session, normalized_img_src)
+        except Exception:
+            valid = False
+        if not valid:
+            logger.debug(f"Skip multimodal due to validation failure: {normalized_img_src}")
+            if stats is not None:
+                stats['skipped'] = stats.get('skipped', 0) + 1
+            image_hash_cache[normalized_img_src] = None
+            return None
+        logger.debug(f"Fast-path multimodal processing for image URL: {normalized_img_src}")
+        try:
+            result = process_image(image_url=normalized_img_src)
+            if result and isinstance(result, dict) and "describe" in result:
+                description = result.get("describe", "")
+                if description and len(description) > 10:
+                    data = {"image_url": normalized_img_src, "task_id": task_id, "description": description}
+                    try:
+                        current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
+                        before_size = current_faiss_index.get_size()
+                        add_to_faiss_index(description, data, current_faiss_index, username=username, article_id=article_id, auto_save=True)
+                        after_size = current_faiss_index.get_size()
+                        if after_size > before_size:
+                            logger.debug(f"已添加图片描述到FAISS索引: {normalized_img_src}")
+                    except Exception as e:
+                        logger.error(f"记录图片描述到FAISS索引失败: {str(e)}")
+                image_hash_cache[normalized_img_src] = result
+                stats['success'] += 1 if stats else 0
+                return result
+            else:
+                logger.debug(f"Multimodal returned empty/invalid for {normalized_img_src}")
+                image_hash_cache[normalized_img_src] = None
+                stats['failed'] += 1 if stats else 0
+                return None
+        except Exception as e:
+            logger.error(f"Multimodal fast-path error: {str(e)}")
+            image_hash_cache[normalized_img_src] = None
+            stats['failed'] += 1 if stats else 0
+            return None
+
     try:
         # 设置基础请求头，模拟浏览器行为
         user_agents = [
@@ -524,8 +662,8 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 return False
                 
             except Exception as e:
-                # logger.warning(f"Failed to check image dimensions for {img_src}: {str(e)}")
-                return True  # 出错时跳过图片
+                # 无法通过PIL识别（如SVG等），不强制跳过，允许后续流程处理
+                return False
         
         # 如果应该跳过该图片
         if should_skip_image():
@@ -620,9 +758,9 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                             logger.debug(f"添加图片后FAISS索引大小: {after_size}，增加: {after_size - before_size}")
                             
                             if after_size > before_size:
-                                logger.debug(f"成功添加图片到FAISS索引 {username}/{article_id}: {img_src[:50]}...")
+                                logger.info(f"成功添加图片到FAISS索引 {username}/{article_id}: 数量：{after_size}")
                             else:
-                                logger.warning(f"图片似乎未成功添加到FAISS索引: {img_src[:50]}...")
+                                logger.warning(f"图片似乎未成功添加到FAISS索引: {after_size}...")
                                 
                         except Exception as e:
                             logger.error(f"添加图片到FAISS索引失败: {str(e)}")
@@ -995,28 +1133,113 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
             except Exception as e:
                 logger.warning(f"Error extracting base URL: {str(e)}")
                 
-            # 初始化统计字典
+            # 收集更全面的图片URL来源
+            img_src_candidates = []
+
+            # 1) 常规 <img> 标签
+            for img in img_tags:
+                candidates = set()
+
+                # src
+                val = (img.get('src') or '').strip()
+                if val:
+                    candidates.add(val)
+
+                # 常见的懒加载与自定义属性
+                for attr in ['data-src', 'data-original', 'data-actualsrc', 'data-orig-src', 'data-lazy-src', 'data-image', 'data-url']:
+                    v = (img.get(attr) or '').strip()
+                    if v:
+                        candidates.add(v)
+
+                # srcset（选择最大分辨率或最后一个）
+                srcset = (img.get('srcset') or '').strip()
+                if srcset:
+                    try:
+                        parts = [p.strip() for p in srcset.split(',') if p.strip()]
+                        # 提取 (url, descriptor)，优先包含 'w' 的最大，否则取最后一个
+                        parsed = []
+                        for p in parts:
+                            seg = p.split()
+                            if len(seg) >= 1:
+                                url = seg[0]
+                                desc = seg[1] if len(seg) > 1 else ''
+                                parsed.append((url, desc))
+                        # 选择最大 w 值
+                        best = None
+                        maxw = -1
+                        for url, desc in parsed:
+                            if desc.endswith('w'):
+                                try:
+                                    w = int(desc[:-1])
+                                    if w > maxw:
+                                        maxw = w
+                                        best = url
+                                except:
+                                    pass
+                        if not best and parsed:
+                            best = parsed[-1][0]
+                        if best:
+                            candidates.add(best)
+                    except Exception:
+                        pass
+
+                # 父级 <a> 可能直接链接图片
+                parent = img.parent
+                if parent and getattr(parent, 'name', '').lower() == 'a':
+                    href = (parent.get('href') or '').strip()
+                    if href and any(href.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']):
+                        candidates.add(href)
+
+                # 去重后加入全局候选
+                for c in candidates:
+                    img_src_candidates.append(c)
+
+            # 2) <picture> 中的 <source srcset>
+            for picture in soup.find_all('picture'):
+                for source in picture.find_all('source'):
+                    srcset = (source.get('srcset') or '').strip()
+                    if srcset:
+                        try:
+                            parts = [p.strip() for p in srcset.split(',') if p.strip()]
+                            for p in parts:
+                                url = p.split()[0]
+                                if url:
+                                    img_src_candidates.append(url)
+                        except Exception:
+                            pass
+
+            # 3) CSS 背景图片 url(...) 提取
+            for elem in soup.find_all(style=True):
+                style = elem.get('style') or ''
+                # 简单提取 url('...') / url("...") / url(...)
+                urls = re.findall(r"url\((?:'|\")?(.*?)(?:'|\")?\)", style)
+                for u in urls:
+                    if u:
+                        img_src_candidates.append(u)
+
+            # 去重
+            unique_candidates = []
+            seen = set()
+            for u in img_src_candidates:
+                if not u:
+                    continue
+                if u in seen:
+                    continue
+                seen.add(u)
+                unique_candidates.append(u)
+
+            # 初始化统计字典（以候选URL数为准）
             stats = {
-                'total': len(img_tags),
+                'total': len(unique_candidates),
                 'success': 0,
                 'failed': 0,
                 'cached': 0,
                 'skipped': 0
             }
-            
-            # 处理所有图片标签
-            for img in img_tags:
-                img_src = img.get('src', '')
-                
-                # 检查图片URL是否为空
-                if not img_src or img_src.strip() == '':
-                    stats['skipped'] += 1
-                    continue
-                    
-                # 直接传递原始img_src，让download_image函数处理URL规范化
-                
-                # 创建异步任务，传递base_url、用户名和文章ID
-                task = download_image(session, img_src, image_hash_cache, task_id, is_multimodal, use_direct_image_embedding, theme, stats, base_url, username, article_id)
+
+            # 创建下载/处理任务
+            for candidate in unique_candidates:
+                task = download_image(session, candidate, image_hash_cache, task_id, is_multimodal, use_direct_image_embedding, theme, stats, base_url, username, article_id)
                 img_tasks.append(task)
             
             # 等待所有图片下载完成

@@ -3,11 +3,12 @@ import sys
 import logging
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
-from utils.history_utils import load_user_history, save_html_to_user_dir
+from utils.history_utils import load_user_history, save_html_to_user_dir, sanitize_filename
 from utils.playwright_utils import take_webpage_screenshot_sync
 from settings import ARTICLE_TRANSFORMATIONS, HISTORY_FILTER_BASE_OPTIONS, HTML_NGINX_BASE_URL
 import os
 import time
+from urllib.parse import quote
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -115,8 +116,9 @@ def main():
                     </html>"""
                     html_content = wrapped_content
                 
-                # 生成唯一文件名
-                html_filename = f"{record.get('topic', 'article').replace(' ', '_')}_{record['id']}.html"
+                # 生成唯一文件名并进行清洗，避免非法字符或路径分隔符
+                raw_filename = f"{record.get('topic', 'article').replace(' ', '_')}_{record['id']}.html"
+                html_filename = sanitize_filename(raw_filename)
                 
                 # 检查文件是否已经存在
                 user_html_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'html', current_user)
@@ -129,9 +131,10 @@ def main():
                     # 如果文件已存在，只生成URL路径
                     url_path = f"{current_user}/{html_filename}"
                 
-                # 生成可访问的URL
+                # 生成可访问的URL（对路径进行URL编码，避免%等特殊字符导致的Nginx访问问题）
                 base_url = HTML_NGINX_BASE_URL  # 根据nginx配置调整
-                article_url = f"{base_url}{url_path}"
+                safe_url_path = f"{quote(current_user)}/{quote(html_filename)}"
+                article_url = f"{base_url}{safe_url_path}"
                 
                 # 创建四列布局，分别放置预览链接、下载按钮、截图按钮和删除按钮
                 col1, col2, col3, col4 = st.columns([1, 1, 1, 1])

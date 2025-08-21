@@ -4,6 +4,11 @@ import os
 import sys
 import streamlit as st
 from openai import OpenAI
+import logging
+
+for name, l in logging.root.manager.loggerDict.items():
+    if "streamlit" in name:
+        l.disabled = True
 
 base_path = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(base_path)
@@ -139,7 +144,7 @@ def get_embedding_config():
         },
         'xinference': {
             'model': current_model,
-            'host': SECRETS['xinference']['base_url'] + '/embeddings',
+            'host': 'http://10.10.10.90:7009/v1' + '/embeddings',
             'api_key': SECRETS['xinference']['api_key'],
             'timeout': current_timeout
         },
@@ -176,8 +181,8 @@ PROCESS_CONFIG = {
 
 # 文章生成设置
 # 爬取网页数量默认值
-DEFAULT_SPIDER_NUM = 15
+DEFAULT_SPIDER_NUM = 30
 # 是否自动插入相关图片默认值
 DEFAULT_ENABLE_IMAGES = True
 # 图片嵌入方式 ('multimodal' 或 'direct_embedding')
-DEFAULT_IMAGE_EMBEDDING_METHOD = 'multimodal'
+DEFAULT_IMAGE_EMBEDDING_METHOD = 'direct_embedding'

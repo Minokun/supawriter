@@ -91,14 +91,13 @@ def is_similar_url(a: str, b: str) -> bool:
     return pra.path == prb.path
 
 # 本地导入
-from settings import base_path, LLM_MODEL
+from settings import base_path, LLM_MODEL, DEFAULT_SPIDER_NUM
 from grab_html_content import get_main_content
-from llm_chat import chat
+from utils.llm_chat import chat
 import prompt_template
 from utils.embedding_utils import Embedding
 
 max_workers = 20
-search_result_num = 30
 
 # 注意：不再使用全局URL去重，改为任务级别的去重，确保每次文章生成都是独立的搜索
 # GLOBAL_PROCESSED_URLS = set()  # 已移除全局去重
@@ -189,7 +188,7 @@ def llm_task(search_result, question, output_type, model_type, model_name, max_w
         title = item.get('title', 'Untitled')
         
         # 记录处理的内容信息
-        logger.info(f"处理搜索结果: 标题='{title[:30]}...', 内容长度={len(content)}, 相关性得分={item.get('relevance_score', 0)}")
+        logger.debug(f"处理搜索结果: 标题='{title[:30]}...', 内容长度={len(content)}, 相关性得分={item.get('relevance_score', 0)}")
         
         if len(content) >= MAX_CONTENT_LENGTH:
             # 对于大型内容，保留原始URL和相关性得分
@@ -311,7 +310,7 @@ def llm_task(search_result, question, output_type, model_type, model_name, max_w
         return outlines
 
 class Search:
-    def __init__(self, result_num=5):
+    def __init__(self, result_num=DEFAULT_SPIDER_NUM):
         """
         初始化搜索引擎类，设置默认结果数量
         :param result_num: 搜索结果数量，默认为8
@@ -375,7 +374,8 @@ class Search:
         self.search_query = question
 
         # 搜索词优化
-        optimizeq = chat(self.search_query, system_prompt="对这句话做一个搜索查询语句优化：“简明扼要的介绍一下openai发布最新的gpt-5模型性能水平和提升”。请优化一下变成输入搜索引擎用的查询词，以便更好的抓住重点信息的查询，直接生成一个适合用在谷歌或必应上的高效搜索语法版本，把它做成带引号和逻辑运算符的高级搜索。直接输出优化后的语句，不要解释")
+        optimizeq = chat(self.search_query, system_prompt="你是一个资深搜索引擎搜索词优化专员，深知如何将用户输入的查询词优化成输入搜索引擎用的查询词，以便更好的抓住重点信息的查询，直接生成一个适合用在谷歌或必应上的高效搜索语法版本，把它做成带引号和逻辑运算符的高级搜索。直接输出优化后的语句，不要解释")
+        logger.info(f"优化前的搜索词: {self.search_query}")
         logger.info(f"优化后的搜索词: {optimizeq}") 
         
         # 发送请求到SearXNG搜索引擎
@@ -451,8 +451,8 @@ class Search:
             # 按相关性分数降序排序
             scored_results.sort(key=lambda x: x[1], reverse=True)
             
-            # 提取排序后的结果
-            for i, score in scored_results:
+            # 提取排序后的结果（限制数量）
+            for i, score in scored_results[:self.result_num]:
                 url_display = i['url'][:37] + '...' if len(i['url']) > 40 else i['url']
                 print(f"{url_display} - 相关度: {score:.2f} - {i['title']}")
                 search_result.append({
@@ -478,7 +478,10 @@ class Search:
                         final_urls.append(url)
                         final_url_map[normalized_url] = url
                 
-                logger.info(f"Final deduplicated URLs for content grabbing: {len(final_urls)}")
+                # 限制最终抓取数量
+                if len(final_urls) > self.result_num:
+                    final_urls = final_urls[:self.result_num]
+                logger.info(f"Final deduplicated URLs for content grabbing (limited to {self.result_num}): {len(final_urls)}")
                 
                 # 爬取内容
                 result, task_id = asyncio.run(get_main_content(final_urls, is_multimodal=is_multimodal, use_direct_image_embedding=use_direct_image_embedding, theme=theme, progress_callback=progress_callback, username=username, article_id=article_id))
@@ -500,7 +503,7 @@ class Search:
                     images = item.get('images', [])
                     
                     # 记录内容长度，帮助诊断零长度内容问题
-                    logger.info(f"Content for URL {url}: original length={len(original_content)}, processed length={len(content_for_storage)}")
+                    logger.debug(f"Content for URL {url}: original length={len(original_content)}, processed length={len(content_for_storage)}")
                     
                     # 存储内容和图片
                     if content_for_storage:
@@ -508,7 +511,7 @@ class Search:
                         if original_url != url:
                             html_content_dict[original_url] = content_for_storage
                     else:
-                        logger.warning(f"Empty content for URL: {url} (original URL: {original_url})")
+                        logger.debug(f"Empty content for URL: {url} (original URL: {original_url})")
                     
                     # 存储图片
                     if images:
@@ -523,7 +526,7 @@ class Search:
                     # 添加HTML内容
                     if url in html_content_dict:
                         item['html_content'] += html_content_dict[url]
-                        logger.info(f"Added content for URL: {url}, content length: {len(html_content_dict[url])}")
+                        logger.debug(f"Added content for URL: {url}, content length: {len(html_content_dict[url])}")
                     else:
                         # 尝试匹配部分URL
                         matched = False
@@ -532,7 +535,7 @@ class Search:
                             if url in crawled_url or crawled_url in url or \
                                urlparse(url).netloc == urlparse(crawled_url).netloc:
                                 item['html_content'] += html_content_dict[crawled_url]
-                                logger.info(f"Found partial match for content: {url} -> {crawled_url}, content length: {len(html_content_dict[crawled_url])}")
+                                logger.debug(f"Found partial match for content: {url} -> {crawled_url}, content length: {len(html_content_dict[crawled_url])}")
                                 matched = True
                                 break
                     

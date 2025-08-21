@@ -4,6 +4,7 @@ import logging
 import numpy as np
 import faiss
 from typing import List, Dict, Any, Tuple, Optional, Union
+import base64
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from settings import get_embedding_type, get_embedding_config, get_embedding_dimension, DEFAULT_IMAGE_EMBEDDING_METHOD
 import requests
@@ -17,7 +18,24 @@ class Embedding:
         embedding_config = get_embedding_config()
         
         if is_image_url:
-            data = [{"image": url} for url in data]
+            # Convert image URLs to Base64-encoded image data (data URL)
+            def _url_to_data_image(url: str) -> Dict[str, str]:
+                try:
+                    timeout = embedding_config.get(embedding_type, {}).get('timeout', 10)
+                    resp = requests.get(url, timeout=timeout)
+                    resp.raise_for_status()
+                    # Determine MIME type, default to image/jpeg if unknown
+                    mime = resp.headers.get('Content-Type', 'image/jpeg')
+                    if not mime or not mime.startswith('image/'):
+                        mime = 'image/jpeg'
+                    b64 = base64.b64encode(resp.content).decode('utf-8')
+                    return {"image": f"data:{mime};base64,{b64}"}
+                except Exception as e:
+                    logger.warning(f"Failed to fetch/encode image from URL: {url}. Falling back to URL. Error: {e}")
+                    # Fallback to original URL if encoding fails
+                    return {"image": url}
+
+            data = [_url_to_data_image(url) for url in data]
         # Defensive: ensure selected embedding_type exists in config
         if embedding_type not in embedding_config:
             logger.error(f"未在EMBEDDING_CONFIG中找到embedding类型: {embedding_type}")
@@ -30,11 +48,12 @@ class Embedding:
 
         # Handle direct image URL embedding with jina-embeddings-v4
         # 只要模型是jina-embeddings-v4且is_image_url为true就可以直接图片用嵌入向量的方式，与embedding_type无关
-        if embedding_type in ("gitee", "xinference"):
+        if embedding_type == "xinference":
             # OpenAI-compatible providers usually require only model + input
             request_data = {
                 'model': embedding_config[embedding_type]['model'],
-                'input': data
+                'input': data,
+                'task': "retrieval" 
             }
         elif embedding_type == "jina":
             # Jina embeddings may accept an optional task for text retrieval
@@ -48,7 +67,8 @@ class Embedding:
             # Fallback: do not send unsupported fields like 'task'
             request_data = {
                 'model': embedding_config[embedding_type]['model'],
-                'input': data
+                'input': data,
+                'encoding_format': "float"
             }
             
         logger.info(f"发送请求到 {url}，提供商: {embedding_type}，模型: {embedding_config[embedding_type]['model']}")
