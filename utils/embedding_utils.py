@@ -5,6 +5,8 @@ import numpy as np
 import faiss
 from typing import List, Dict, Any, Tuple, Optional, Union
 import base64
+import time
+from urllib.parse import urlparse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from settings import get_embedding_type, get_embedding_config, get_embedding_dimension, DEFAULT_IMAGE_EMBEDDING_METHOD
 import requests
@@ -20,20 +22,32 @@ class Embedding:
         if is_image_url:
             # Convert image URLs to Base64-encoded image data (data URL)
             def _url_to_data_image(url: str) -> Dict[str, str]:
+                timeout = embedding_config.get(embedding_type, {}).get('timeout', 10)
+                # Build realistic headers to avoid 403 from CDNs
+                parsed = urlparse(url)
+                referer = f"{parsed.scheme}://{parsed.netloc}"
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+                    'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    'Referer': referer,
+                    'Connection': 'keep-alive',
+                }
                 try:
-                    timeout = embedding_config.get(embedding_type, {}).get('timeout', 10)
-                    resp = requests.get(url, timeout=timeout)
+                    resp = requests.get(url, timeout=timeout, headers=headers)
                     resp.raise_for_status()
-                    # Determine MIME type, default to image/jpeg if unknown
                     mime = resp.headers.get('Content-Type', 'image/jpeg')
                     if not mime or not mime.startswith('image/'):
                         mime = 'image/jpeg'
                     b64 = base64.b64encode(resp.content).decode('utf-8')
                     return {"image": f"data:{mime};base64,{b64}"}
+                except requests.HTTPError as e:
+                    status = getattr(e.response, 'status_code', None)
+                    logger.warning(f"Failed to fetch image (HTTP {status}): {url}")
                 except Exception as e:
-                    logger.warning(f"Failed to fetch/encode image from URL: {url}. Falling back to URL. Error: {e}")
-                    # Fallback to original URL if encoding fails
-                    return {"image": url}
+                    logger.warning(f"Failed to fetch image: {url}. Error: {e}")
+                # Fallback to original URL if encoding fails
+                return {"image": url}
 
             data = [_url_to_data_image(url) for url in data]
         # Defensive: ensure selected embedding_type exists in config
@@ -71,8 +85,11 @@ class Embedding:
                 'encoding_format': "float"
             }
             
-        logger.info(f"发送请求到 {url}，提供商: {embedding_type}，模型: {embedding_config[embedding_type]['model']}")
         response = requests.post(url, headers=headers, json=request_data, timeout=embedding_config[embedding_type]['timeout'])
+        logger.info(
+            f"已发送请求到 {url}，提供商: {embedding_type}，模型: {embedding_config[embedding_type]['model']}，"
+            f"状态码: {response.status_code}，成功: {response.ok}"
+        )
         
         response_json = response.json()
         logger.debug(f"API响应状态码: {response.status_code}")

@@ -349,13 +349,37 @@ def main():
             <a href="https://www.liblib.art/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #3498db, #2980b9); font-weight: 700;">开始创作</a>
         </div>
         """, unsafe_allow_html=True)
-    
+
+    # 新增创作工具：Google AI Studio 与 Runninghub 生图
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    tools_col1, tools_col2 = st.columns(2)
+
+    with tools_col1:
+        st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #4285F4;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #4285F4;">🧪</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">Google AI Studio</div>
+            <div class="nav-desc" style="height: 40px;">谷歌模型与提示创作平台，支持多模型测试与部署</div>
+            <a href="https://aistudio.google.com/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #4285F4, #34A853); font-weight: 700;">打开平台</a>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with tools_col2:
+        st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #2ECC71;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #2ECC71;">🖼️</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">Runninghub 生图</div>
+            <div class="nav-desc" style="height: 40px;">国内生图平台，支持多风格高质量图像生成</div>
+            <a href="https://www.runninghub.cn/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #2ECC71, #27AE60); font-weight: 700;">开始创作</a>
+        </div>
+        """, unsafe_allow_html=True)
+
     # AI模型平台区域
     st.markdown("""
     <div class="section-title" style="background: linear-gradient(90deg, #3a1c71, #d76d77, #ffaf7b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700; font-size: 1.8rem; margin: 1.5rem 0;">
         🧠 AI模型云平台
     </div>
-    <p style="text-align: center; margin-bottom: 2rem; color: #555; font-size: 1rem;">探索前沿的AI模型与应用，加速您的创作与创新</p>
     """, unsafe_allow_html=True)
     
     # 第一行：AI模型平台

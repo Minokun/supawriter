@@ -13,12 +13,8 @@ try:
 except RuntimeError:
     pass
 
-# 尝试导入ddgs，如果不存在则提示安装
-try:
-    from ddgs import DDGS
-except ImportError:
-    st.error("请先安装DDGS库: `pip install ddgs`")
-    st.stop()
+# 使用工具层封装的DDGS接口，避免页面直接依赖第三方库
+from utils.ddgs_utils import search_ddgs as util_search_ddgs
 
 @require_auth
 def main():
@@ -191,24 +187,13 @@ def main():
         )
 
 def search_ddgs(query, search_type, max_results=30):
-    """使用DDGS执行搜索"""
-    results = []
-    
+    """使用DDGS执行搜索（调用utils封装）"""
     try:
-        with DDGS() as ddgs:
-            if search_type == "text":
-                results = list(ddgs.text(query, max_results=max_results))
-            elif search_type == "images":
-                results = list(ddgs.images(query, max_results=max_results))
-            elif search_type == "videos":
-                results = list(ddgs.videos(query, max_results=max_results))
-            elif search_type == "news":
-                results = list(ddgs.news(query, max_results=max_results))
+        return util_search_ddgs(query, search_type, max_results=max_results)
     except Exception as e:
         st.error(f"DDGS搜索出错: {str(e)}")
         st.code(traceback.format_exc())
-    
-    return results
+        return []
 
 def display_search_results(results, search_type, page=1):
     """显示搜索结果"""

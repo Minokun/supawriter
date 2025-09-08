@@ -95,7 +95,14 @@ from settings import base_path, LLM_MODEL, DEFAULT_SPIDER_NUM
 from grab_html_content import get_main_content
 from utils.llm_chat import chat
 import prompt_template
-from utils.embedding_utils import Embedding
+from utils.embedding_utils import (
+    Embedding,
+    add_batch_embeddings_to_faiss_index,
+    save_faiss_index,
+    add_to_faiss_index,
+)
+from utils.embedding_utils import create_faiss_index
+from utils.image_search_indexer import index_ddgs_images
 
 max_workers = 20
 
@@ -318,6 +325,7 @@ class Search:
         self.search_url = "http://localhost:8080"  # 搜索引擎URL
         self.result_num = result_num  # 结果数量
         self.search_query = ""
+        self.optimized_query = ""
 
     def deduplicate_urls(self, urls_with_data, key='url'):
         """
@@ -377,6 +385,8 @@ class Search:
         optimizeq = chat(self.search_query, system_prompt="你是一个资深搜索引擎搜索词优化专员，深知如何将用户输入的查询词优化成输入搜索引擎用的查询词，以便更好的抓住重点信息的查询，直接生成一个适合用在谷歌或必应上的高效搜索语法版本，把它做成带引号和逻辑运算符的高级搜索。直接输出优化后的语句，不要解释")
         logger.info(f"优化前的搜索词: {self.search_query}")
         logger.info(f"优化后的搜索词: {optimizeq}") 
+        # 保存优化后的搜索词
+        self.optimized_query = optimizeq
         
         # 发送请求到SearXNG搜索引擎
         params = {
@@ -423,7 +433,7 @@ class Search:
             
             # 从原始查询文本中提取关键词，用于相关性过滤
             original_keywords = set(re.findall(r'\w+', question))
-            optimized_keywords = set(re.findall(r'\w+', self.search_query))
+            optimized_keywords = set(re.findall(r'\\w+', (self.optimized_query or self.search_query)))
             important_keywords = original_keywords.union(optimized_keywords)
             
             # 将结果按相关性评分排序
@@ -554,49 +564,108 @@ class Search:
                                urlparse(url).netloc == urlparse(crawled_url).netloc:
                                 item['images'] = images
                                 logger.info(f"Found partial match for images: {url} -> {crawled_url}")
-                                matched = True
-                                break
-                        
-                        if not matched and url not in image_dict:
-                            logger.debug(f"No images found for URL: {url}")
+                # 抓取与映射完成后，触发DDGS图片补充并写入用户/文章FAISS索引（若提供）
+                try:
+                    # 仅在直接URL嵌入模式下进行“批量URL嵌入”；多模态模式应逐图识别，不进行批量URL嵌入
+                    # 先对本次抓取到的网页图片执行批量嵌入与入库（每批最多30）
+                    try:
+                        if username and article_id and image_dict and (use_direct_image_embedding and not is_multimodal):
+                            faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss', username=username, article_id=article_id)
+                            # 收集所有图片URL与其来源页面
+                            all_image_pairs = []  # [(img_url, page_url)]
+                            for page_url, imgs in image_dict.items():
+                                for img_url in imgs:
+                                    if isinstance(img_url, str) and img_url.startswith(('http://', 'https://')) and not img_url.lower().endswith('.svg'):
+                                        all_image_pairs.append((img_url, page_url))
+                            # 去重，保持顺序
+                            seen = set()
+                            unique_image_pairs = []
+                            for img_url, page_url in all_image_pairs:
+                                if img_url not in seen:
+                                    seen.add(img_url)
+                                    unique_image_pairs.append((img_url, page_url))
+                            if unique_image_pairs:
+                                chunk_size = 30
+                                batch_added = 0
+                                fallback_added = 0
+                                skipped = 0
+                                total = len(unique_image_pairs)
+                                logger.info(f"开始对抓取到的网页图片执行批量嵌入：共 {total} 张，批大小 {chunk_size}")
+                                for i in range(0, total, chunk_size):
+                                    chunk = unique_image_pairs[i:i+chunk_size]
+                                    urls_batch = [u for (u, _) in chunk]
+                                    data_batch = [{
+                                        'image_url': u,
+                                        'source_url': p,
+                                        'source': 'searxng_crawl',
+                                        'embedding_method': 'batch_image_url'
+                                    } for (u, p) in chunk]
+                                    try:
+                                        embeddings = Embedding().get_embedding(urls_batch, is_image_url=True)
+                                    except Exception as e:
+                                        embeddings = []
+                                        logger.warning(f"批量获取图片嵌入失败（{i}-{i+len(chunk)}）: {e}")
+                                    valid_embeds = []
+                                    valid_data = []
+                                    if embeddings and len(embeddings) == len(urls_batch):
+                                        for emb, data_obj in zip(embeddings, data_batch):
+                                            if emb:
+                                                valid_embeds.append(emb)
+                                                valid_data.append(data_obj)
+                                            else:
+                                                skipped += 1
+                                        if valid_embeds:
+                                            before = faiss_index.get_size()
+                                            add_batch_embeddings_to_faiss_index(valid_embeds, valid_data, faiss_index)
+                                            added_now = faiss_index.get_size() - before
+                                            batch_added += max(0, added_now)
+                                    else:
+                                        # 批量失败或返回数量不匹配，对每个进行回退处理
+                                        logger.debug(f"批量嵌入返回无效或数量不一致，启用逐项回退（{i}-{i+len(chunk)}）")
+                                        for (u, p) in chunk:
+                                            try:
+                                                ok = add_to_faiss_index(u, {
+                                                    'image_url': u,
+                                                    'source_url': p,
+                                                    'source': 'searxng_crawl',
+                                                    'embedding_method': 'fallback_single_image_url'
+                                                }, faiss_index, auto_save=False, username=username, article_id=article_id, is_image_url=True)
+                                                if ok:
+                                                    fallback_added += 1
+                                                else:
+                                                    skipped += 1
+                                            except Exception as e:
+                                                skipped += 1
+                                                logger.debug(f"单图回退嵌入失败: {u}, 错误: {e}")
+                                # 全部批次完成后统一保存一次
+                                try:
+                                    save_faiss_index(faiss_index, username=username, article_id=article_id)
+                                except Exception as e:
+                                    logger.warning(f"保存FAISS索引失败: {e}")
+                                logger.info(f"网页图片批量嵌入完成：批量新增 {batch_added}，回退新增 {fallback_added}，跳过/失败 {skipped}，总计处理 {total}")
+                    except Exception as e:
+                        logger.error(f"网页图片批量嵌入阶段出错: {e}")
+                    # 然后触发DDGS图片补充
+                    if username and article_id:
+                        faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss', username=username, article_id=article_id)
+                        query_for_ddgs = theme or (self.optimized_query or question)
+                        logger.info(f"触发DDGS图片补充：query='{query_for_ddgs}', user='{username}', article='{article_id}'")
+                        ddgs_added = index_ddgs_images(
+                            query=query_for_ddgs,
+                            faiss_index=faiss_index,
+                            username=username,
+                            article_id=article_id,
+                            max_results=30,
+                            chunk_size=10,
+                            log_fn=lambda level, msg: getattr(logger, level if level in ("info","warning","error","debug") else "info")(msg)
+                        )
+                        logger.info(f"DDGS图片补充完成，新增 {ddgs_added} 条。")
+                except Exception as e:
+                    logger.error(f"DDGS图片补充阶段出错: {e}")
+            # 返回整合后的结果
             return search_result
-        else:
-            return None
-
-    def run(self, question, output_type=prompt_template.ARTICLE, return_type='search'):
-        """
-        主函数，负责整个程序的流程
-        return_type:
-            search 返回搜索引擎的结果
-            search_spider 返回搜索后并爬取页面的内容的结果
-            search_spider_summary 返回搜索-爬取-总结后的结果
-        """
-        print('搜索中......')
-        # 创建Search实例并获取搜索结果
-        if return_type == 'search':
-            return self.get_search_result(question)
-        # 获取搜索结果
-        # 中文查询
-        search_result = self.get_search_result(question, is_multimodal=False, theme=question)
-        print('抓取完成开始形成摘要......')
-        # 使用线程池并发处理结果
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(process_result, i['html_content'], question, output_type) for i in search_result]
-        # 收集并合并结果
-        lock = threading.Lock()
-        combine_contents = ""
-        for future in concurrent.futures.as_completed(futures):
-            with lock:
-                combine_contents += future.result()
-        if return_type == 'search_spider':
-            return combine_contents
-        print('汇总中......')
-        if return_type == 'search_spider_summary':
-            # 生成最终结果
-            result = chat(f'<topic>{question}</topic> <content>{combine_contents}</content>',
-                                prompt_template.ARTICLE_FINAL)
-            print(result)
-            return result
+        # 如果没有可爬取的URL，也直接返回（仍可由调用方决定是否触发DDGS）
+        return search_result
 
     def auto_writer(self, prompt, outline_summary=''):
         """
@@ -642,7 +711,7 @@ class Search:
                         # 第一章不要包含h1和h2标题
                         # 根据抓取的内容资料生成内容
                         task = h1 + '之' + h2[0]  # 只取第一个h2
-                        question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {task} <<<，注意不要包含任何标题，直接开始正文内容',
+                        question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {task} <<<，注意不要包含任何标题，直接开始正文内容'
                         outline_block_content = llm_task(search_result, question=question, output_type=prompt_template.ARTICLE_OUTLINE_BLOCK)
                         outline_block_content_final = chat(f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{task}，注意不要包含任何标题（不要包含h1和h2标题），直接开始正文内容',
                                            prompt_template.ARTICLE_OUTLINE_BLOCK)
@@ -653,7 +722,7 @@ class Search:
                         # 处理第一章的其余h2（如果有）
                         for j in h2[1:]:
                             task = h1 + '之' + j
-                            question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {task} <<<',
+                            question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {task} <<<'
                             outline_block_content = llm_task(search_result, question=question, output_type=prompt_template.ARTICLE_OUTLINE_BLOCK)
                             outline_block_content_final = chat(f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{task}',
                                                prompt_template.ARTICLE_OUTLINE_BLOCK)
@@ -664,7 +733,7 @@ class Search:
                         for j in h2:
                             # 根据抓取的内容资料生成内容
                             task = h1 + '之' + j
-                            question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {task} <<<',
+                            question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {task} <<<'
                             outline_block_content = llm_task(search_result, question=question, output_type=prompt_template.ARTICLE_OUTLINE_BLOCK)
                             outline_block_content_final = chat(f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{task}',
                                                prompt_template.ARTICLE_OUTLINE_BLOCK)
@@ -676,6 +745,83 @@ class Search:
             # 捕获连接错误并重新抛出，以便上层处理
             print(f"LLM模型连接失败: {str(e)}")
             raise
+
+def try_load(s: str):
+    """
+    安全加载JSON字符串：
+    - 首选 json.loads
+    - 失败后执行常见清洗：单引号->双引号、移除尾随逗号、移除控制字符
+    - 尝试修复 content_outline 末尾缺失的 ] 或整体缺失的 }
+    - 回退到 ast.literal_eval 以处理类JSON
+    - 仍失败则抛出带上下文的信息化异常，交由上层处理。
+    """
+    # 第一次直接尝试标准JSON
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+
+    # 常见清洗与修复
+    import re as _re
+    cleaned = s.replace("'", '"')
+    cleaned = _re.sub(r",\s*([}\]])", r"\1", cleaned)  # 移除 ,] 或 ,}
+    cleaned = _re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", cleaned)  # 控制字符
+
+    # 处理中文/字母/数字之间未转义的双引号，如 从"能用"到"好用"，避免破坏JSON字符串
+    # 仅在引号两侧是中日韩字符或字母数字时进行转义，尽量避免影响键名等结构
+    try:
+        cleaned = _re.sub(r'(?<=[\u4e00-\u9fffA-Za-z0-9])\"(?=[\u4e00-\u9fffA-Za-z0-9])', r'\\"', cleaned)
+    except Exception:
+        pass
+
+    # content_outline 尾部修补
+    try:
+        co_key = '"content_outline"'
+        co_pos = cleaned.find(co_key)
+        if co_pos != -1:
+            arr_start = cleaned.find('[', co_pos)
+            if arr_start != -1:
+                last_obj_end = cleaned.rfind('}')
+                last_arr_end = cleaned.rfind(']')
+                if last_arr_end == -1 or last_arr_end < last_obj_end:
+                    # 截断到最后一个对象闭合，并补上 "]}"
+                    trunc = cleaned[:last_obj_end + 1]
+                    prefix = trunc[:arr_start]
+                    suffix = ']}'
+                    if not prefix.strip().startswith('{'):
+                        prefix = '{' + prefix
+                    if not trunc.strip().endswith('}'):
+                        trunc = trunc
+                    cleaned = prefix + trunc[arr_start:] + suffix
+    except Exception:
+        pass
+
+    # 修复 content_outline 中缺失对象闭合的情况：在 '"h2": [...]' 之后直接出现下一条 '{' 时，补上 '}, '
+    try:
+        if '"content_outline"' in cleaned:
+            # 在 content_outline 数组内部，将形如  "h2": [ ... ] , {  修复为  "h2": [ ... ] }, {
+            cleaned = _re.sub(r'("h2"\s*:\s*\[[^\]]*\])\s*,\s*{', r'\1}, {', cleaned)
+    except Exception:
+        pass
+
+    # 第二次尝试标准JSON
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        pass
+
+    # 回退到 Python 字面量
+    try:
+        import ast
+        obj = ast.literal_eval(cleaned)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+
+    # 仍失败则抛出，便于上层回退逻辑处理
+    preview = cleaned if len(cleaned) <= 300 else cleaned[:300] + "..."
+    raise ValueError(f"Failed to parse outline JSON after cleanup. Preview: {preview}")
 
 def parse_outline_json(outline_summary, prompt):
     """
@@ -706,29 +852,12 @@ def parse_outline_json(outline_summary, prompt):
             return create_default_outline(prompt)
             
         cleaned_json = cleaned_json[start_idx:end_idx]
-        
-        # 尝试解析JSON
-        try:
-            outline_summary_json = json.loads(cleaned_json)
-        except json.JSONDecodeError as e:
-            print(f"初次解析JSON失败: {e}")
-            # 尝试修复常见的JSON错误
-            # 1. 处理可能的尾部逗号问题
-            cleaned_json = cleaned_json.replace(',}', '}').replace(',\n}', '}').replace(',\r\n}', '}')
-            # 2. 处理引号不匹配的问题
-            cleaned_json = cleaned_json.replace('"h2": [', '"h2": [')
-            cleaned_json = cleaned_json.replace(']"', ']')
-            # 3. 处理可能的Unicode转义问题
-            cleaned_json = cleaned_json.encode().decode('unicode_escape')
-            
-            # 再次尝试解析
-            outline_summary_json = json.loads(cleaned_json)
-        
+        outline_summary_json = try_load(cleaned_json)
+
         # 验证JSON结构是否包含必要的字段
         if not validate_outline_structure(outline_summary_json):
             print("警告: JSON结构不完整，使用默认大纲")
             return create_default_outline(prompt)
-            
         return outline_summary_json
     except Exception as e:
         print(f"JSON解析错误: {e}")
@@ -810,4 +939,5 @@ if __name__ == '__main__':
     llamafactory训练微调llama3.1详细教程步骤
     """
     outline_summary = ''
-    auto_run(topic, search_result_num=search_result_num, type=1, output_type=prompt_template.IT_QUERY, outline_summary=outline_summary)
+    # 使用默认抓取数量，避免未定义变量
+    auto_run(topic, search_result_num=DEFAULT_SPIDER_NUM, type=1, output_type=prompt_template.IT_QUERY, outline_summary=outline_summary)

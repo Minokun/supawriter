@@ -1,29 +1,29 @@
 import streamlit as st
 import sys
 import logging
-import os
-import uuid
 import re
-from pathlib import Path
 from utils.searxng_utils import llm_task, chat, parse_outline_json
 from utils.searxng_utils import Search
 import utils.prompt_template as pt
-from utils.image_utils import download_image, get_image_save_directory
 from utils.qiniu_utils import ensure_public_image_url
 import concurrent.futures
 import asyncio
 import nest_asyncio
-from settings import LLM_MODEL, HTML_NGINX_BASE_URL, DEFAULT_SPIDER_NUM, DEFAULT_ENABLE_IMAGES, DEFAULT_IMAGE_EMBEDDING_METHOD
+from settings import LLM_MODEL, DEFAULT_SPIDER_NUM, DEFAULT_ENABLE_IMAGES, DEFAULT_IMAGE_EMBEDDING_METHOD
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
 from utils.history_utils import add_history_record
-from utils.embedding_utils import create_faiss_index, search_similar_text
+from utils.embedding_utils import (
+    create_faiss_index,
+    search_similar_text,
+)
 from utils.config_manager import get_config
 from utils.streamlit_thread_helper import create_thread_safe_callback
 import streamlit.components.v1 as components
 import threading
 import time
 from datetime import datetime
+# 仅在utils中使用DDGS/requests/base64，这里不直接依赖
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -85,11 +85,10 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
         search_result = []
         with concurrent.futures.ThreadPoolExecutor() as executor:
             # 确定图片嵌入方式
-            image_embedding_method = DEFAULT_IMAGE_EMBEDDING_METHOD if enable_images else 'none'
-            use_direct_image_embedding = image_embedding_method == 'direct_embedding'
-            is_multimodal = image_embedding_method == 'multimodal'
+            use_direct_image_embedding = enable_images and (DEFAULT_IMAGE_EMBEDDING_METHOD == 'direct_embedding')
+            is_multimodal = enable_images and (DEFAULT_IMAGE_EMBEDDING_METHOD == 'multimodal')
             
-            log('info', f"图片处理状态: 启用={enable_images}, 嵌入方式={image_embedding_method}")
+            log('info', f"图片处理状态: 启用={enable_images}, 嵌入方式={'none' if not enable_images else DEFAULT_IMAGE_EMBEDDING_METHOD}")
             
             # 确保传递正确的spider_num参数
             log('info', f"设置爬虫数量: {spider_num}")
@@ -146,6 +145,8 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
             except Exception as e:
                 log('error', f"加载FAISS索引失败: {str(e)}")
                 faiss_index = None
+
+        # 取消在此直接调用DDGS索引补充：该逻辑已在utils.searxng_utils.Search.get_search_result内部统一处理
 
         # 2. 生成大纲
         task_state['progress'] = 30
@@ -365,20 +366,6 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
         log('error', error_message)
         log('error', full_traceback) # Make traceback visible in UI
 
-def cleanup_faiss_files():
-    """删除旧的FAISS索引文件"""
-    logger.info("开始清理FAISS索引文件...")
-    try:
-        index_dir = 'data/faiss'
-        os.makedirs(index_dir, exist_ok=True)
-        for file_name in ['index.faiss', 'index_data.pkl']:
-            file_path = os.path.join(index_dir, file_name)
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                logger.info(f"已删除旧的FAISS文件: {file_path}")
-    except Exception as e:
-        logger.error(f"清理FAISS文件失败: {str(e)}")
-
 @require_auth
 def main():
     # 应用nest_asyncio
@@ -444,7 +431,6 @@ def main():
     # 主页面UI逻辑
     if submit_button and text_input:
         # 重置状态并开始新任务
-        cleanup_faiss_files() # 清理旧文件
         st.session_state.article_task = {
             "status": "running", "progress": 0, "progress_text": "准备开始...",
             "result": "", "error_message": "", "log": ["任务已启动..."],

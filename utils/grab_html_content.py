@@ -362,45 +362,128 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
 
     # 多模态模式：先校验，合格则无需下载图片内容，直接调用识别并入库
     if is_multimodal:
-        try:
-            valid = await is_valid_image_url_for_model(session, normalized_img_src)
-        except Exception:
-            valid = False
-        if not valid:
-            logger.debug(f"Skip multimodal due to validation failure: {normalized_img_src}")
-            if stats is not None:
-                stats['skipped'] = stats.get('skipped', 0) + 1
-            image_hash_cache[normalized_img_src] = None
-            return None
-        logger.debug(f"Fast-path multimodal processing for image URL: {normalized_img_src}")
-        try:
-            result = process_image(image_url=normalized_img_src)
-            if result and isinstance(result, dict) and "describe" in result:
-                description = result.get("describe", "")
-                if description and len(description) > 10:
-                    data = {"image_url": normalized_img_src, "task_id": task_id, "description": description}
-                    try:
-                        current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
-                        before_size = current_faiss_index.get_size()
-                        add_to_faiss_index(description, data, current_faiss_index, username=username, article_id=article_id, auto_save=True)
-                        after_size = current_faiss_index.get_size()
-                        if after_size > before_size:
-                            logger.debug(f"已添加图片描述到FAISS索引: {normalized_img_src}")
-                    except Exception as e:
-                        logger.error(f"记录图片描述到FAISS索引失败: {str(e)}")
-                image_hash_cache[normalized_img_src] = result
-                stats['success'] += 1 if stats else 0
-                return result
-            else:
-                logger.debug(f"Multimodal returned empty/invalid for {normalized_img_src}")
+        # 对 CSDN 图片采用本地下载再以base64传给多模态，避免直链受限
+        if ('csdnimg.cn' in domain) or ('csdn.net' in domain and 'csdnimg' in domain):
+            try:
+                logger.debug(f"CSDN image detected, using local download + base64 for multimodal: {normalized_img_src}")
+                user_agents = [
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+                ]
+                headers = {
+                    'User-Agent': random.choice(user_agents),
+                    'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache',
+                    'Referer': 'https://blog.csdn.net/',
+                    'Origin': 'https://blog.csdn.net',
+                    'Host': domain
+                }
+                timeout = aiohttp.ClientTimeout(total=15, connect=10)
+                async with session.get(normalized_img_src, ssl=False, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                    if resp.status != 200:
+                        logger.debug(f"CSDN image download failed status={resp.status}: {normalized_img_src}")
+                        image_hash_cache[normalized_img_src] = None
+                        stats['failed'] += 1 if stats else 0
+                        return None
+                    content = await resp.read()
+                if not content or len(content) < MIN_MODEL_IMAGE_SIZE:
+                    logger.debug(f"CSDN image too small or empty: {normalized_img_src} size={len(content) if content else 0}")
+                    image_hash_cache[normalized_img_src] = None
+                    stats['skipped'] += 1 if stats else 0
+                    return None
+                # 发送为base64
+                try:
+                    logger.error(
+                        "Multimodal sending (CSDN base64) image_url=%s bytes=%d task_id=%s user=%s article_id=%s",
+                        normalized_img_src, len(content), task_id, username, article_id,
+                    )
+                    result = process_image(image_content=content)
+                except Exception as e:
+                    logger.error(
+                        "Multimodal CSDN base64 error: %s | image_url=%s task_id=%s user=%s article_id=%s",
+                        str(e), normalized_img_src, task_id, username, article_id,
+                    )
+                    image_hash_cache[normalized_img_src] = None
+                    stats['failed'] += 1 if stats else 0
+                    return None
+
+                if result and isinstance(result, dict) and "describe" in result:
+                    description = result.get("describe", "")
+                    if description and len(description) > 10:
+                        data = {"image_url": normalized_img_src, "task_id": task_id, "description": description}
+                        try:
+                            current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
+                            before_size = current_faiss_index.get_size()
+                            add_to_faiss_index(description, data, current_faiss_index, username=username, article_id=article_id, auto_save=True)
+                            after_size = current_faiss_index.get_size()
+                            if after_size > before_size:
+                                logger.debug(f"已添加图片描述到FAISS索引: {normalized_img_src}")
+                        except Exception as e:
+                            logger.error(f"记录图片描述到FAISS索引失败: {str(e)}")
+                    image_hash_cache[normalized_img_src] = result
+                    stats['success'] += 1 if stats else 0
+                    return result
+                else:
+                    logger.debug(f"Multimodal returned empty/invalid for CSDN {normalized_img_src}")
+                    image_hash_cache[normalized_img_src] = None
+                    stats['failed'] += 1 if stats else 0
+                    return None
+            except Exception as e:
+                logger.error(f"CSDN multimodal via base64 failed: {e}")
                 image_hash_cache[normalized_img_src] = None
                 stats['failed'] += 1 if stats else 0
                 return None
-        except Exception as e:
-            logger.error(f"Multimodal fast-path error: {str(e)}")
-            image_hash_cache[normalized_img_src] = None
-            stats['failed'] += 1 if stats else 0
-            return None
+        else:
+            try:
+                valid = await is_valid_image_url_for_model(session, normalized_img_src)
+            except Exception:
+                valid = False
+            if not valid:
+                logger.debug(f"Skip multimodal due to validation failure: {normalized_img_src}")
+                if stats is not None:
+                    stats['skipped'] = stats.get('skipped', 0) + 1
+                image_hash_cache[normalized_img_src] = None
+                return None
+            logger.debug(f"Fast-path multimodal processing for image URL: {normalized_img_src}")
+            try:
+                # 重要：在调用多模态前打印即将发送的图片和上下文，便于定位400错误
+                logger.error(
+                    "Multimodal sending image_url=%s task_id=%s user=%s article_id=%s",
+                    normalized_img_src, task_id, username, article_id,
+                )
+                result = process_image(image_url=normalized_img_src)
+                if result and isinstance(result, dict) and "describe" in result:
+                    description = result.get("describe", "")
+                    if description and len(description) > 10:
+                        data = {"image_url": normalized_img_src, "task_id": task_id, "description": description}
+                        try:
+                            current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
+                            before_size = current_faiss_index.get_size()
+                            add_to_faiss_index(description, data, current_faiss_index, username=username, article_id=article_id, auto_save=True)
+                            after_size = current_faiss_index.get_size()
+                            if after_size > before_size:
+                                logger.debug(f"已添加图片描述到FAISS索引: {normalized_img_src}")
+                        except Exception as e:
+                            logger.error(f"记录图片描述到FAISS索引失败: {str(e)}")
+                    image_hash_cache[normalized_img_src] = result
+                    stats['success'] += 1 if stats else 0
+                    return result
+                else:
+                    logger.debug(f"Multimodal returned empty/invalid for {normalized_img_src}")
+                    image_hash_cache[normalized_img_src] = None
+                    stats['failed'] += 1 if stats else 0
+                    return None
+            except Exception as e:
+                # 重要：错误时也打印发送的图片URL和上下文
+                logger.error(
+                    "Multimodal fast-path error: %s | image_url=%s task_id=%s user=%s article_id=%s",
+                    str(e), normalized_img_src, task_id, username, article_id,
+                )
+                image_hash_cache[normalized_img_src] = None
+                stats['failed'] += 1 if stats else 0
+                return None
 
     try:
         # 设置基础请求头，模拟浏览器行为
