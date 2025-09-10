@@ -781,26 +781,27 @@ def try_load(s: str):
         if co_pos != -1:
             arr_start = cleaned.find('[', co_pos)
             if arr_start != -1:
-                last_obj_end = cleaned.rfind('}')
-                last_arr_end = cleaned.rfind(']')
-                if last_arr_end == -1 or last_arr_end < last_obj_end:
-                    # 截断到最后一个对象闭合，并补上 "]}"
-                    trunc = cleaned[:last_obj_end + 1]
-                    prefix = trunc[:arr_start]
-                    suffix = ']}'
-                    if not prefix.strip().startswith('{'):
-                        prefix = '{' + prefix
-                    if not trunc.strip().endswith('}'):
-                        trunc = trunc
-                    cleaned = prefix + trunc[arr_start:] + suffix
-    except Exception:
-        pass
+                # 仅针对 content_outline 片段进行括号配对检查
+                # 在 content_outline 之后、外层对象结束 '}' 之前寻找匹配的 ']'
+                outer_obj_end = cleaned.find('}', arr_start)
+                if outer_obj_end == -1:
+                    outer_obj_end = len(cleaned)
+                segment = cleaned[arr_start:outer_obj_end]
 
-    # 修复 content_outline 中缺失对象闭合的情况：在 '"h2": [...]' 之后直接出现下一条 '{' 时，补上 '}, '
-    try:
-        if '"content_outline"' in cleaned:
-            # 在 content_outline 数组内部，将形如  "h2": [ ... ] , {  修复为  "h2": [ ... ] }, {
-            cleaned = _re.sub(r'("h2"\s*:\s*\[[^\]]*\])\s*,\s*{', r'\1}, {', cleaned)
+                # 计算方括号是否配对完整
+                depth = 0
+                has_close = False
+                for ch in segment:
+                    if ch == '[':
+                        depth += 1
+                    elif ch == ']':
+                        depth -= 1
+                        if depth == 0:
+                            has_close = True
+                            break
+                # 如果未找到与起始 '[' 配对的 ']'，则在外层对象结束前补一个
+                if not has_close:
+                    cleaned = cleaned[:outer_obj_end] + ']' + cleaned[outer_obj_end:]
     except Exception:
         pass
 

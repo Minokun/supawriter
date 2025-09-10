@@ -395,7 +395,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                     return None
                 # 发送为base64
                 try:
-                    logger.error(
+                    logger.info(
                         "Multimodal sending (CSDN base64) image_url=%s bytes=%d task_id=%s user=%s article_id=%s",
                         normalized_img_src, len(content), task_id, username, article_id,
                     )
@@ -449,7 +449,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
             logger.debug(f"Fast-path multimodal processing for image URL: {normalized_img_src}")
             try:
                 # 重要：在调用多模态前打印即将发送的图片和上下文，便于定位400错误
-                logger.error(
+                logger.info(
                     "Multimodal sending image_url=%s task_id=%s user=%s article_id=%s",
                     normalized_img_src, task_id, username, article_id,
                 )
