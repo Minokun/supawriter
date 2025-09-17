@@ -7,9 +7,32 @@ import logging
 import time
 from pathlib import Path
 import streamlit as st
+import toml
 from utils.auth import get_current_user as auth_get_current_user
 
 logger = logging.getLogger(__name__)
+
+SECRETS_FILE_PATH = Path(".streamlit/secrets.toml")
+
+def load_secrets_toml():
+    """加载.streamlit/secrets.toml文件内容"""
+    if SECRETS_FILE_PATH.is_file():
+        try:
+            return toml.load(SECRETS_FILE_PATH)
+        except toml.TomlDecodeError as e:
+            logger.error(f"Error decoding secrets.toml: {e}")
+            return {}
+    return {}
+
+def save_secrets_toml(data):
+    """保存内容到.streamlit/secrets.toml文件"""
+    try:
+        with open(SECRETS_FILE_PATH, 'w', encoding='utf-8') as f:
+            toml.dump(data, f)
+        return True
+    except Exception as e:
+        logger.error(f"Error saving secrets.toml: {e}")
+        return False
 
 class ConfigManager:
     """

@@ -2,6 +2,21 @@ import sys, os
 import base64
 from pathlib import Path
 from datetime import datetime
+import shutil
+
+# 检查并创建secrets.toml
+def check_secrets_toml():
+    secrets_file = Path(".streamlit/secrets.toml")
+    template_file = Path(".streamlit/secrets.toml.template")
+    if not secrets_file.is_file():
+        if template_file.is_file():
+            shutil.copy(template_file, secrets_file)
+            print(f"'{secrets_file}' not found. Copied from '{template_file}'.")
+        else:
+            print(f"Warning: '{secrets_file}' not found and template '{template_file}' does not exist.")
+
+# 在应用启动时执行检查
+check_secrets_toml()
 
 # 函数：将图片转换为base64格式
 def get_base64_from_image(image_path):
@@ -200,10 +215,10 @@ else:
     <div style="margin-top: 1rem;">
         <h3 style="font-size: 1.2rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-color, #31333F);">关于我们</h3>
         <div style="background-color: var(--background-color, #f8f9fa); padding: 1rem; border-radius: 8px; font-size: 0.9rem; border: 1px solid var(--border-color, rgba(49, 51, 63, 0.1));">
-            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);">©{current_year} Minokun</p>
-            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);">📧 邮箱：952718180@qq.com</p>
-            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);">📍 地址: 四川省成都市</p>
-            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);">📱 微信公众号: 坤塔</p>
+            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);"> Minokun</p>
+            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);"> 邮箱：952718180@qq.com</p>
+            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);"> 地址: 四川省成都市</p>
+            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);"> 微信公众号: 坤塔</p>
         </div>
     </div>
     """, unsafe_allow_html=True)

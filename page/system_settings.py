@@ -10,7 +10,7 @@ if parent_dir not in sys.path:
 
 from utils.auth_decorator import require_auth
 from settings import LLM_MODEL
-from utils.config_manager import get_config, set_config
+from utils.config_manager import get_config, set_config, load_secrets_toml, save_secrets_toml
 
 @require_auth
 def main():
@@ -172,7 +172,59 @@ def main():
         # 保存到配置
         set_config('embedding_settings', st.session_state.embedding_settings)
         st.success("嵌入模型设置已成功保存！需要重启应用才能生效。")
-    
+
+    # --- API密钥配置 ---
+    st.markdown("--- ")
+    st.header("API 密钥配置")
+    st.info("在这里配置的密钥将保存在项目的 `.streamlit/secrets.toml` 文件中。请妥善保管您的密钥。")
+
+    secrets_data = load_secrets_toml()
+    if not secrets_data:
+        st.warning("无法加载 `secrets.toml` 文件，或文件为空。")
+    else:
+        # 使用一个字典来收集更新后的值
+        updated_secrets = secrets_data.copy()
+
+        # 分离顶级配置和分节配置
+        top_level_keys = {k: v for k, v in secrets_data.items() if not isinstance(v, dict)}
+        section_keys = {k: v for k, v in secrets_data.items() if isinstance(v, dict)}
+
+        # 1. 渲染顶级配置
+        if top_level_keys:
+            with st.expander("全局配置", expanded=True):
+                for key, value in top_level_keys.items():
+                    new_value = st.text_input(
+                        f"{key}",
+                        value=value,
+                        key=f"top_level_{key}",
+                        type="password" if "key" in key.lower() or "token" in key.lower() else "default"
+                    )
+                    updated_secrets[key] = new_value
+
+        # 2. 渲染分节配置
+        for section, keys in section_keys.items():
+            with st.expander(f"配置节: {section}", expanded=False):
+                if isinstance(keys, dict):
+                    updated_secrets[section] = updated_secrets.get(section, {})
+                    for key, value in keys.items():
+                        # 检查值是否是字典（例如 auth.google），如果是，则跳过，因为它会在自己的节中处理
+                        if isinstance(value, dict):
+                            continue
+                        new_value = st.text_input(
+                            f"{key}", 
+                            value=value, 
+                            key=f"{section}_{key}",
+                            type="password" if "key" in key.lower() or "token" in key.lower() else "default"
+                        )
+                        updated_secrets[section][key] = new_value
+
+        if st.button("保存 API 密钥"):
+            if save_secrets_toml(updated_secrets):
+                st.success("API 密钥已成功保存！")
+                st.rerun()
+            else:
+                st.error("保存 API 密钥失败，请检查日志。")
+
     # 显示当前保存的设置
     st.markdown("--- ")
     st.write("**当前已保存的全局设置:**")
