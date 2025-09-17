@@ -181,7 +181,7 @@ PROCESS_CONFIG = {
 
 # 文章生成设置
 # 爬取网页数量默认值
-DEFAULT_SPIDER_NUM = 30
+DEFAULT_SPIDER_NUM = 20
 # 是否自动插入相关图片默认值
 DEFAULT_ENABLE_IMAGES = True
 # 图片嵌入方式 ('multimodal' 或 'direct_embedding')

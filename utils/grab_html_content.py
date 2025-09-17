@@ -401,10 +401,15 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                     )
                     result = process_image(image_content=content)
                 except Exception as e:
-                    logger.error(
-                        "Multimodal CSDN base64 error: %s | image_url=%s task_id=%s user=%s article_id=%s",
-                        str(e), normalized_img_src, task_id, username, article_id,
+                    logger.exception(
+                        "CSDN multimodal via base64 failed: %r (%s) | image_url=%s task_id=%s user=%s article_id=%s",
+                        e, type(e).__name__, normalized_img_src, task_id, username, article_id,
                     )
+                    if isinstance(e, asyncio.CancelledError):
+                        logger.debug(f"CSDN multimodal via base64 skipped due to cancellation: {normalized_img_src}")
+                        image_hash_cache[normalized_img_src] = None
+                        stats['skipped'] += 1 if stats else 0
+                        return None
                     image_hash_cache[normalized_img_src] = None
                     stats['failed'] += 1 if stats else 0
                     return None

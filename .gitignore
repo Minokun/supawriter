@@ -5,6 +5,7 @@ __pycache__/
 utils/__pycache__/*.pyc
 *.pyc
 output/*
+.streamlit/
 .streamlit/secrets.toml
 images/*
 .DS_Store
