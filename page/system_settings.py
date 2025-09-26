@@ -1,6 +1,8 @@
 import streamlit as st
 import sys
 import os
+import json
+import ast
 
 # Add the parent directory to sys.path to ensure imports work correctly
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -189,17 +191,64 @@ def main():
         top_level_keys = {k: v for k, v in secrets_data.items() if not isinstance(v, dict)}
         section_keys = {k: v for k, v in secrets_data.items() if isinstance(v, dict)}
 
-        # 1. 渲染顶级配置
+        # 用于记录本次渲染中出现的列表字段，保存时写回
+        list_fields = []  # list of tuples: (section_name or None, key, session_key)
+
+        # 小工具：将可能的字符串列表安全解析为 list
+        def parse_list_value(val):
+            if isinstance(val, list):
+                return [str(x) for x in val]
+            if isinstance(val, str):
+                s = val.strip()
+                if s.startswith("[") and s.endswith("]"):
+                    try:
+                        parsed = json.loads(s)
+                        if isinstance(parsed, list):
+                            return [str(x) for x in parsed]
+                    except Exception:
+                        try:
+                            parsed = ast.literal_eval(s)
+                            if isinstance(parsed, list):
+                                return [str(x) for x in parsed]
+                        except Exception:
+                            pass
+            return None
+
+        # 1. 渲染顶级配置（一般为字符串，如有列表可扩展为列表编辑器）
         if top_level_keys:
             with st.expander("全局配置", expanded=True):
                 for key, value in top_level_keys.items():
-                    new_value = st.text_input(
-                        f"{key}",
-                        value=value,
-                        key=f"top_level_{key}",
-                        type="password" if "key" in key.lower() or "token" in key.lower() else "default"
-                    )
-                    updated_secrets[key] = new_value
+                    parsed_list = parse_list_value(value)
+                    if parsed_list is not None:
+                        # 顶级列表字段的编辑器
+                        skey = f"list__{key}_items"
+                        if skey not in st.session_state:
+                            st.session_state[skey] = parsed_list
+                        st.markdown(f"**{key}**")
+                        items = st.session_state[skey]
+                        remove_indices = []
+                        for i in range(len(items)):
+                            c1, c2 = st.columns([0.8, 0.2])
+                            with c1:
+                                items[i] = st.text_input(f"{key}[{i}]", value=items[i], key=f"{skey}_item_{i}")
+                            with c2:
+                                if st.button("删除", key=f"{skey}_del_{i}"):
+                                    remove_indices.append(i)
+                        # 执行删除
+                        for idx in sorted(remove_indices, reverse=True):
+                            items.pop(idx)
+                        if st.button(f"➕ 添加 {key}", key=f"{skey}_add"):
+                            items.append("")
+                        st.session_state[skey] = items
+                        list_fields.append((None, key, skey))
+                    else:
+                        new_value = st.text_input(
+                            f"{key}",
+                            value=value,
+                            key=f"top_level_{key}",
+                            type="password" if "key" in key.lower() or "token" in key.lower() else "default"
+                        )
+                        updated_secrets[key] = new_value
 
         # 2. 渲染分节配置
         for section, keys in section_keys.items():
@@ -207,18 +256,48 @@ def main():
                 if isinstance(keys, dict):
                     updated_secrets[section] = updated_secrets.get(section, {})
                     for key, value in keys.items():
-                        # 检查值是否是字典（例如 auth.google），如果是，则跳过，因为它会在自己的节中处理
+                        # 检查是否是子字典（例如 auth.google），如果是，则跳过，因为它会在自己的节中处理
                         if isinstance(value, dict):
                             continue
-                        new_value = st.text_input(
-                            f"{key}", 
-                            value=value, 
-                            key=f"{section}_{key}",
-                            type="password" if "key" in key.lower() or "token" in key.lower() else "default"
-                        )
-                        updated_secrets[section][key] = new_value
+                        # 列表字段：提供增删改 UI；否则使用文本输入
+                        parsed_list = parse_list_value(value)
+                        if parsed_list is not None:
+                            skey = f"list_{section}_{key}_items"
+                            if skey not in st.session_state:
+                                st.session_state[skey] = parsed_list
+                            st.markdown(f"**{key}**")
+                            items = st.session_state[skey]
+                            remove_indices = []
+                            for i in range(len(items)):
+                                c1, c2 = st.columns([0.8, 0.2])
+                                with c1:
+                                    items[i] = st.text_input(f"{key}[{i}]", value=items[i], key=f"{skey}_item_{i}")
+                                with c2:
+                                    if st.button("删除", key=f"{skey}_del_{i}"):
+                                        remove_indices.append(i)
+                            for idx in sorted(remove_indices, reverse=True):
+                                items.pop(idx)
+                            if st.button(f"➕ 添加 {key}", key=f"{skey}_add"):
+                                items.append("")
+                            st.session_state[skey] = items
+                            list_fields.append((section, key, skey))
+                        else:
+                            new_value = st.text_input(
+                                f"{key}", 
+                                value=value, 
+                                key=f"{section}_{key}",
+                                type="password" if "key" in key.lower() or "token" in key.lower() else "default"
+                            )
+                            updated_secrets[section][key] = new_value
 
         if st.button("保存 API 密钥"):
+            # 将列表编辑器中的内容写回 updated_secrets，保证为数组而非字符串
+            for section, key, skey in list_fields:
+                items = [x for x in st.session_state.get(skey, []) if isinstance(x, str) and x.strip() != ""]
+                if section is None:
+                    updated_secrets[key] = items
+                else:
+                    updated_secrets[section][key] = items
             if save_secrets_toml(updated_secrets):
                 st.success("API 密钥已成功保存！")
                 st.rerun()
