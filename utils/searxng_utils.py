@@ -91,7 +91,7 @@ def is_similar_url(a: str, b: str) -> bool:
     return pra.path == prb.path
 
 # 本地导入
-from settings import base_path, LLM_MODEL, DEFAULT_SPIDER_NUM
+from settings import base_path, LLM_MODEL, DEFAULT_SPIDER_NUM, SERPER_API_KEY
 from grab_html_content import get_main_content
 from utils.llm_chat import chat
 import prompt_template
@@ -103,6 +103,7 @@ from utils.embedding_utils import (
 )
 from utils.embedding_utils import create_faiss_index
 from utils.image_search_indexer import index_ddgs_images
+from utils.serper_search import serper_search
 
 max_workers = 20
 
@@ -323,6 +324,7 @@ class Search:
         :param result_num: 搜索结果数量，默认为8
         """
         self.search_url = "http://localhost:8080"  # 搜索引擎URL
+        # self.search_url = "http://searxng.sevnday.top"  # 搜索引擎URL
         self.result_num = result_num  # 结果数量
         self.search_query = ""
         self.optimized_query = ""
@@ -373,24 +375,18 @@ class Search:
         logger.info(f"URL deduplication: Original={len(urls_with_data)}, After deduplication={len(unique_results)}")
         return unique_results
         
-    def query_search(self, question: str):
+    def query_search(self, query: str):
         """
         发送请求到搜索引擎，获取JSON响应
-        :param question: 查询问题
-        :return: JSON数据
+        整合 SearXNG 和 Serper 搜索结果
+        :param query: 查询词（已优化）
+        :return: JSON数据，包含合并后的搜索结果
         """
-        self.search_query = question
-
-        # 搜索词优化
-        optimizeq = chat(self.search_query, system_prompt="你是一个资深搜索引擎搜索词优化专员，深知如何将用户输入的查询词优化成输入搜索引擎用的查询词，以便更好的抓住重点信息的查询，直接生成一个适合用在谷歌或必应上的高效搜索语法版本，把它做成带引号和逻辑运算符的高级搜索。直接输出优化后的语句，不要解释")
-        logger.info(f"优化前的搜索词: {self.search_query}")
-        logger.info(f"优化后的搜索词: {optimizeq}") 
-        # 保存优化后的搜索词
-        self.optimized_query = optimizeq
+        all_results = []
         
-        # 发送请求到SearXNG搜索引擎
+        # 1. 发送请求到 SearXNG 搜索引擎
         params = {
-            "q": optimizeq,
+            "q": query,
             "format": "json",
             "pageno": 1,
             "engines": ','.join(["google", "bing", "duckduckgo", "yahoo", "qwant", "presearch"]),  # 减少搜索引擎数量，提高相关性
@@ -401,14 +397,57 @@ class Search:
         try:
             response = requests.get(self.search_url, params=params, verify=False)
             data = response.json()
-            logger.info(f"SearXNG search results: {len(data['results'])}")
-            return data
+            searxng_results = data.get('results', [])
+            logger.info(f"SearXNG 搜索结果: {len(searxng_results)} 条")
+            all_results.extend(searxng_results)
         except Exception as e:
-            logger.error(f"SearXNG搜索失败: {e}")
-            return None
+            logger.error(f"SearXNG 搜索失败: {e}")
+        
+        # 2. 发送请求到 Serper 搜索引擎
+        try:
+            serper_results = serper_search(
+                api_key=SERPER_API_KEY,
+                query=query,
+                num=10,  # 获取10条结果
+                gl="cn",
+                hl="zh-cn",
+                time_range="y"  # 一年内的结果
+            )
+            logger.info(f"Serper 搜索结果: {len(serper_results)} 条")
+            all_results.extend(serper_results)
+        except Exception as e:
+            logger.error(f"Serper 搜索失败: {e}")
+        
+        # 3. 返回合并后的结果
+        logger.info(f"合并搜索结果: SearXNG + Serper = {len(all_results)} 条")
+        return {'results': all_results}
 
     def get_search_result(self, question: str, is_multimodal=False, use_direct_image_embedding=False, theme="", spider_mode=False, progress_callback: Optional[callable] = None, username: str = None, article_id: str = None):
-        data = self.query_search(question)
+        # 先优化查询词，提取关键词
+        self.search_query = question
+        optimizeq = chat(question, system_prompt="""你是搜索引擎查询优化专家。请将用户的问题转换为更适合Google、Bing等搜索引擎的查询词。
+                优化规则：
+                1. 提取核心关键词和概念，去除无关的停用词（如"请问"、"怎么"、"如何"等）
+                2. 保留专业术语、品牌名称、技术名词的完整性
+                3. 适当使用引号("")包裹核心短语，保持短语完整性
+                4. 对于多个关键概念，使用空格或AND连接
+                5. 不要过度复杂化，保持查询的可读性和有效性
+
+                示例：
+                - 输入："请问如何使用Python进行数据分析？"
+                - 输出：Python 数据分析 教程
+
+                直接输出优化后的查询词，不要解释。""")
+        logger.info(f"优化后的搜索词: {optimizeq}")
+        self.optimized_query = optimizeq
+        
+        # 从原始查询文本和优化后的查询中提取关键词
+        original_keywords = set(re.findall(r'\w+', question))
+        optimized_keywords = set(re.findall(r'\w+', optimizeq))
+        important_keywords = original_keywords.union(optimized_keywords)
+        
+        # 使用优化后的查询词进行搜索
+        data = self.query_search(optimizeq)
         search_result = []
         search_engine_urls = []
         
@@ -431,18 +470,13 @@ class Search:
             search_result.extend(search_engine_items)
             logger.info(f"Added {len(search_engine_items)} deduplicated search engine results")
             
-            # 从原始查询文本中提取关键词，用于相关性过滤
-            original_keywords = set(re.findall(r'\w+', question))
-            optimized_keywords = set(re.findall(r'\\w+', (self.optimized_query or self.search_query)))
-            important_keywords = original_keywords.union(optimized_keywords)
-            
             # 将结果按相关性评分排序
             scored_results = []
             for i in data['results']:
                 # 跳过特定文件类型和低分结果
                 if i['url'].split('.')[-1] in ['xlsx', 'pdf', 'doc', 'docx', 'xls', 'ppt', 'pptx']:
                     continue
-                if i['score'] < 0.15:
+                if i['score'] < 0.21:
                     continue
                     
                 # 计算关键词匹配度

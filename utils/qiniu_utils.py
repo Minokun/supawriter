@@ -141,8 +141,44 @@ def upload_image_from_url(image_url: str) -> Optional[str]:
             logger.warning('Qiniu secrets are missing; skip upload.')
             return None
 
-        # Fetch image bytes
-        resp = requests.get(image_url, timeout=15, stream=True)
+        # Fetch image bytes with anti-hotlink headers
+        from urllib.parse import urlparse
+        parsed = urlparse(image_url)
+        domain_lower = parsed.netloc.lower()
+        
+        # 根据域名设置合适的 Referer
+        if 'csdnimg.cn' in domain_lower or 'csdn.net' in domain_lower:
+            referer = 'https://blog.csdn.net/'
+        elif 'zhihu.com' in domain_lower or 'zhimg.com' in domain_lower:
+            referer = 'https://www.zhihu.com/'
+        elif 'jianshu.com' in domain_lower or 'jianshu.io' in domain_lower:
+            referer = 'https://www.jianshu.com/'
+        elif 'juejin.cn' in domain_lower or 'juejin.im' in domain_lower:
+            referer = 'https://juejin.cn/'
+        elif 'mmbiz.qpic.cn' in domain_lower or 'qq.com' in domain_lower:
+            referer = 'https://mp.weixin.qq.com/'
+        elif 'alicdn.com' in domain_lower or 'aliyuncs.com' in domain_lower:
+            # 阿里云 OSS/CDN，使用阿里云开发者社区作为 Referer
+            referer = 'https://developer.aliyun.com/'
+        elif '51cto.com' in domain_lower:
+            referer = 'https://www.51cto.com/'
+        elif 'infoq.cn' in domain_lower or 'infoq.com' in domain_lower:
+            referer = 'https://www.infoq.cn/'
+        elif 'segmentfault.com' in domain_lower:
+            referer = 'https://segmentfault.com/'
+        else:
+            referer = f"{parsed.scheme}://{parsed.netloc}/"
+        
+        # 构建请求头，模拟真实浏览器
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Referer': referer,
+            'Connection': 'keep-alive',
+        }
+        
+        resp = requests.get(image_url, timeout=15, stream=True, headers=headers, verify=False)
         resp.raise_for_status()
         content = resp.content
 

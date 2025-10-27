@@ -186,3 +186,7 @@ DEFAULT_SPIDER_NUM = 20
 DEFAULT_ENABLE_IMAGES = True
 # 图片嵌入方式 ('multimodal' 或 'direct_embedding')
 DEFAULT_IMAGE_EMBEDDING_METHOD = 'multimodal'
+
+# Serper 搜索引擎 API 设置
+# 从 secrets 中获取 API key，如果不存在则使用默认值
+SERPER_API_KEY = st.secrets.get('SERPER_API_KEY')

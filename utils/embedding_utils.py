@@ -25,27 +25,97 @@ class Embedding:
                 timeout = embedding_config.get(embedding_type, {}).get('timeout', 10)
                 # Build realistic headers to avoid 403 from CDNs
                 parsed = urlparse(url)
-                referer = f"{parsed.scheme}://{parsed.netloc}"
+                
+                # 针对不同网站使用不同的 Referer 策略来绕过防盗链
+                def get_referer_for_url(url: str, parsed_url) -> str:
+                    """根据 URL 返回合适的 Referer"""
+                    domain = parsed_url.netloc.lower()
+                    
+                    # CSDN 图片需要特定的 Referer
+                    if 'csdnimg.cn' in domain or 'csdn.net' in domain:
+                        return 'https://blog.csdn.net/'
+                    
+                    # 知乎图片
+                    elif 'zhihu.com' in domain or 'zhimg.com' in domain:
+                        return 'https://www.zhihu.com/'
+                    
+                    # 简书图片
+                    elif 'jianshu.com' in domain or 'jianshu.io' in domain:
+                        return 'https://www.jianshu.com/'
+                    
+                    # 掘金图片
+                    elif 'juejin.cn' in domain or 'juejin.im' in domain:
+                        return 'https://juejin.cn/'
+                    
+                    # 微信公众号图片
+                    elif 'mmbiz.qpic.cn' in domain or 'qq.com' in domain:
+                        return 'https://mp.weixin.qq.com/'
+                    
+                    # 阿里云 OSS/CDN
+                    elif 'alicdn.com' in domain or 'aliyuncs.com' in domain:
+                        return 'https://developer.aliyun.com/'
+                    
+                    # 51CTO
+                    elif '51cto.com' in domain:
+                        return 'https://www.51cto.com/'
+                    
+                    # InfoQ
+                    elif 'infoq.cn' in domain or 'infoq.com' in domain:
+                        return 'https://www.infoq.cn/'
+                    
+                    # SegmentFault
+                    elif 'segmentfault.com' in domain:
+                        return 'https://segmentfault.com/'
+                    
+                    # 默认使用域名本身作为 Referer
+                    else:
+                        return f"{parsed_url.scheme}://{parsed_url.netloc}/"
+                
+                referer = get_referer_for_url(url, parsed)
+                
+                # 构建请求头，模拟真实浏览器
                 headers = {
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
                     'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
                     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
                     'Referer': referer,
                     'Connection': 'keep-alive',
+                    'Sec-Fetch-Dest': 'image',
+                    'Sec-Fetch-Mode': 'no-cors',
+                    'Sec-Fetch-Site': 'cross-site',
                 }
-                try:
-                    resp = requests.get(url, timeout=timeout, headers=headers)
-                    resp.raise_for_status()
-                    mime = resp.headers.get('Content-Type', 'image/jpeg')
-                    if not mime or not mime.startswith('image/'):
-                        mime = 'image/jpeg'
-                    b64 = base64.b64encode(resp.content).decode('utf-8')
-                    return {"image": f"data:{mime};base64,{b64}"}
-                except requests.HTTPError as e:
-                    status = getattr(e.response, 'status_code', None)
-                    logger.warning(f"Failed to fetch image (HTTP {status}): {url}")
-                except Exception as e:
-                    logger.warning(f"Failed to fetch image: {url}. Error: {e}")
+                
+                # 尝试多种策略下载图片
+                strategies = [
+                    {'headers': headers, 'verify': True},  # 标准方式
+                    {'headers': headers, 'verify': False},  # 禁用 SSL 验证
+                    {'headers': {**headers, 'Referer': f"{parsed.scheme}://{parsed.netloc}/"}, 'verify': False},  # 使用图片域名作为 Referer
+                ]
+                
+                last_error = None
+                for strategy in strategies:
+                    try:
+                        resp = requests.get(url, timeout=timeout, **strategy)
+                        resp.raise_for_status()
+                        mime = resp.headers.get('Content-Type', 'image/jpeg')
+                        if not mime or not mime.startswith('image/'):
+                            mime = 'image/jpeg'
+                        b64 = base64.b64encode(resp.content).decode('utf-8')
+                        logger.debug(f"Successfully fetched image with referer: {strategy['headers'].get('Referer', 'N/A')}")
+                        return {"image": f"data:{mime};base64,{b64}"}
+                    except requests.HTTPError as e:
+                        status = getattr(e.response, 'status_code', None)
+                        last_error = f"HTTP {status}"
+                        logger.debug(f"Strategy failed (HTTP {status}) for {url}, trying next...")
+                        continue
+                    except Exception as e:
+                        last_error = str(e)
+                        logger.debug(f"Strategy failed ({e}) for {url}, trying next...")
+                        continue
+                
+                # 所有策略都失败
+                logger.warning(f"Failed to fetch image after all strategies (last error: {last_error}): {url}")
                 # Fallback to original URL if encoding fails
                 return {"image": url}
 
