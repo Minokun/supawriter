@@ -25,7 +25,42 @@ import time
 from datetime import datetime
 # 仅在utils中使用DDGS/requests/base64，这里不直接依赖
 
+# 辅助函数：清理大模型输出中的 thinking 标签
+def remove_thinking_tags(content):
+    """
+    移除大模型输出中的 thinking 标签及其内容
+    支持的标签格式：<thinking>、<think>、<thought>
+    只移除独立成段的thinking标签，避免误删代码示例中的内容
+    """
+    if not content or not isinstance(content, str):
+        return content
+    
+    # 只在内容开头或换行后匹配thinking标签，避免误删代码示例
+    # 使用更严格的匹配模式：标签前后必须有换行或在字符串开头/结尾
+    think_patterns = [
+        r'(?:^|\n)\s*<thinking>.*?</thinking>\s*(?:\n|$)',
+        r'(?:^|\n)\s*<think>.*?</think>\s*(?:\n|$)',
+        r'(?:^|\n)\s*<thought>.*?</thought>\s*(?:\n|$)'
+    ]
+    
+    cleaned_content = content
+    for pattern in think_patterns:
+        # 使用 DOTALL 标志使 . 匹配包括换行符在内的所有字符
+        # 保留匹配前后的换行符，只删除标签本身
+        cleaned_content = re.sub(pattern, '\n', cleaned_content, flags=re.DOTALL | re.IGNORECASE)
+    
+    # 清理可能产生的多余空行（3个或以上换行符减少为2个）
+    cleaned_content = re.sub(r'\n{3,}', '\n\n', cleaned_content)
+    
+    # 清理首尾多余空行，但保留基本格式
+    return cleaned_content.strip('\n')
+
 # 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 logger = logging.getLogger(__name__)
 
 
@@ -44,7 +79,16 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
     # --- 将log函数定义提升到函数顶层作用域 ---
     def log(level, message):
         timestamp = time.strftime("%H:%M:%S", time.localtime())
-        task_state['log'].append(f"[{timestamp}] [{level.upper()}] {message}")
+        log_message = f"[{timestamp}] [{level.upper()}] {message}"
+        task_state['log'].append(log_message)
+        
+        # 同时输出到终端
+        if level.lower() == 'error':
+            logger.error(message)
+        elif level.lower() == 'warning':
+            logger.warning(message)
+        else:
+            logger.info(message)
 
     try:
         # 0. 初始化
@@ -163,6 +207,7 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
         )
 
         outlines = llm_task(search_result, text_input, pt.ARTICLE_OUTLINE_GEN, model_type=model_type, model_name=model_name, progress_callback=outline_progress_callback)
+        outlines = remove_thinking_tags(outlines)  # 清理 thinking 标签
         log('info', "大纲初稿生成完毕。")
 
         # 3. 融合大纲
@@ -173,6 +218,7 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
             outline_summary = outlines
         else:
             outline_summary = chat(f'<topic>{text_input}</topic> <content>{outlines}</content>', pt.ARTICLE_OUTLINE_SUMMARY, model_type=model_type, model_name=model_name)
+            outline_summary = remove_thinking_tags(outline_summary)  # 清理 thinking 标签
         
         outline_summary_json = parse_outline_json(outline_summary, text_input)
         outline_summary_json.setdefault('title', text_input)
@@ -202,6 +248,7 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
                 question = f'<完整大纲>{outline_summary}</完整大纲> 请根据上述信息，书写出以下内容 >>> {outline_block} <<<{title_instruction}'
                 
                 outline_block_content = llm_task(search_result, question=question, output_type=pt.ARTICLE_OUTLINE_BLOCK, model_type=model_type, model_name=model_name)
+                outline_block_content = remove_thinking_tags(outline_block_content)  # 清理 thinking 标签
                 
                 custom_prompt = pt.ARTICLE_OUTLINE_BLOCK
                 if custom_style and custom_style.strip():
@@ -211,6 +258,7 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
                 outline_block_content_final = chat(
                     f'<完整大纲>{outline_summary}</完整大纲> <相关资料>{outline_block_content}</相关资料> 请根据上述信息，书写大纲中的以下这部分内容：{outline_block}{final_instruction}',
                     custom_prompt, model_type=model_type, model_name=model_name)
+                outline_block_content_final = remove_thinking_tags(outline_block_content_final)  # 清理 thinking 标签
 
                 # 图像处理逻辑
                 if enable_images and faiss_index and faiss_index.get_size() > 0:

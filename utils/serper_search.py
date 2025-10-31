@@ -27,33 +27,31 @@ class SerperSearch:
         self.api_key = api_key
         self.host = "google.serper.dev"
         
-    def search(self, query: str, num: int = 10, gl: str = "cn", hl: str = "zh-cn", 
+    def search(self, query: str, gl: str = "cn", hl: str = "zh-cn", 
                time_range: str = "y") -> Optional[Dict]:
         """
-        执行搜索
+        执行搜索（注意：Serper API 固定返回约 10 条结果）
         
         Args:
             query: 搜索查询词
-            num: 返回结果数量，默认10
             gl: 国家/地区代码，默认"cn"（中国）
             hl: 语言代码，默认"zh-cn"（简体中文）
             time_range: 时间范围，默认"y"（一年内）
                        可选值：h(小时), d(天), w(周), m(月), y(年)
         
         Returns:
-            搜索结果 JSON 数据，失败返回 None
+            搜索结果 JSON 数据，约 10 条结果，失败返回 None
         """
         try:
             # 创建不验证 SSL 证书的上下文
             context = ssl._create_unverified_context()
             conn = http.client.HTTPSConnection(self.host, context=context)
             
-            # 构建请求数据
+            # 构建请求数据（注意：不包含 num 参数，API 固定返回约 10 条）
             payload = json.dumps({
                 "q": query,
                 "gl": gl,
                 "hl": hl,
-                "num": num,
                 "tbs": f"qdr:{time_range}"
             })
             
@@ -81,22 +79,21 @@ class SerperSearch:
             if 'conn' in locals():
                 conn.close()
     
-    def get_formatted_results(self, query: str, num: int = 10, gl: str = "cn", 
+    def get_formatted_results(self, query: str, gl: str = "cn", 
                              hl: str = "zh-cn", time_range: str = "y") -> List[Dict]:
         """
-        获取格式化的搜索结果，与 SearXNG 结果格式保持一致
+        获取格式化的搜索结果（固定返回约 10 条）
         
         Args:
             query: 搜索查询词
-            num: 返回结果数量
             gl: 国家/地区代码
             hl: 语言代码
             time_range: 时间范围
         
         Returns:
-            格式化后的搜索结果列表，每个元素包含 title, url, content, score 等字段
+            格式化后的搜索结果列表，约 10 条结果
         """
-        raw_results = self.search(query, num, gl, hl, time_range)
+        raw_results = self.search(query, gl, hl, time_range)
         
         if not raw_results or 'organic' not in raw_results:
             logger.warning("Serper 搜索无结果或返回数据格式错误")
@@ -122,21 +119,25 @@ class SerperSearch:
         return formatted_results
 
 
-def serper_search(api_key: str, query: str, num: int = 10, gl: str = "cn", 
+def serper_search(api_key: str, query: str, gl: str = "cn", 
                   hl: str = "zh-cn", time_range: str = "y") -> List[Dict]:
     """
-    便捷函数：执行 Serper 搜索并返回格式化结果
+    便捷函数：执行 Serper 搜索并返回格式化结果（固定约 10 条）
     
     Args:
         api_key: Serper API Key
         query: 搜索查询词
-        num: 返回结果数量
         gl: 国家/地区代码
         hl: 语言代码
         time_range: 时间范围
     
     Returns:
-        格式化后的搜索结果列表
+        格式化后的搜索结果列表，约 10 条
     """
+    # 验证 API key
+    if not api_key or not isinstance(api_key, str) or api_key.strip() == '':
+        logger.error("Serper API Key 无效或为空，无法执行搜索")
+        return []
+    
     searcher = SerperSearch(api_key)
-    return searcher.get_formatted_results(query, num, gl, hl, time_range)
+    return searcher.get_formatted_results(query, gl, hl, time_range)

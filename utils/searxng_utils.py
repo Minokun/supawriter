@@ -21,7 +21,9 @@ from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True  # Python 3.8+ 强制重新配置，确保在多模块环境中生效
 )
 logger = logging.getLogger(__name__)
 
@@ -104,6 +106,7 @@ from utils.embedding_utils import (
 from utils.embedding_utils import create_faiss_index
 from utils.image_search_indexer import index_ddgs_images
 from utils.serper_search import serper_search
+from utils.ddgs_utils import search_ddgs
 
 max_workers = 20
 
@@ -320,14 +323,13 @@ def llm_task(search_result, question, output_type, model_type, model_name, max_w
 class Search:
     def __init__(self, result_num=DEFAULT_SPIDER_NUM):
         """
-        初始化搜索引擎类，设置默认结果数量
-        :param result_num: 搜索结果数量，默认为8
+        初始化搜索引擎类，使用 DDGS + Serper 双引擎搜索
+        :param result_num: DDGS 搜索结果数量，默认为 DEFAULT_SPIDER_NUM (30)
+                          Serper 固定返回 10 条结果
         """
-        self.search_url = "http://localhost:8080"  # 搜索引擎URL
-        # self.search_url = "http://searxng.sevnday.top"  # 搜索引擎URL
-        self.result_num = result_num  # 结果数量
-        self.search_query = ""
-        self.optimized_query = ""
+        self.result_num = result_num  # DDGS 结果数量
+        self.search_query = ""  # 原始查询词
+        self.optimized_query = ""  # 优化后的查询词
 
     def deduplicate_urls(self, urls_with_data, key='url'):
         """
@@ -378,66 +380,76 @@ class Search:
     def query_search(self, query: str):
         """
         发送请求到搜索引擎，获取JSON响应
-        整合 SearXNG 和 Serper 搜索结果
+        整合 DDGS 和 Serper 搜索结果
         :param query: 查询词（已优化）
         :return: JSON数据，包含合并后的搜索结果
         """
         all_results = []
+        ddgs_count = 0
+        serper_count = 0
         
-        # 1. 发送请求到 SearXNG 搜索引擎
-        params = {
-            "q": query,
-            "format": "json",
-            "pageno": 1,
-            "engines": ','.join(["google", "bing", "duckduckgo", "yahoo", "qwant", "presearch"]),  # 减少搜索引擎数量，提高相关性
-            "time_range": "",  # 不限制时间范围
-            "safesearch": 0,  # 关闭安全搜索
-            "categories": "general",  # 只搜索一般类别
-        }
+        # 1. 使用 DDGS (DuckDuckGo Search) 搜索
         try:
-            response = requests.get(self.search_url, params=params, verify=False)
-            data = response.json()
-            searxng_results = data.get('results', [])
-            logger.info(f"SearXNG 搜索结果: {len(searxng_results)} 条")
-            all_results.extend(searxng_results)
+            logger.info(f"DDGS 搜索开始: {query}, 最大结果数: {self.result_num}")
+            ddgs_raw_results = search_ddgs(query, search_type="text", max_results=self.result_num)
+            
+            # 转换 DDGS 结果为统一格式
+            ddgs_results = []
+            for idx, item in enumerate(ddgs_raw_results):
+                formatted_item = {
+                    'title': item.get('title', ''),
+                    'url': item.get('href', ''),  # DDGS 使用 'href'
+                    'content': item.get('body', ''),  # DDGS 使用 'body'
+                    'score': 1.0 - idx * 0.03,  # 根据位置计算分数
+                    'source': 'ddgs'  # 标记来源
+                }
+                ddgs_results.append(formatted_item)
+            
+            ddgs_count = len(ddgs_results)
+            logger.info(f"DDGS 搜索结果: {ddgs_count} 条")
+            all_results.extend(ddgs_results)
         except Exception as e:
-            logger.error(f"SearXNG 搜索失败: {e}")
+            logger.error(f"DDGS 搜索失败: {e}")
         
-        # 2. 发送请求到 Serper 搜索引擎
-        try:
-            serper_results = serper_search(
-                api_key=SERPER_API_KEY,
-                query=query,
-                num=10,  # 获取10条结果
-                gl="cn",
-                hl="zh-cn",
-                time_range="y"  # 一年内的结果
-            )
-            logger.info(f"Serper 搜索结果: {len(serper_results)} 条")
-            all_results.extend(serper_results)
-        except Exception as e:
-            logger.error(f"Serper 搜索失败: {e}")
+        # 2. 使用 Serper 搜索引擎（仅当 API Key 有效时）
+        if SERPER_API_KEY:
+            try:
+                logger.info(f"Serper 搜索开始: query='{query}'")
+                serper_results = serper_search(
+                    api_key=SERPER_API_KEY,
+                    query=query,
+                    gl="cn",
+                    hl="zh-cn",
+                    time_range="y"  # 一年内的结果
+                )
+                
+                if serper_results:
+                    serper_count = len(serper_results)
+                    logger.info(f"Serper 搜索结果: {serper_count} 条")
+                    all_results.extend(serper_results)
+                else:
+                    logger.warning("Serper 搜索返回空列表")
+            except Exception as e:
+                logger.error(f"Serper 搜索失败: {e}", exc_info=True)
+        else:
+            logger.info("Serper API Key 未配置，跳过 Serper 搜索")
         
         # 3. 返回合并后的结果
-        logger.info(f"合并搜索结果: SearXNG + Serper = {len(all_results)} 条")
+        logger.info(f"合并搜索结果: DDGS ({ddgs_count}) + Serper ({serper_count}) = 总计 {len(all_results)} 条")
         return {'results': all_results}
 
     def get_search_result(self, question: str, is_multimodal=False, use_direct_image_embedding=False, theme="", spider_mode=False, progress_callback: Optional[callable] = None, username: str = None, article_id: str = None):
         # 先优化查询词，提取关键词
         self.search_query = question
-        optimizeq = chat(question, system_prompt="""你是搜索引擎查询优化专家。请将用户的问题转换为更适合Google、Bing等搜索引擎的查询词。
+        optimizeq = chat(question, system_prompt="""你是搜索引擎查询优化专家。请将用户的问题转换为更适合搜索引擎的查询词。
                 优化规则：
                 1. 提取核心关键词和概念，去除无关的停用词（如"请问"、"怎么"、"如何"等）
                 2. 保留专业术语、品牌名称、技术名词的完整性
-                3. 适当使用引号("")包裹核心短语，保持短语完整性
-                4. 对于多个关键概念，使用空格或AND连接
-                5. 不要过度复杂化，保持查询的可读性和有效性
+                3. 关键词之间使用空格分隔，不要使用引号、括号等特殊符号
+                4. 保持查询词简洁自然，避免过于复杂的搜索语法
+                5. 保留年份、版本号等重要限定词
 
-                示例：
-                - 输入："请问如何使用Python进行数据分析？"
-                - 输出：Python 数据分析 教程
-
-                直接输出优化后的查询词，不要解释。""")
+                直接输出优化后的查询词，不要解释，不要添加引号。""")
         logger.info(f"优化后的搜索词: {optimizeq}")
         self.optimized_query = optimizeq
         
@@ -693,9 +705,12 @@ class Search:
                             chunk_size=10,
                             log_fn=lambda level, msg: getattr(logger, level if level in ("info","warning","error","debug") else "info")(msg)
                         )
-                        logger.info(f"DDGS图片补充完成，新增 {ddgs_added} 条。")
+                        if ddgs_added > 0:
+                            logger.info(f"DDGS图片补充完成，新增 {ddgs_added} 条。")
+                        else:
+                            logger.info(f"DDGS图片补充完成，但未新增图片（可能是无搜索结果或反爬虫限制）。")
                 except Exception as e:
-                    logger.error(f"DDGS图片补充阶段出错: {e}")
+                    logger.warning(f"DDGS图片补充阶段跳过: {e}（这是正常现象，不影响文章生成）")
             # 返回整合后的结果
             return search_result
         # 如果没有可爬取的URL，也直接返回（仍可由调用方决定是否触发DDGS）

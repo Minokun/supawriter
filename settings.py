@@ -181,12 +181,22 @@ PROCESS_CONFIG = {
 
 # 文章生成设置
 # 爬取网页数量默认值
-DEFAULT_SPIDER_NUM = 20
+DEFAULT_SPIDER_NUM = 30
 # 是否自动插入相关图片默认值
 DEFAULT_ENABLE_IMAGES = True
 # 图片嵌入方式 ('multimodal' 或 'direct_embedding')
 DEFAULT_IMAGE_EMBEDDING_METHOD = 'multimodal'
 
 # Serper 搜索引擎 API 设置
-# 从 secrets 中获取 API key，如果不存在则使用默认值
+# 从 secrets 中获取 API key
 SERPER_API_KEY = st.secrets.get('SERPER_API_KEY')
+if SERPER_API_KEY and isinstance(SERPER_API_KEY, str):
+    SERPER_API_KEY = SERPER_API_KEY.strip()
+    if SERPER_API_KEY:
+        logging.info(f"✅ Serper API Key 已配置: {SERPER_API_KEY[:10]}...{SERPER_API_KEY[-4:]}")
+    else:
+        SERPER_API_KEY = None
+        logging.warning("⚠️ Serper API Key 为空字符串")
+else:
+    SERPER_API_KEY = None
+    logging.warning("⚠️ Serper API Key 未配置")

@@ -3,6 +3,7 @@ import openai
 import sys
 import logging
 import datetime
+import re
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
 from settings import LLM_MODEL, LLM_PROVIDERS
@@ -67,7 +68,11 @@ def main():
             if msg["role"] == "user":
                 markdown_content += f"## 👤 用户\n\n{msg['content']}\n\n"
             else:  # assistant
-                markdown_content += f"## 🤖 AI助手\n\n{msg['content']}\n\n"
+                # 如果有 thinking 内容，也包含在导出中
+                if msg.get('thinking'):
+                    markdown_content += f"## 🤖 AI助手\n\n### 💭 思考过程\n\n{msg['thinking']}\n\n### 📝 回复内容\n\n{msg['content']}\n\n"
+                else:
+                    markdown_content += f"## 🤖 AI助手\n\n{msg['content']}\n\n"
                 
         return markdown_content
     
@@ -280,7 +285,13 @@ def main():
         # 显示所有聊天消息
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+                # 如果是助手消息且包含 thinking 内容，使用可折叠显示
+                if message["role"] == "assistant" and message.get("thinking"):
+                    with st.expander("💭 查看思考过程", expanded=False):
+                        st.markdown(message["thinking"])
+                    st.markdown(message["content"])
+                else:
+                    st.markdown(message["content"])
     
     # 添加轻量级分隔线和空间，使输入区域更明显
     st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
@@ -304,10 +315,12 @@ def main():
         else:
             try:
                 with st.chat_message("assistant"):
+                    thinking_placeholder = st.empty()
                     message_placeholder = st.empty()
                     full_response = ""
+                    thinking_content = ""
                     
-                    # 创建消息列表，确保格式正确
+                    # 创建消息列表，确保格式正确（只包含 content，不包含 thinking）
                     messages = []
                     for m in st.session_state.messages:
                         if m["role"] == "assistant":
@@ -332,13 +345,51 @@ def main():
                                 stream=True,
                                 max_tokens=8000,
                             )
+                        
                         # 处理流式响应
                         for chunk in stream:
                             if chunk.choices and len(chunk.choices) > 0:
-                                content = chunk.choices[0].delta.content
+                                delta = chunk.choices[0].delta
+                                
+                                # 检查是否有 reasoning_content 字段（deepseek、o1 等模型）
+                                if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                                    thinking_content += delta.reasoning_content
+                                    # 实时显示思考过程
+                                    with thinking_placeholder.container():
+                                        with st.expander("💭 思考过程（实时）", expanded=True):
+                                            st.markdown(thinking_content + "▌")
+                                
+                                # 处理常规内容
+                                content = delta.content
                                 if content is not None:
                                     full_response += content
                                     message_placeholder.markdown(full_response + "▌")
+                        
+                        # 从响应中提取可能的 XML 格式的 thinking 标签
+                        # 支持 <think>、<thinking>、<thought> 等标签
+                        if not thinking_content and full_response:
+                            think_patterns = [
+                                r'<think>(.*?)</think>',
+                                r'<thinking>(.*?)</thinking>',
+                                r'<thought>(.*?)</thought>'
+                            ]
+                            for pattern in think_patterns:
+                                matches = re.findall(pattern, full_response, re.DOTALL)
+                                if matches:
+                                    thinking_content = '\n\n'.join(matches)
+                                    # 从响应中移除 thinking 标签
+                                    full_response = re.sub(pattern, '', full_response, flags=re.DOTALL).strip()
+                                    break
+                        
+                        # 清空占位符并显示最终内容
+                        thinking_placeholder.empty()
+                        message_placeholder.empty()
+                        
+                        # 如果有 thinking 内容，使用可折叠显示
+                        if thinking_content:
+                            with thinking_placeholder.container():
+                                with st.expander("💭 查看思考过程", expanded=False):
+                                    st.markdown(thinking_content)
                         
                         # 显示最终响应
                         message_placeholder.markdown(full_response)
@@ -347,9 +398,12 @@ def main():
                         if full_response:
                             # 为文件名生成一个唯一的时间戳
                             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                            download_content = full_response
+                            if thinking_content:
+                                download_content = f"## 💭 思考过程\n\n{thinking_content}\n\n## 📝 回复内容\n\n{full_response}"
                             st.download_button(
                                 label="📥 保存此条回复",
-                                data=full_response,
+                                data=download_content,
                                 file_name=f"ai_response_{timestamp}.md",
                                 mime="text/markdown",
                                 key=f"download_{timestamp}" # 使用唯一key避免冲突
@@ -357,11 +411,15 @@ def main():
                     except Exception as e:
                         error_msg = f"AI响应错误: {str(e)}"
                         logger.error(error_msg)
+                        thinking_placeholder.empty()
                         message_placeholder.error(error_msg)
                         full_response = error_msg
                         
-                # 添加助手回复到历史记录
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
+                # 添加助手回复到历史记录（包含 thinking 内容）
+                message_data = {"role": "assistant", "content": full_response}
+                if thinking_content:
+                    message_data["thinking"] = thinking_content
+                st.session_state.messages.append(message_data)
                 
                 # --- 延迟创建和保存逻辑 ---
                 # 只有当对话至少有一轮（用户提问+AI回答）时才保存

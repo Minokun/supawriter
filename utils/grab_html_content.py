@@ -1,4 +1,5 @@
 import os
+import sys
 # 将本文件上一级目录作为主目录
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import asyncio
@@ -29,7 +30,9 @@ import threading
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True
 )
 logger = logging.getLogger(__name__)
 
@@ -121,7 +124,7 @@ def get_streamlit_faiss_index(username: str = None, article_id: str = None):
     return faiss_index
 
 # 常量配置
-MIN_IMAGE_SIZE = 20 * 1024  # 降低到20KB以捕获更多图片
+MIN_IMAGE_SIZE = 8 * 1024  # 降低到8KB，支持webp等高度优化的格式
 VALID_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'}  # 增加更多图片格式
 IMAGES_DIR = Path('images')
 IMAGES_DIR.mkdir(exist_ok=True)
@@ -395,21 +398,21 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                     return None
                 # 发送为base64
                 try:
-                    logger.info(
-                        "Multimodal sending (CSDN base64) image_url=%s bytes=%d task_id=%s user=%s article_id=%s",
-                        normalized_img_src, len(content), task_id, username, article_id,
+                    logger.debug(
+                        "Multimodal sending (CSDN base64) image_url=%s bytes=%d task_id=%s",
+                        normalized_img_src, len(content), task_id,
                     )
                     result = process_image(image_content=content)
+                except asyncio.CancelledError:
+                    logger.debug(f"CSDN multimodal skipped (cancelled): {normalized_img_src}")
+                    image_hash_cache[normalized_img_src] = None
+                    stats['skipped'] += 1 if stats else 0
+                    return None
                 except Exception as e:
-                    logger.exception(
-                        "CSDN multimodal via base64 failed: %r (%s) | image_url=%s task_id=%s user=%s article_id=%s",
-                        e, type(e).__name__, normalized_img_src, task_id, username, article_id,
+                    logger.debug(
+                        "CSDN multimodal via base64 failed: %s (%s) | url=%s",
+                        str(e) or "Unknown error", type(e).__name__, normalized_img_src
                     )
-                    if isinstance(e, asyncio.CancelledError):
-                        logger.debug(f"CSDN multimodal via base64 skipped due to cancellation: {normalized_img_src}")
-                        image_hash_cache[normalized_img_src] = None
-                        stats['skipped'] += 1 if stats else 0
-                        return None
                     image_hash_cache[normalized_img_src] = None
                     stats['failed'] += 1 if stats else 0
                     return None
@@ -436,7 +439,8 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                     stats['failed'] += 1 if stats else 0
                     return None
             except Exception as e:
-                logger.error(f"CSDN multimodal via base64 failed: {e}")
+                # 这里捕获的是下载阶段的错误（非多模态处理错误）
+                logger.debug(f"CSDN image download/processing error: {str(e) or 'Unknown'} | url={normalized_img_src}")
                 image_hash_cache[normalized_img_src] = None
                 stats['failed'] += 1 if stats else 0
                 return None
@@ -735,14 +739,14 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                     logger.debug(f"Skipping common icon size: {img_src} ({width}x{height})")
                     return True
                     
-                # 检查是否为小图片 - 降低尺寸限制
-                if width < 150 and height < 150:
+                # 检查是否为小图片 - 要求至少一边大于100px
+                if width < 100 and height < 100:
                     logger.debug(f"Skipping small image: {img_src} ({width}x{height})")
                     return True
                     
-                # 检查宽高比例 - 放宽比例限制
+                # 检查宽高比例 - 进一步放宽比例限制以支持banner和竖长图
                 ratio = width / height
-                if ratio > 8 or ratio < 0.125:  # 更宽容的比例限制
+                if ratio > 12 or ratio < 0.08:  # 允许12:1的横幅和1:12的竖长图
                     logger.debug(f"Skipping abnormal aspect ratio: {img_src} (ratio: {ratio:.2f})")
                     return True
                     

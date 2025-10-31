@@ -46,8 +46,12 @@ def index_ddgs_images(
     _log('info', f"开始使用DDGS进行图片搜索以丰富索引: query='{query}' ...")
 
     # 1) Search images via shared util
-    ddgs_results = search_ddgs(query, 'images', max_results=max_results)
-    _log('info', f"DDGS图片搜索完成，获取到 {len(ddgs_results)} 条图片结果")
+    try:
+        ddgs_results = search_ddgs(query, 'images', max_results=max_results)
+        _log('info', f"DDGS图片搜索完成，获取到 {len(ddgs_results)} 条图片结果")
+    except Exception as e:
+        _log('warning', f"DDGS图片搜索失败: {e}，将跳过图片补充")
+        return 0
 
     # 2) Prepare URLs and payloads
     image_urls: List[str] = []
@@ -67,7 +71,10 @@ def index_ddgs_images(
         image_urls.append(image_url)
 
     if not image_urls:
-        _log('warning', 'DDGS未返回有效图片URL，跳过索引更新。')
+        if not ddgs_results:
+            _log('info', 'DDGS图片搜索无结果（可能是反爬虫限制或查询词无匹配），跳过图片补充。')
+        else:
+            _log('warning', 'DDGS返回结果但未包含有效图片URL，跳过索引更新。')
         return 0
 
     # 3) Batch embed and add to FAISS

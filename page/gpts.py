@@ -471,7 +471,7 @@ def main():
         """, unsafe_allow_html=True)
     
     # 第三行：新增AI模型平台
-    ai_col9, ai_col10 = st.columns(2)
+    ai_col9, ai_col10, ai_col11 = st.columns(3)
     
     with ai_col9:
         st.markdown("""
@@ -490,6 +490,16 @@ def main():
             <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">超算互联网</div>
             <div class="nav-desc" style="height: 40px;">算力与AI服务商城，一站式算力资源平台</div>
             <a href="https://www.scnet.cn/ui/mall/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #FF5722, #FF9800); font-weight: 700;">进入平台</a>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with ai_col11:
+        st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #FF6B35;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #FF6B35;">🎯</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">MiniMax</div>
+            <div class="nav-desc" style="height: 40px;">国产领先多模态大模型，支持文本、语音、视频生成</div>
+            <a href="https://www.minimaxi.com/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #FF6B35, #F7931E); font-weight: 700;">进入平台</a>
         </div>
         """, unsafe_allow_html=True)
         

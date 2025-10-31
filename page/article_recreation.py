@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import sys
+import re
 
 # Add the parent directory to sys.path to ensure imports work correctly
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -14,6 +15,36 @@ from utils.history_utils import load_user_history, add_history_record, save_html
 from utils.llm_chat import chat
 from settings import LLM_MODEL, ARTICLE_TRANSFORMATIONS
 from utils.config_manager import get_config
+
+# 辅助函数：清理大模型输出中的 thinking 标签
+def remove_thinking_tags(content):
+    """
+    移除大模型输出中的 thinking 标签及其内容
+    支持的标签格式：<thinking>、<think>、<thought>
+    只移除独立成段的thinking标签，避免误删代码示例中的内容
+    """
+    if not content or not isinstance(content, str):
+        return content
+    
+    # 只在内容开头或换行后匹配thinking标签，避免误删代码示例
+    # 使用更严格的匹配模式：标签前后必须有换行或在字符串开头/结尾
+    think_patterns = [
+        r'(?:^|\n)\s*<thinking>.*?</thinking>\s*(?:\n|$)',
+        r'(?:^|\n)\s*<think>.*?</think>\s*(?:\n|$)',
+        r'(?:^|\n)\s*<thought>.*?</thought>\s*(?:\n|$)'
+    ]
+    
+    cleaned_content = content
+    for pattern in think_patterns:
+        # 使用 DOTALL 标志使 . 匹配包括换行符在内的所有字符
+        # 保留匹配前后的换行符，只删除标签本身
+        cleaned_content = re.sub(pattern, '\n', cleaned_content, flags=re.DOTALL | re.IGNORECASE)
+    
+    # 清理可能产生的多余空行（3个或以上换行符减少为2个）
+    cleaned_content = re.sub(r'\n{3,}', '\n\n', cleaned_content)
+    
+    # 清理首尾多余空行，但保留基本格式
+    return cleaned_content.strip('\n')
 
 @require_auth
 def main():
@@ -84,6 +115,7 @@ def main():
                     model_type=model_type, 
                     model_name=model_name
                 )
+                transformed_content = remove_thinking_tags(transformed_content)  # 清理 thinking 标签
                 st.success(f"{selected_transformation_name} 完成！")
             except ConnectionError as e:
                 st.error(f"{selected_transformation_name} 转换错误: {str(e)}")

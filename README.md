@@ -27,7 +27,13 @@
    - 提供AI视频创作工具链接：即梦、剪映等视频创作平台
    - 本地Markdown编辑器和内容管理工具
 
-4. **用户系统与历史记录**
+4. **多渠道认证系统**
+   - **Google OAuth2**：基于 Streamlit 原生支持的 Google 账号登录
+   - **微信开放平台**：支持微信扫码登录，适合国内用户
+   - **本地账号**：传统用户名密码登录方式
+   - 用户数据完全隔离，支持多账号切换
+
+5. **用户系统与历史记录**
    - 多用户支持，数据隔离
    - 创作历史记录和数据分析
    - 个性化设置和偏好保存
@@ -166,17 +172,34 @@ graph TD
 
 - **`.streamlit/secrets.toml`**: 配置必要的API密钥和访问凭证
   ```toml
+  # ========== 认证配置 ==========
+  # Google OAuth2 配置（Streamlit 原生支持）
+  # 申请地址: https://console.cloud.google.com/apis/credentials
+  # 文档: https://docs.streamlit.io/develop/tutorials/sso
+  [auth.google]
+  client_id = "your_google_client_id.apps.googleusercontent.com"
+  client_secret = "your_google_client_secret"
+  
+  # 微信开放平台 OAuth2 配置（可选）
+  # 申请地址: https://open.weixin.qq.com/
+  # 文档: https://developers.weixin.qq.com/doc/oplatform/Website_App/WeChat_Login/Wechat_Login.html
+  [wechat]
+  app_id = "your_wechat_app_id"           # 微信开放平台应用的 AppID
+  app_secret = "your_wechat_app_secret"   # 微信开放平台应用的 AppSecret
+  redirect_uri = "http://localhost:8501"  # 授权回调地址，需要在微信开放平台配置
+  
+  # ========== AI 模型配置 ==========
   # 大语言模型配置
-  [llm]
-  provider = "openai"  # 可选: openai, wenxin, tongyi, xinference, jina
-  api_key = "your_api_key"
+  [openai]
   model = "gpt-4-turbo"
+  base_url = "https://api.openai.com/v1"
+  api_key = "your_openai_api_key"
   
   # 视觉语言模型配置
-  [vl_model]
-  provider = "glm"  # 可选: glm, qwen
-  api_key = "your_api_key"
+  [glm]
   model = "glm-4-vision"
+  base_url = "https://open.bigmodel.cn/api/paas/v4"
+  api_key = "your_glm_api_key"
   
   # Serper 搜索引擎 API（可选，提供额外的搜索结果）
   SERPER_API_KEY = "your_serper_api_key"
@@ -255,11 +278,42 @@ graph TD
    ```
 
 2. **配置API密钥**
-   - 创建`.streamlit/secrets.toml`文件
-   - 根据上述配置说明添加必要的API密钥
+   - 复制 `.streamlit/secrets.toml.example` 为 `.streamlit/secrets.toml`
+   - 根据配置说明添加必要的API密钥
    - **可选**：配置 Serper API Key 以获得更多搜索结果
 
-3. **启动应用**
+3. **配置认证系统（可选）**
+   
+   项目支持三种登录方式，可根据需求配置：
+   
+   **a) Google OAuth2 登录（推荐）**
+   ```
+   1. 访问 Google Cloud Console: https://console.cloud.google.com/
+   2. 创建新项目或选择现有项目
+   3. 启用 "Google+ API"
+   4. 创建 OAuth 2.0 客户端 ID（应用类型：Web 应用）
+   5. 添加授权重定向 URI: http://localhost:8501
+   6. 将 Client ID 和 Client Secret 填入 secrets.toml 的 [auth.google] 部分
+   ```
+   
+   **b) 微信开放平台登录**
+   ```
+   1. 访问微信开放平台: https://open.weixin.qq.com/
+   2. 注册开发者账号并创建网站应用
+   3. 填写应用信息，通过审核后获得 AppID 和 AppSecret
+   4. 在"网站信息"中配置授权回调域（如: localhost 或你的域名）
+   5. 将 AppID、AppSecret 和回调 URL 填入 secrets.toml 的 [wechat] 部分
+   
+   注意：
+   - redirect_uri 必须与微信开放平台配置的回调域一致
+   - 本地开发可使用 http://localhost:8501
+   - 生产环境需要使用 https 和已备案的域名
+   ```
+   
+   **c) 本地账号登录**
+   - 无需额外配置，首次使用时注册即可
+
+4. **启动应用**
    ```bash
    streamlit run web.py
    ```
@@ -278,6 +332,15 @@ graph TD
 超级写手由一个致力于AI辅助创作的团队开发，我们的目标是让内容创作变得更加高效、智能和有趣。
 
 ## 📦 最近更新
+
+### v2.1 (2025-10)
+
+- ✅ **多渠道认证系统**：新增微信开放平台登录支持
+  - 支持 Google OAuth2 登录
+  - 支持微信扫码登录（适合国内用户）
+  - 支持传统本地账号登录
+  - 用户数据完全隔离，多账号自由切换
+- ✅ **用户体验优化**：登录页面支持显示微信头像和用户信息
 
 ### v2.0 (2025-10)
 

@@ -129,22 +129,31 @@ def is_authenticated():
     """Check if user is authenticated.
 
     Priority:
-    1) OAuth2 via Streamlit: st.user.is_logged_in
-    2) Legacy session/cookie fallback
+    1) WeChat OAuth2
+    2) Streamlit OAuth2: st.user.is_logged_in
+    3) Legacy session/cookie fallback
     """
-    # 1) Prefer Streamlit OAuth2 user state if available
+    # 1) Check WeChat OAuth authentication
+    try:
+        from utils.wechat_oauth import is_wechat_authenticated
+        if is_wechat_authenticated():
+            return True
+    except Exception:
+        pass
+
+    # 2) Prefer Streamlit OAuth2 user state if available
     try:
         if _has_streamlit_context() and hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
             return True
     except Exception:
         pass
 
-    # 2) Legacy: Check if user is in session state (only when context exists)
+    # 3) Legacy: Check if user is in session state (only when context exists)
     if _has_streamlit_context():
         if "user" in st.session_state and st.session_state.user is not None:
             return True
 
-    # 3) Legacy: Try to load from cookie
+    # 4) Legacy: Try to load from cookie
     try:
         # Avoid touching Streamlit components outside context
         if _has_streamlit_context():
@@ -171,8 +180,21 @@ def is_authenticated():
 def get_user_id():
     """Return a stable user ID for storage and paths.
 
-    Priority: OAuth subject (sub) -> email -> legacy session username -> name.
+    Priority: WeChat openid -> OAuth subject (sub) -> email -> legacy session username -> name.
     """
+    # 1) Check WeChat user
+    try:
+        if _has_streamlit_context() and 'wechat_user_info' in st.session_state:
+            # 优先使用 unionid（跨应用唯一），如果没有则使用 openid
+            wechat_info = st.session_state.wechat_user_info
+            if wechat_info.get('unionid'):
+                return f"wechat_{wechat_info['unionid']}"
+            elif wechat_info.get('openid'):
+                return f"wechat_{wechat_info['openid']}"
+    except Exception:
+        pass
+    
+    # 2) Check Streamlit OAuth
     try:
         if _has_streamlit_context() and hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
             if hasattr(st.user, "sub") and st.user.sub:
@@ -183,7 +205,8 @@ def get_user_id():
                 return st.user.name
     except Exception:
         pass
-    # Avoid touching Streamlit state when no context (e.g., background threads)
+    
+    # 3) Avoid touching Streamlit state when no context (e.g., background threads)
     if _has_streamlit_context():
         if "user" in st.session_state and st.session_state.user:
             return st.session_state.user
@@ -192,8 +215,18 @@ def get_user_id():
 def get_user_display_name():
     """Return a friendly display name for UI.
 
-    Priority: OAuth name -> email -> legacy session username.
+    Priority: WeChat nickname -> OAuth name -> email -> legacy session username.
     """
+    # 1) Check WeChat user nickname
+    try:
+        if _has_streamlit_context() and 'wechat_user_info' in st.session_state:
+            nickname = st.session_state.wechat_user_info.get('nickname')
+            if nickname:
+                return nickname
+    except Exception:
+        pass
+    
+    # 2) Check Streamlit OAuth
     try:
         if _has_streamlit_context() and hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
             if getattr(st.user, "name", None):
@@ -202,6 +235,8 @@ def get_user_display_name():
                 return st.user.email
     except Exception:
         pass
+    
+    # 3) Check legacy session
     if _has_streamlit_context() and "user" in st.session_state and st.session_state.user:
         return st.session_state.user
     return "用户"
@@ -232,20 +267,27 @@ def get_user_motto(username=None):
 def logout():
     """Log out the current user.
 
-    Prefer Streamlit OAuth2 logout; also clear legacy session/cookie.
+    Clear WeChat, Streamlit OAuth2, and legacy session/cookie.
     """
-    # OAuth2 logout if available
+    # 1) WeChat logout
+    try:
+        from utils.wechat_oauth import wechat_logout
+        wechat_logout()
+    except Exception:
+        pass
+
+    # 2) OAuth2 logout if available
     try:
         if _has_streamlit_context() and hasattr(st, "logout"):
             st.logout()
     except Exception:
         pass
 
-    # Legacy session cleanup (only when context exists)
+    # 3) Legacy session cleanup (only when context exists)
     if _has_streamlit_context() and "user" in st.session_state:
         st.session_state.user = None
 
-    # Clear legacy auth token from cookie
+    # 4) Clear legacy auth token from cookie
     try:
         if _has_streamlit_context():
             cookie_manager = get_cookie_manager()

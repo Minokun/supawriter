@@ -39,18 +39,29 @@ def search_ddgs(query: str, search_type: str, max_results: int = 30) -> List[dic
     try:
         with DDGS() as ddgs:
             if search_type == "text":
-                return list(ddgs.text(query, max_results=max_results))
+                results = list(ddgs.text(query, max_results=max_results))
             elif search_type == "images":
-                return list(ddgs.images(query, max_results=max_results))
+                results = list(ddgs.images(query, max_results=max_results))
             elif search_type == "videos":
-                return list(ddgs.videos(query, max_results=max_results))
+                results = list(ddgs.videos(query, max_results=max_results))
             elif search_type == "news":
-                return list(ddgs.news(query, max_results=max_results))
+                results = list(ddgs.news(query, max_results=max_results))
             else:
                 raise ValueError(f"Unsupported search_type: {search_type}")
+            
+            # 返回结果，即使为空列表
+            return results if results else []
+            
     except Exception as e:
         # Gracefully handle explicit timeout without retries
         if TimeoutException is not None and isinstance(e, TimeoutException):
             return []
-        # Let caller decide how to display other errors
+        
+        # 处理常见的"无结果"情况，不抛出异常
+        error_msg = str(e).lower()
+        if any(keyword in error_msg for keyword in ['no results', 'ratelimit', 'blocked', '403', '429']):
+            # 这些都是正常的"无结果"情况，返回空列表而不是抛异常
+            return []
+        
+        # 其他真正的错误才抛出
         raise RuntimeError(f"DDGS search failed: {e}\n{traceback.format_exc()}")

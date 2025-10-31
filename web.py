@@ -228,7 +228,7 @@ else:
     if os.path.exists(wechat_qr_path):
         qr_container = st.sidebar.container()
         with qr_container:
-            st.image(wechat_qr_path, caption="微信公众号二维码", use_container_width=True)
+            st.image(wechat_qr_path, caption="微信公众号二维码", width='stretch')
     
     # 获取用户座右铭
     user_motto = get_user_motto()

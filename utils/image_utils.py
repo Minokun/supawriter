@@ -3,6 +3,7 @@ Image utilities for downloading and managing images.
 """
 
 import os
+import sys
 import requests
 import logging
 import uuid
@@ -10,7 +11,12 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True
+)
 logger = logging.getLogger(__name__)
 
 def download_image(image_url, save_dir, filename=None):
