@@ -172,6 +172,7 @@ async def is_valid_image_url_for_model(session: aiohttp.ClientSession, url: str)
     规则：
     - 必须是http/https
     - 过滤data:、空URL
+    - 过滤广告跟踪域名和URL模式
     - 后缀或Content-Type不得为svg
     - 通过HEAD获取Content-Type应为image/*；若有Content-Length则不小于MIN_MODEL_IMAGE_SIZE
     """
@@ -183,6 +184,51 @@ async def is_valid_image_url_for_model(session: aiohttp.ClientSession, url: str)
     if not (u.startswith('http://') or u.startswith('https://')):
         return False
     lower = u.lower()
+    
+    # 过滤广告跟踪域名
+    ad_domains = [
+        'kunyu.csdn.net',      # CSDN广告网络
+        'ad.csdn.net',         # CSDN广告
+        'ads.csdn.net',        # CSDN广告
+        'googleads.g.doubleclick.net',  # Google广告
+        'pagead2.googlesyndication.com', # Google广告
+        'doubleclick.net',     # 广告网络
+        'googlesyndication.com', # Google广告联盟
+        'adservice.google.com', # Google广告服务
+        'amazon-adsystem.com',  # 亚马逊广告
+        'scorecardresearch.com', # 广告跟踪
+        'advertising.com',     # 广告
+        'adnxs.com',          # AppNexus广告
+        'adsrvr.org',         # Trade Desk广告
+    ]
+    
+    # 检查是否为广告域名
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(u)
+        domain = parsed.netloc.lower()
+        for ad_domain in ad_domains:
+            if ad_domain in domain:
+                logger.debug(f"Filtered ad domain: {url}")
+                return False
+    except Exception:
+        pass
+    
+    # 过滤包含广告标识的URL
+    ad_indicators = [
+        'adid=', 'ad_id=', 'adblockflag=', 'ad_block',
+        'advertisement', 'ad_banner', 'ad_image',
+        'tracking_pixel', 'track_pixel', 'beacon',
+        'ad.png', 'ad.jpg', 'ad.gif', 'ad.webp',
+        'banner.png', 'banner.jpg', 'banner.gif',
+        '/ads/', '/ad/', '/advertisement/',
+    ]
+    
+    for indicator in ad_indicators:
+        if indicator in lower:
+            logger.debug(f"Filtered ad indicator URL: {url}")
+            return False
+    
     # 先用后缀粗过滤svg
     if lower.endswith('.svg') or 'format=svg' in lower:
         return False

@@ -471,7 +471,7 @@ def main():
         """, unsafe_allow_html=True)
     
     # 第三行：新增AI模型平台
-    ai_col9, ai_col10, ai_col11 = st.columns(3)
+    ai_col9, ai_col10, ai_col11, ai_col12 = st.columns(4)
     
     with ai_col9:
         st.markdown("""
@@ -500,6 +500,16 @@ def main():
             <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">MiniMax</div>
             <div class="nav-desc" style="height: 40px;">国产领先多模态大模型，支持文本、语音、视频生成</div>
             <a href="https://www.minimaxi.com/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #FF6B35, #F7931E); font-weight: 700;">进入平台</a>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with ai_col12:
+        st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #FFD100;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #FFD100;">🐱</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">LongCat</div>
+            <div class="nav-desc" style="height: 40px;">美团AI对话平台，支持多轮对话与智能问答</div>
+            <a href="https://longcat.chat/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #FFD100, #FFA900); font-weight: 700;">进入平台</a>
         </div>
         """, unsafe_allow_html=True)
         

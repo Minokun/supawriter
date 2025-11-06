@@ -8,6 +8,7 @@ import http.client
 import json
 import logging
 import ssl
+import time
 from typing import List, Dict, Optional
 
 # 配置日志
@@ -28,7 +29,7 @@ class SerperSearch:
         self.host = "google.serper.dev"
         
     def search(self, query: str, gl: str = "cn", hl: str = "zh-cn", 
-               time_range: str = "y") -> Optional[Dict]:
+               time_range: str = "y", max_retries: int = 2) -> Optional[Dict]:
         """
         执行搜索（注意：Serper API 固定返回约 10 条结果）
         
@@ -38,46 +39,91 @@ class SerperSearch:
             hl: 语言代码，默认"zh-cn"（简体中文）
             time_range: 时间范围，默认"y"（一年内）
                        可选值：h(小时), d(天), w(周), m(月), y(年)
+            max_retries: 最大重试次数，默认2次
         
         Returns:
             搜索结果 JSON 数据，约 10 条结果，失败返回 None
         """
-        try:
-            # 创建不验证 SSL 证书的上下文
-            context = ssl._create_unverified_context()
-            conn = http.client.HTTPSConnection(self.host, context=context)
-            
-            # 构建请求数据（注意：不包含 num 参数，API 固定返回约 10 条）
-            payload = json.dumps({
-                "q": query,
-                "gl": gl,
-                "hl": hl,
-                "tbs": f"qdr:{time_range}"
-            })
-            
-            # 设置请求头
-            headers = {
-                'X-API-KEY': self.api_key,
-                'Content-Type': 'application/json'
-            }
-            
-            # 发送请求
-            conn.request("POST", "/search", payload, headers)
-            res = conn.getresponse()
-            data = res.read()
-            
-            # 解析响应
-            result = json.loads(data.decode("utf-8"))
-            
-            logger.info(f"Serper 搜索成功: query='{query}', 结果数={len(result.get('organic', []))}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Serper 搜索失败: {e}")
-            return None
-        finally:
-            if 'conn' in locals():
-                conn.close()
+        last_error = None
+        
+        for attempt in range(max_retries + 1):
+            conn = None
+            try:
+                # 创建增强的SSL上下文
+                context = ssl.create_default_context()
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                # 设置更宽松的SSL选项，避免协议错误
+                context.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3
+                context.set_ciphers('DEFAULT@SECLEVEL=1')
+                
+                # 创建连接，设置20秒超时
+                conn = http.client.HTTPSConnection(
+                    self.host, 
+                    timeout=20,  # 添加超时设置
+                    context=context
+                )
+                
+                # 构建请求数据（注意：不包含 num 参数，API 固定返回约 10 条）
+                payload = json.dumps({
+                    "q": query,
+                    "gl": gl,
+                    "hl": hl,
+                    "tbs": f"qdr:{time_range}"
+                })
+                
+                # 设置请求头
+                headers = {
+                    'X-API-KEY': self.api_key,
+                    'Content-Type': 'application/json'
+                }
+                
+                # 发送请求
+                conn.request("POST", "/search", payload, headers)
+                res = conn.getresponse()
+                data = res.read()
+                
+                # 检查HTTP状态码
+                if res.status != 200:
+                    error_msg = f"HTTP {res.status}: {data.decode('utf-8', errors='ignore')}"
+                    logger.warning(f"Serper API返回错误 (尝试 {attempt + 1}/{max_retries + 1}): {error_msg}")
+                    last_error = error_msg
+                    continue
+                
+                # 解析响应
+                result = json.loads(data.decode("utf-8"))
+                
+                logger.info(f"Serper 搜索成功: query='{query}', 结果数={len(result.get('organic', []))}")
+                return result
+                
+            except ssl.SSLError as e:
+                last_error = f"SSL错误: {e}"
+                logger.warning(f"Serper SSL错误 (尝试 {attempt + 1}/{max_retries + 1}): {e}")
+                if attempt < max_retries:
+                    time.sleep(1)  # 重试前等待1秒
+                continue
+            except (http.client.HTTPException, ConnectionError, TimeoutError) as e:
+                last_error = f"网络错误: {e}"
+                logger.warning(f"Serper 网络错误 (尝试 {attempt + 1}/{max_retries + 1}): {e}")
+                if attempt < max_retries:
+                    time.sleep(1)
+                continue
+            except Exception as e:
+                last_error = f"未知错误: {e}"
+                logger.error(f"Serper 搜索异常 (尝试 {attempt + 1}/{max_retries + 1}): {e}")
+                if attempt < max_retries:
+                    time.sleep(1)
+                continue
+            finally:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except:
+                        pass
+        
+        # 所有重试都失败
+        logger.error(f"Serper 搜索失败，已重试{max_retries}次: {last_error}")
+        return None
     
     def get_formatted_results(self, query: str, gl: str = "cn", 
                              hl: str = "zh-cn", time_range: str = "y") -> List[Dict]:

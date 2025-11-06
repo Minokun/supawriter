@@ -161,15 +161,14 @@ ARTICLE_OUTLINE_BLOCK = """
     ---角色---
         你是一个专业的自媒体文章写作助手。
     ---任务---
-        请根据我给出的json格式的完整文章大纲和相关资料，撰写出我要求书写的大纲其中一部分的内容。
+        请根据我给出的json格式的完整文章大纲和相关资料，撰写出我要求书写的大纲本章节部分的内容。
     ---要求---
-        - 语言为中文，请确保内容详细、全面、准确，并与大纲中的标题和结构一致
-        - 如果是技术内容，则需要详细撰写步骤，step by step。
+        - 语言为中文，请确保内容精炼、准确，并与大纲中的标题和结构一致
         - 文本格式为markdown。优化文章格式，让文章更加易读。
         - 关键词加粗，“h1”,“h2”为markdown标题层级格式标识，h1使用markdown的标题符号##，h2使用###
         - 标题前后要添加换行，图片后也要添加换行
         - 要精简提炼，不要重复，尽可能有新意且独特的内容
-        - 不要撰写和主题弱相关的部分
+        - 不要撰写和主题弱相关的部分，要围绕本章主题进行，精炼且不要过于发散
         - 重点突出（加粗、引用）、字体舒适、留白得当。提升阅读体验。
         - 根据定位选择风格（专业、幽默、亲切、犀利等），保持一致性。
         - 不要做吹捧和过度宣传，用自己独到的角度去思考和撰写
@@ -225,7 +224,7 @@ CONVERT_2_SIMPLE = '''
 '''
 
 BENTO_WEB_PAGE = """
-你是一位顶级的前端设计师和开发工程师，精通现代网页设计和数据可视化。请基于【附件文档内容】的关键信息，生成一个采用Bento Grid风格的高质量中文动态网页，展示文章的核心内容。
+你是一位顶级的前端设计师和开发工程师，精通现代网页设计和数据可视化。请基于引用文章的关键信息，生成一个采用Bento Grid风格的高质量中文动态网页，展示文章的核心内容。
 
 ## 核心设计理念
 遵循苹果风格的设计哲学：简约、优雅、突出重点、层次分明。采用Bento Grid（卡片网格）布局，每个卡片承载一个核心概念或数据点。
@@ -306,140 +305,6 @@ BENTO_WEB_PAGE = """
 3. **数字动效**：
    - 重要数字使用计数动画(从0增长到目标值)
    - 可使用 CountUp.js 库
-
-## 技术栈要求
-```html
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[从内容中提取的标题]</title>
-    
-    <!-- TailwindCSS 3.4+ -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Chart.js 3.x（用于数据图表） -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
-    
-    <!-- Font Awesome 6.x（图标库） -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <!-- AOS动画库（可选，用于滚动动画） -->
-    <link href="https://unpkg.com/aos@2.3.1/dist/aos.css" rel="stylesheet">
-    <script src="https://unpkg.com/aos@2.3.1/dist/aos.js"></script>
-    
-    <!-- CountUp.js（可选，用于数字动画） -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/countup.js/2.6.2/countUp.umd.min.js"></script>
-    
-    <style>
-        /* 自定义样式 */
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
-        
-        body {
-            font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-        }
-        
-        /* 平滑滚动 */
-        html {
-            scroll-behavior: smooth;
-        }
-        
-        /* 自定义渐变背景 */
-        .gradient-bg {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        }
-        
-        /* 卡片悬停效果 */
-        .card-hover {
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-        .card-hover:hover {
-            transform: translateY(-4px) scale(1.02);
-            box-shadow: 0 20px 40px rgba(0,0,0,0.15);
-        }
-    </style>
-</head>
-```
-
-## 代码结构模板
-```html
-<body class="bg-gray-50 dark:bg-gray-900">
-    <!-- Hero Section: 超大标题 + 核心概述 -->
-    <section class="min-h-screen flex items-center justify-center px-8 py-20 gradient-bg">
-        <div class="max-w-6xl mx-auto text-center text-white">
-            <h1 class="text-7xl font-bold mb-6">[核心标题]</h1>
-            <p class="text-2xl opacity-90">[一句话概述]</p>
-        </div>
-    </section>
-    
-    <!-- Main Content: Bento Grid 布局 -->
-    <section class="max-w-7xl mx-auto px-8 py-20">
-        <div class="grid grid-cols-12 gap-6">
-            
-            <!-- 大卡片：核心数据 -->
-            <div class="col-span-12 md:col-span-6 bg-white dark:bg-gray-800 rounded-2xl p-12 shadow-xl card-hover">
-                <div class="text-8xl font-bold text-blue-600 mb-4">[关键数字]</div>
-                <div class="text-xl text-gray-600">[数字说明]</div>
-            </div>
-            
-            <!-- 小卡片：要点指标 -->
-            <div class="col-span-12 md:col-span-3 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl p-8 text-white shadow-xl card-hover">
-                <i class="fas fa-chart-line text-4xl mb-4"></i>
-                <div class="text-4xl font-bold mb-2">[数据]</div>
-                <div class="text-sm opacity-90">[指标名称]</div>
-            </div>
-            
-            <!-- 图表卡片 -->
-            <div class="col-span-12 md:col-span-6 bg-white dark:bg-gray-800 rounded-2xl p-8 shadow-xl">
-                <h3 class="text-2xl font-bold mb-6">[图表标题]</h3>
-                <canvas id="myChart"></canvas>
-            </div>
-            
-            <!-- 重复上述模式，根据内容生成足够的卡片 -->
-            
-        </div>
-    </section>
-    
-    <!-- JavaScript: 图表初始化、动画等 -->
-    <script>
-        // AOS动画初始化
-        AOS.init({
-            duration: 800,
-            once: true
-        });
-        
-        // Chart.js 图表示例
-        const ctx = document.getElementById('myChart').getContext('2d');
-        new Chart(ctx, {
-            type: 'bar', // 或 'line', 'pie', 'doughnut', 'radar'
-            data: {
-                labels: ['标签1', '标签2', '标签3'],
-                datasets: [{
-                    label: '数据集',
-                    data: [12, 19, 3],
-                    backgroundColor: 'rgba(99, 102, 241, 0.8)',
-                    borderRadius: 8
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: {
-                    legend: { display: true }
-                }
-            }
-        });
-        
-        // CountUp数字动画（可选）
-        const countUpOptions = {
-            duration: 2,
-            useEasing: true
-        };
-        new countUp.CountUp('number-element-id', 1234, countUpOptions).start();
-    </script>
-</body>
-</html>
-```
 
 ## 质量检查清单
 在生成最终代码前，请确认：

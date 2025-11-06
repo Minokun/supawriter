@@ -16,6 +16,76 @@ from utils.llm_chat import chat
 from settings import LLM_MODEL, ARTICLE_TRANSFORMATIONS
 from utils.config_manager import get_config
 
+
+def _extract_html_document(content: str) -> str:
+    """Try to extract a valid HTML document from LLM output."""
+    if not content or not isinstance(content, str):
+        return content
+
+    cleaned = content.strip()
+
+    # Prefer content inside fenced code blocks if present
+    fence_match = re.search(r"```(?:html)?\s*(.*?)```", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    if fence_match:
+        candidate = fence_match.group(1).strip()
+        if candidate:
+            cleaned = candidate
+
+    # Locate <!DOCTYPE html> if available
+    lower_cleaned = cleaned.lower()
+    doctype_idx = lower_cleaned.find('<!doctype html')
+    if doctype_idx != -1:
+        end_idx = lower_cleaned.rfind('</html>')
+        if end_idx != -1:
+            return cleaned[doctype_idx:end_idx + len('</html>')].strip()
+        return cleaned[doctype_idx:].strip()
+
+    # Fall back to extracting from the first <html ...> tag
+    html_idx = lower_cleaned.find('<html')
+    if html_idx != -1:
+        end_idx = lower_cleaned.rfind('</html>')
+        body = cleaned[html_idx:end_idx + len('</html>')] if end_idx != -1 else cleaned[html_idx:]
+        body = body.strip()
+        if not body.lower().startswith('<!doctype html'):
+            body = f"<!DOCTYPE html>\n{body}"
+        return body
+
+    # Remove stray fences/backticks if no html found
+    cleaned = re.sub(r"```", "", cleaned)
+    return cleaned
+
+
+def _enforce_bento_layout_constraints(html: str) -> str:
+    """Normalize Bento HTML to avoid sections stretching to full viewport height."""
+    if not html or not isinstance(html, str):
+        return html
+
+    # Remove problematic Tailwind classes that force full-screen height
+    full_height_classes = [
+        "min-h-screen",
+        "h-screen",
+        "min-h-full",
+        "h-full"
+    ]
+    for cls in full_height_classes:
+        html = html.replace(f" {cls} ", " ")
+        html = html.replace(f" {cls}\n", " \n")
+        html = html.replace(f"\n{cls} ", "\n")
+        html = html.replace(f" {cls}", "")
+        html = html.replace(f"{cls} ", "")
+
+    # Downgrade inline styles that force viewport-scale heights
+    height_patterns = [
+        (r"min-height\s*:\s*1?\d{2,3}vh", "min-height: auto"),
+        (r"height\s*:\s*1?\d{2,3}vh", "height: auto")
+    ]
+    for pattern, replacement in height_patterns:
+        html = re.sub(pattern, replacement, html, flags=re.IGNORECASE)
+
+    # Collapse redundant whitespace introduced by removals
+    html = re.sub(r"\s{2,}", " ", html)
+    return html
+
 # 辅助函数：清理大模型输出中的 thinking 标签
 def remove_thinking_tags(content):
     """
@@ -141,6 +211,14 @@ def main():
                     break
             new_summary = f"{base_summary} ({selected_transformation_name} 版本)"  
             
+            # Normalize HTML output for Bento web pages
+            if selected_transformation_name == "转换为Bento风格网页":
+                normalized_html = _extract_html_document(transformed_content)
+                if not normalized_html.strip():
+                    st.error("转换结果未生成有效的HTML，请稍后重试或检查原文内容。")
+                    return
+                transformed_content = _enforce_bento_layout_constraints(normalized_html)
+
             # Save the transformed article
             # 保存转换后的文章（可能包含图片）
             

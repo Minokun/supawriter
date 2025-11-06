@@ -69,12 +69,18 @@ PAGE_DDGS_SEARCH = st.Page(
     icon=":material/search:"
 )
 
+PAGE_NEWS = st.Page(
+    "page/news.py",
+    title="新闻资讯",
+    icon=":material/newspaper:"
+)
+
 # Chatbot functionality has been integrated into the home page
 # PAGE_CHATBOT definition removed
 
 # ******************菜单配置********************
 PAGES = {
-    "应用": [PAGE_HOME, PAGE_GPTS, PAGE_DDGS_SEARCH],  # Chatbot functionality integrated into home page
+    "应用": [PAGE_HOME, PAGE_GPTS, PAGE_DDGS_SEARCH, PAGE_NEWS],  # Chatbot functionality integrated into home page
     "内容创作": [PAGE_GPTS_AUTOWITER, PAGE_ARTICLE_RECREATION],
     "工具": [PAGE_DOCUMENT_UTIL, PAGE_ASR, PAGE_TTS],
     "用户": [PAGE_PROFILE, PAGE_HISTORY, PAGE_SYSTEM_SETTINGS]
