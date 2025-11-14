@@ -1,0 +1,34 @@
+# SupaWriter 服务器配置示例
+# 复制此文件为 servers.conf 并修改相应配置
+
+# 生产环境服务器
+PROD_SERVER_IP="192.168.1.100"               # 生产服务器IP
+PROD_SERVER_USER="ubuntu"                    # 生产服务器用户名
+PROD_SERVER_NAME="生产环境"                   # 服务器描述
+
+# 测试环境服务器
+# TEST_SERVER_IP="192.168.1.101"              # 测试服务器IP
+# TEST_SERVER_USER="ubuntu"                   # 测试服务器用户名
+# TEST_SERVER_NAME="测试环境"                   # 服务器描述
+
+# 开发环境服务器
+# DEV_SERVER_IP="192.168.1.102"               # 开发服务器IP
+# DEV_SERVER_USER="root"                      # 开发服务器用户名
+# DEV_SERVER_NAME="开发环境"                    # 服务器描述
+
+# 使用方法：
+# 1. 复制此文件为 servers.conf
+# 2. 修改上面的IP地址和用户名
+# 3. 在部署脚本中使用：
+#    source servers.conf
+#    ./quick-deploy.sh --server-ip $PROD_SERVER_IP --server-user $PROD_SERVER_USER
+
+# 批量部署示例脚本：
+# #!/bin/bash
+# source servers.conf
+# 
+# echo "部署到 $PROD_SERVER_NAME ($PROD_SERVER_IP)"
+# ./quick-deploy.sh --server-ip $PROD_SERVER_IP --server-user $PROD_SERVER_USER
+# 
+# echo "部署到 $TEST_SERVER_NAME ($TEST_SERVER_IP)"
+# ./quick-deploy.sh --server-ip $TEST_SERVER_IP --server-user $TEST_SERVER_USER

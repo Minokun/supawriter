@@ -738,7 +738,9 @@ def main():
                 color = "#FFFFFF"
                 if "[ERROR]" in line or "Traceback" in line:
                     color = "#FF4B4B"
-                log_html += f'<div style="color: {color}; font-family: monospace; font-size: 13px;">{line.replace("\n", "<br>")}</div>'
+                # 先处理换行符替换，再放入 f-string
+                formatted_line = line.replace("\n", "<br>")
+                log_html += f'<div style="color: {color}; font-family: monospace; font-size: 13px;">{formatted_line}</div>'
             components.html(f'''<div style="height: 400px; overflow-y: scroll; background-color: #1E1E1E; border: 1px solid #444; padding: 10px; border-radius: 5px;">{log_html}</div>''', height=420)
 
     # --- UI for Idle State ---

@@ -350,6 +350,62 @@ graph TD
 - ✅ **多策略重试机制**：确保图片下载成功率
 - ✅ **包管理优化**：支持使用 uv 快速安装依赖
 
+## 🗄️ 数据库部署与迁移
+
+### PostgreSQL 服务器部署
+
+项目提供了完整的 PostgreSQL 数据库部署方案，支持将数据存储到远程服务器。
+
+**服务器信息**：
+- 服务器地址：`122.51.24.120`
+- 数据库端口：`5432`
+- 数据库名：`supawriter`
+
+**快速部署**：
+```bash
+# 1. 配置环境变量
+cd deployment
+cp .env.example .env
+vim .env  # 修改数据库密码
+
+# 2. 一键部署到服务器
+cd scripts
+./quick-deploy.sh
+```
+
+详细部署说明请参考：[deployment/README.md](deployment/README.md)
+
+### 数据迁移到 PostgreSQL
+
+将本地 JSON 数据迁移到服务器的 PostgreSQL 数据库：
+
+**快速迁移**：
+```bash
+# 1. 配置迁移环境
+cd deployment/migrate
+cp .env.migration.example .env.migration
+vim .env.migration  # 设置数据库密码
+
+# 2. 运行迁移脚本（交互式）
+./quick_migrate.sh
+
+# 或直接运行 Python 脚本
+python deployment/migrate/migrate_to_pgsql.py --host 122.51.24.120 --password YOUR_PASSWORD
+```
+
+**迁移的数据类型**：
+- **文章数据**：用户创作的所有文章内容、配置和元数据
+- **聊天历史**：AI 对话会话记录
+- **用户配置**：个性化设置和偏好
+
+**安全特性**：
+- 支持数据增量迁移，避免重复
+- 自动处理数据冲突
+- 详细的迁移日志和状态反馈
+- 支持单用户或全量迁移
+
+详细迁移说明请参考：[deployment/migrate/README.md](deployment/migrate/README.md)
+
 ## 📦 未来规划
 
 1. 支持更多搜索引擎和API源
@@ -359,6 +415,7 @@ graph TD
 5. 开发API接口，支持第三方集成
 6. 增加协作功能，支持团队创作
 7. 优化AI模型的响应速度和质量
+8. 完善 PostgreSQL 数据层，支持云端数据同步
 
 ## 📓 贡献指南
 

@@ -110,6 +110,8 @@ from utils.ddgs_utils import search_ddgs
 
 max_workers = 20
 
+SERPER_RESULT_LIMIT = 10  # 固定保留的 Serper 搜索结果数量
+
 # 注意：不再使用全局URL去重，改为任务级别的去重，确保每次文章生成都是独立的搜索
 # GLOBAL_PROCESSED_URLS = set()  # 已移除全局去重
 
@@ -465,31 +467,39 @@ class Search:
         
         # 检查是否有搜索结果
         if data and data.get('results'):
-            # 添加搜索引擎的结果
-            search_engine_items = []
-            for item in data['results']:
-                # 检查是否有URL
-                if 'url' in item:
-                    search_engine_urls.append(item['url'])
-                    search_engine_items.append({
-                        'title': item.get('title', ''),
-                        'url': item['url'],
-                        'html_content': '',
-                    })
+            logger.info(f"开始处理合并后的搜索结果: {len(data['results'])} 条")
             
-            # Deduplicate search engine results
-            search_engine_items = self.deduplicate_urls(search_engine_items)
-            search_result.extend(search_engine_items)
-            logger.info(f"Added {len(search_engine_items)} deduplicated search engine results")
+            # 注释：不在此处直接添加结果，而是在下面进行相关性评分后再添加
+            # 避免重复添加导致结果数量翻倍
+            # search_engine_items = []
+            # for item in data['results']:
+            #     if 'url' in item:
+            #         search_engine_urls.append(item['url'])
+            #         search_engine_items.append({
+            #             'title': item.get('title', ''),
+            #             'url': item['url'],
+            #             'html_content': '',
+            #         })
+            # search_engine_items = self.deduplicate_urls(search_engine_items)
+            # search_result.extend(search_engine_items)
             
-            # 将结果按相关性评分排序
+            # 将结果按相关性评分排序（同时进行URL去重）
             scored_results = []
+            seen_urls = set()  # 用于去重
+            
             for i in data['results']:
                 # 跳过特定文件类型和低分结果
                 if i['url'].split('.')[-1] in ['xlsx', 'pdf', 'doc', 'docx', 'xls', 'ppt', 'pptx']:
                     continue
                 if i['score'] < 0.21:
                     continue
+                
+                # URL去重检查
+                normalized_url = normalize_url(i['url'])
+                if normalized_url in seen_urls:
+                    logger.debug(f"跳过重复URL: {i['url']}")
+                    continue
+                seen_urls.add(normalized_url)
                     
                 # 计算关键词匹配度
                 title_keywords = set(re.findall(r'\w+', i.get('title', '').lower()))
@@ -503,21 +513,51 @@ class Search:
                 relevance_score = (i['score'] * 0.4) + (title_match * 0.4) + (content_match * 0.2)
                     
                 scored_results.append((i, relevance_score))
+            
+            logger.info(f"相关性评分: 原始 {len(data['results'])} 条 -> 过滤后 {len(scored_results)} 条（已去重、过滤低分和特殊文件）")
                 
             # 按相关性分数降序排序
             scored_results.sort(key=lambda x: x[1], reverse=True)
             
-            # 提取排序后的结果（限制数量）
-            for i, score in scored_results[:self.result_num]:
+            # 提取排序后的结果（DDGS 仅受 DEFAULT_SPIDER_NUM 限制，Serper 固定保留 ~10 条）
+            selected_results = []
+            ddgs_selected = 0
+            serper_selected = 0
+            serper_limit = SERPER_RESULT_LIMIT if SERPER_RESULT_LIMIT else None
+
+            for item, score in scored_results:
+                source = item.get('source', 'ddgs')
+                if source == 'serper':
+                    if serper_limit is not None and serper_selected >= serper_limit:
+                        continue
+                    serper_selected += 1
+                else:
+                    if ddgs_selected >= self.result_num:
+                        continue
+                    ddgs_selected += 1
+                selected_results.append((item, score))
+
+            for i, score in selected_results:
                 url_display = i['url'][:37] + '...' if len(i['url']) > 40 else i['url']
                 print(f"{url_display} - 相关度: {score:.2f} - {i['title']}")
                 search_result.append({
                     'title': i['title'], 
                     'url': i['url'], 
                     'html_content': i['content'] if 'content' in i else '',
-                    'relevance_score': score
+                    'relevance_score': score,
+                    'source': i.get('source', 'ddgs')
                 })
                 search_engine_urls.append(i['url'])
+
+            serper_limit_display = serper_limit if serper_limit is not None else '不限'
+            logger.info(
+                "相关性排序后选取 DDGS %d 条 (限制=%d) + Serper %d 条 (限制=%s)，实际添加: %d 条",
+                ddgs_selected,
+                self.result_num,
+                serper_selected,
+                serper_limit_display,
+                len(selected_results)
+            )
             # 获取网页主要内容 - 始终爬取所有URL
             if len(search_engine_urls) > 0:
                 # 在爬取内容前，确保所有URL都已去重
@@ -534,10 +574,17 @@ class Search:
                         final_urls.append(url)
                         final_url_map[normalized_url] = url
                 
-                # 限制最终抓取数量
-                if len(final_urls) > self.result_num:
-                    final_urls = final_urls[:self.result_num]
-                logger.info(f"Final deduplicated URLs for content grabbing (limited to {self.result_num}): {len(final_urls)}")
+                # 限制最终抓取数量：DDGS 受 DEFAULT_SPIDER_NUM 限制，Serper 全部保留
+                allowed_fetch = ddgs_selected + serper_selected
+                if len(final_urls) > allowed_fetch:
+                    final_urls = final_urls[:allowed_fetch]
+                logger.info(
+                    "Final deduplicated URLs for content grabbing (DDGS %d + Serper %d = %d): %d",
+                    ddgs_selected,
+                    serper_selected,
+                    allowed_fetch,
+                    len(final_urls)
+                )
                 
                 # 爬取内容
                 result, task_id = asyncio.run(get_main_content(final_urls, is_multimodal=is_multimodal, use_direct_image_embedding=use_direct_image_embedding, theme=theme, progress_callback=progress_callback, username=username, article_id=article_id))
@@ -712,8 +759,10 @@ class Search:
                 except Exception as e:
                     logger.warning(f"DDGS图片补充阶段跳过: {e}（这是正常现象，不影响文章生成）")
             # 返回整合后的结果
+            logger.info(f"最终返回搜索结果: {len(search_result)} 条")
             return search_result
         # 如果没有可爬取的URL，也直接返回（仍可由调用方决定是否触发DDGS）
+        logger.info(f"最终返回搜索结果: {len(search_result)} 条（无可爬取URL）")
         return search_result
 
     def auto_writer(self, prompt, outline_summary=''):
@@ -813,6 +862,8 @@ def try_load(s: str):
     # 常见清洗与修复
     import re as _re
     cleaned = s.replace("'", '"')
+    # 替换中文引号为英文引号（防止JSON解析失败）
+    cleaned = cleaned.replace('"', '"').replace('"', '"')
     cleaned = _re.sub(r",\s*([}\]])", r"\1", cleaned)  # 移除 ,] 或 ,}
     cleaned = _re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", cleaned)  # 控制字符
 

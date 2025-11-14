@@ -181,11 +181,11 @@ PROCESS_CONFIG = {
 
 # 文章生成设置
 # 爬取网页数量默认值
-DEFAULT_SPIDER_NUM = 30
+DEFAULT_SPIDER_NUM = 20
 # 是否自动插入相关图片默认值
 DEFAULT_ENABLE_IMAGES = True
 # 图片嵌入方式 ('multimodal' 或 'direct_embedding')
-DEFAULT_IMAGE_EMBEDDING_METHOD = 'multimodal'
+DEFAULT_IMAGE_EMBEDDING_METHOD = 'direct_embedding'
 
 # Serper 搜索引擎 API 设置
 # 从 secrets 中获取 API key
