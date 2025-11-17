@@ -46,7 +46,7 @@ PAGE_GPTS_AUTOWITER = st.Page(
 
 # ********************用户信息************************
 PAGE_PROFILE = st.Page(
-    "auth_pages/profile.py",
+    "auth_pages/profile_v2.py",
     title="个人信息",
     icon=":material/person:"
 )
@@ -61,6 +61,12 @@ PAGE_SYSTEM_SETTINGS = st.Page(
     "page/system_settings.py",
     title="系统设置",
     icon=":material/settings:"
+)
+
+PAGE_COMMUNITY_MANAGEMENT = st.Page(
+    "page/community_management.py",
+    title="社区管理",
+    icon=":material/cloud_sync:"
 )
 
 PAGE_DDGS_SEARCH = st.Page(
@@ -83,7 +89,7 @@ PAGES = {
     "应用": [PAGE_HOME, PAGE_GPTS, PAGE_DDGS_SEARCH, PAGE_NEWS],  # Chatbot functionality integrated into home page
     "内容创作": [PAGE_GPTS_AUTOWITER, PAGE_ARTICLE_RECREATION],
     "工具": [PAGE_DOCUMENT_UTIL, PAGE_ASR, PAGE_TTS],
-    "用户": [PAGE_PROFILE, PAGE_HISTORY, PAGE_SYSTEM_SETTINGS]
+    "用户": [PAGE_PROFILE, PAGE_HISTORY, PAGE_COMMUNITY_MANAGEMENT, PAGE_SYSTEM_SETTINGS]
 }
 
 # 隐藏页面（不在菜单中显示，但可以通过代码跳转）

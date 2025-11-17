@@ -64,7 +64,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def generate_article_background(task_state, text_input, model_type, model_name, spider_num, custom_style, enable_images, article_title, username: str):
+def generate_article_background(task_state, text_input, model_type, model_name, spider_num, custom_style, enable_images, article_title, username: str, extra_urls: list = None):
     """
     在后台线程中运行的文章生成函数。
     通过更新共享的task_state字典来报告进度。
@@ -165,7 +165,7 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
             task_state['progress_text'] = "搜索结果为空，无法生成文章"
             return
             
-        log('info', f"网页抓取完成，共找到 {len(search_result)} 个结果。UI即将更新...")
+        log('info', f"搜索引擎查询完成，获取 {len(search_result)} 个结果")
         task_state['search_result'] = search_result # 保存结果以供预览
         
         # 搜索完成后，加载FAISS索引以获取图片数据
@@ -191,6 +191,80 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
                 faiss_index = None
 
         # 取消在此直接调用DDGS索引补充：该逻辑已在utils.searxng_utils.Search.get_search_result内部统一处理
+        
+        # 处理额外的URL（如果有）
+        if extra_urls and len(extra_urls) > 0:
+            log('info', f"开始抓取 {len(extra_urls)} 个额外的网页链接...")
+            task_state['progress'] = 25
+            task_state['progress_text'] = f"正在抓取额外网页 (0/{len(extra_urls)})..."
+            
+            try:
+                # 导入必要的模块
+                from utils.grab_html_content import get_main_content
+                import asyncio
+                
+                # 创建额外URL的进度回调
+                extra_progress_callback = create_thread_safe_callback(
+                    task_state=task_state,
+                    progress_key='progress',
+                    text_key='progress_text',
+                    start_percent=25,
+                    end_percent=30,
+                    log_prefix="正在抓取额外网页"
+                )
+                
+                # 异步抓取额外的URL
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                extra_results = loop.run_until_complete(
+                    get_main_content(
+                        extra_urls, 
+                        task_id=article_id,
+                        is_multimodal=is_multimodal,
+                        use_direct_image_embedding=use_direct_image_embedding,
+                        theme=article_title,
+                        progress_callback=extra_progress_callback,
+                        username=username,
+                        article_id=article_id
+                    )
+                )
+                
+                loop.close()
+                
+                # 过滤掉抓取失败的结果
+                valid_extra_results = []
+                for result in extra_results:
+                    if result.get('text') and result['text'].strip():
+                        # 构造与搜索结果相同的格式
+                        formatted_result = {
+                            'url': result.get('url', ''),
+                            'title': result.get('title', '未命名'),
+                            'body': result.get('text', ''),
+                            'snippet': result.get('text', '')[:200] + '...' if len(result.get('text', '')) > 200 else result.get('text', ''),
+                            'is_extra_url': True  # 标记为额外URL
+                        }
+                        valid_extra_results.append(formatted_result)
+                        log('info', f"成功抓取额外网页: {result.get('url', 'unknown')}")
+                    else:
+                        log('warn', f"抓取额外网页失败或内容为空: {result.get('url', 'unknown')}")
+                
+                # 合并到搜索结果中
+                if valid_extra_results:
+                    search_result.extend(valid_extra_results)
+                    log('info', f"成功添加 {len(valid_extra_results)} 个额外网页到搜索结果中，总计 {len(search_result)} 个结果")
+                    # 更新task_state中的搜索结果，确保UI显示正确的总数
+                    task_state['search_result'] = search_result
+                else:
+                    log('warn', "没有成功抓取到任何额外网页内容")
+                    
+            except Exception as e:
+                log('error', f"抓取额外网页时出错: {str(e)}")
+                import traceback
+                log('debug', traceback.format_exc())
+        
+        # 输出最终的总结果数（包含搜索引擎结果 + 额外URL）
+        log('info', f"===== 资料收集完成，共 {len(search_result)} 个网页资料（搜索引擎 + 额外URL）=====")
 
         # 2. 生成大纲
         task_state['progress'] = 30
@@ -456,6 +530,31 @@ def main():
         else:
             st.warning("尚未配置全局模型，请前往'系统设置'页面配置。")
 
+        st.divider()
+        
+        # 添加额外网页链接选项（放在分割线下方，表单外部，保持实时交互）
+        enable_extra_urls = st.checkbox(
+            "添加抓取额外网页链接",
+            value=False,
+            help="启用后，可以手动添加需要爬取内容的网页URL，这些内容将合并到搜索结果中",
+            disabled=(task_state['status'] == 'running')
+        )
+        
+        extra_urls_text = ""
+        if enable_extra_urls:
+            extra_urls_text = st.text_area(
+                label='输入额外的网页链接',
+                help='每行输入一个URL，这些网页的内容将被抓取并合并到搜索结果中',
+                placeholder='https://example.com/article1\nhttps://example.com/article2',
+                height=150,
+                key='extra_urls_input',
+                disabled=(task_state['status'] == 'running')
+            )
+            if extra_urls_text:
+                # 统计有效的URL数量
+                valid_urls = [url.strip() for url in extra_urls_text.strip().split('\n') if url.strip() and url.strip().startswith('http')]
+                st.caption(f"已输入 {len(valid_urls)} 个有效URL")
+
         with st.form(key='my_form'):
             text_input = st.text_input(
                 label='请填写文章的主题', 
@@ -507,13 +606,23 @@ def main():
             model_type = global_settings.get('provider')
             model_name = global_settings.get('model_name')
 
+        # 解析额外的URL（如果有）
+        extra_urls = []
+        if 'extra_urls_input' in st.session_state and st.session_state.extra_urls_input:
+            extra_urls_text = st.session_state.extra_urls_input.strip()
+            if extra_urls_text:
+                # 按行分割并过滤有效的URL
+                extra_urls = [url.strip() for url in extra_urls_text.split('\n') 
+                             if url.strip() and url.strip().startswith('http')]
+                logger.info(f"用户添加了 {len(extra_urls)} 个额外URL: {extra_urls}")
+        
         # 创建并启动后台线程（不传递 Streamlit 上下文，仅传递必要数据）
         thread = threading.Thread(
             target=generate_article_background,
             name="generate_article_background", # 为线程命名
             args=(
                 st.session_state.article_task, text_input, model_type, model_name, 
-                spider_num, custom_style, enable_images, article_title, username
+                spider_num, custom_style, enable_images, article_title, username, extra_urls
             )
         )
         thread.start()

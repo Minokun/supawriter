@@ -11,6 +11,23 @@ from datetime import datetime
 from typing import List, Dict, Optional, Any
 from contextlib import asynccontextmanager
 
+# 加载环境变量（如果 web.py 还未加载）
+# 静默加载，不打印日志避免重复输出
+try:
+    from dotenv import load_dotenv
+    if not os.getenv('_ENV_LOADED'):
+        env_files = [
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), 'deployment', '.env'),
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+        ]
+        for env_file in env_files:
+            if os.path.exists(env_file):
+                load_dotenv(env_file, override=False)  # 不覆盖已有的环境变量
+                os.environ['_ENV_LOADED'] = 'true'
+                break
+except ImportError:
+    pass  # python-dotenv 未安装时跳过
+
 try:
     import asyncpg
     import psycopg2
@@ -184,6 +201,27 @@ class DatabaseAdapter:
             tags=article_data.get('tags'),
             article_topic=article_data.get('article_topic')
         )
+    
+    async def get_user_articles_count(self, username: str) -> int:
+        """获取用户文章总数"""
+        if self.use_postgres:
+            return await self._get_user_articles_count_postgres(username)
+        else:
+            return self._get_user_articles_count_file(username)
+    
+    async def _get_user_articles_count_postgres(self, username: str) -> int:
+        """PostgreSQL 获取用户文章总数"""
+        async with self.get_connection() as conn:
+            count = await conn.fetchval(
+                "SELECT COUNT(*) FROM articles WHERE username = $1",
+                username
+            )
+            return count or 0
+    
+    def _get_user_articles_count_file(self, username: str) -> int:
+        """文件存储获取用户文章总数"""
+        history = load_user_history(username)
+        return len(history)
     
     async def get_user_articles(self, username: str, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         """获取用户文章列表"""
@@ -427,6 +465,272 @@ class DatabaseAdapter:
             'avg_content_length': total_length / total if total > 0 else 0,
             'last_article_date': last_date.isoformat() if last_date else None
         }
+    
+    # ==================== 批量同步功能 ====================
+    
+    async def check_synced_articles(self, username: str) -> Dict[str, Any]:
+        """
+        检查本地文章与数据库的同步状态
+        返回已同步和未同步的文章列表
+        """
+        if not self.use_postgres:
+            return {
+                'synced': [],
+                'unsynced': [],
+                'error': '未启用PostgreSQL，无法同步到数据库'
+            }
+        
+        try:
+            # 获取本地历史记录
+            local_history = load_user_history(username)
+            if not local_history:
+                return {
+                    'synced': [],
+                    'unsynced': [],
+                    'message': '本地暂无文章'
+                }
+            
+            # 获取数据库中已有的文章（通过topic和创建时间判断）
+            async with self.get_connection() as conn:
+                db_articles = await conn.fetch(
+                    """
+                    SELECT topic, created_at, id
+                    FROM articles 
+                    WHERE username = $1
+                    """,
+                    username
+                )
+            
+            # 创建数据库文章的标识集合（topic + 日期）
+            db_article_keys = set()
+            for article in db_articles:
+                # 只比较日期部分，不比较精确时间
+                created_date = article['created_at'].strftime('%Y-%m-%d')
+                key = f"{article['topic']}_{created_date}"
+                db_article_keys.add(key)
+            
+            # 分类本地文章
+            synced = []
+            unsynced = []
+            
+            for record in local_history:
+                # 从timestamp提取日期
+                timestamp_str = record.get('timestamp', '')
+                if timestamp_str:
+                    try:
+                        local_date = datetime.fromisoformat(timestamp_str).strftime('%Y-%m-%d')
+                    except:
+                        local_date = timestamp_str[:10]  # 尝试直接提取前10个字符
+                else:
+                    local_date = ''
+                
+                key = f"{record.get('topic', '')}_{local_date}"
+                
+                if key in db_article_keys:
+                    synced.append(record)
+                else:
+                    unsynced.append(record)
+            
+            return {
+                'synced': synced,
+                'unsynced': unsynced,
+                'synced_count': len(synced),
+                'unsynced_count': len(unsynced),
+                'total_count': len(local_history)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"检查同步状态失败: {e}")
+            return {
+                'synced': [],
+                'unsynced': [],
+                'error': f'检查同步状态失败: {str(e)}'
+            }
+    
+    async def sync_articles_to_db(self, username: str, article_ids: List[int]) -> Dict[str, Any]:
+        """
+        批量同步本地文章到数据库
+        
+        Args:
+            username: 用户名
+            article_ids: 要同步的文章ID列表
+            
+        Returns:
+            同步结果统计
+        """
+        if not self.use_postgres:
+            return {
+                'success': False,
+                'error': '未启用PostgreSQL，无法同步到数据库'
+            }
+        
+        try:
+            # 获取本地历史记录
+            local_history = load_user_history(username)
+            
+            # 筛选要同步的文章
+            articles_to_sync = [
+                record for record in local_history 
+                if record.get('id') in article_ids
+            ]
+            
+            if not articles_to_sync:
+                return {
+                    'success': False,
+                    'error': '未找到要同步的文章'
+                }
+            
+            # ==================== 批量插入数据库（性能优化）====================
+            # 预处理所有数据
+            batch_data = []
+            failed_records = []
+            
+            for record in articles_to_sync:
+                try:
+                    # 处理tags字段：确保是数组格式
+                    tags_value = record.get('tags', [])
+                    if isinstance(tags_value, str):
+                        tags_value = [tag.strip() for tag in tags_value.split(',') if tag.strip()]
+                    elif not isinstance(tags_value, list):
+                        tags_value = []
+                    
+                    # 处理original_article_id字段
+                    original_article_id = record.get('original_article_id')
+                    if isinstance(original_article_id, int):
+                        original_article_id = None
+                    elif isinstance(original_article_id, str):
+                        try:
+                            import uuid
+                            uuid.UUID(original_article_id)
+                        except (ValueError, AttributeError):
+                            original_article_id = None
+                    else:
+                        original_article_id = None
+                    
+                    # 处理时间戳
+                    timestamp_str = record.get('timestamp')
+                    if timestamp_str:
+                        try:
+                            created_at = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                        except (ValueError, AttributeError):
+                            created_at = datetime.now()
+                    else:
+                        created_at = datetime.now()
+                    
+                    # 构建插入数据（按照SQL语句的参数顺序）
+                    batch_data.append((
+                        username,
+                        record.get('topic', ''),
+                        record.get('article_content', ''),
+                        record.get('summary'),
+                        tags_value,
+                        json.dumps({}),  # metadata
+                        record.get('model_type'),
+                        record.get('model_name'),
+                        record.get('write_type'),
+                        record.get('spider_num'),
+                        record.get('custom_style'),
+                        record.get('is_transformed', False),
+                        original_article_id,
+                        record.get('image_task_id'),
+                        record.get('image_enabled', False),
+                        record.get('image_similarity_threshold'),
+                        record.get('image_max_count'),
+                        record.get('article_topic'),
+                        created_at,
+                        created_at  # updated_at = created_at
+                    ))
+                    
+                except Exception as e:
+                    error_msg = f"文章 '{record.get('topic', 'Unknown')}' 数据预处理失败: {str(e)}"
+                    failed_records.append({'record': record, 'error': error_msg})
+                    self.logger.error(error_msg)
+            
+            # 批量插入
+            success_count = 0
+            skipped_count = 0
+            errors = [item['error'] for item in failed_records]
+            
+            if batch_data:
+                try:
+                    async with self.get_connection() as conn:
+                        # 使用executemany进行高性能批量插入
+                        insert_query = """
+                            INSERT INTO articles (
+                                username, topic, article_content, summary, tags, metadata,
+                                model_type, model_name, write_type, spider_num, custom_style,
+                                is_transformed, original_article_id, image_task_id, image_enabled,
+                                image_similarity_threshold, image_max_count, article_topic,
+                                created_at, updated_at
+                            ) VALUES (
+                                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+                            )
+                            ON CONFLICT (username, topic, created_at) DO NOTHING
+                        """
+                        
+                        # 批量执行插入（速度提升10-50倍）
+                        await conn.executemany(insert_query, batch_data)
+                        
+                        # executemany不返回插入数量，标记为已处理
+                        # 用户可通过重新"检查同步状态"获得准确统计
+                        success_count = len(batch_data)
+                        skipped_count = 0
+                        
+                        self.logger.info(f"批量插入完成: 已处理 {len(batch_data)} 条记录（新增和跳过的总和）")
+                        
+                except Exception as e:
+                    # 批量插入失败，回退到逐条插入（容错）
+                    self.logger.warning(f"批量插入失败，回退到逐条插入: {e}")
+                    success_count = 0
+                    skipped_count = 0
+                    
+                    for i, data in enumerate(batch_data):
+                        try:
+                            async with self.get_connection() as conn:
+                                result = await conn.fetchval(
+                                    """
+                                    INSERT INTO articles (
+                                        username, topic, article_content, summary, tags, metadata,
+                                        model_type, model_name, write_type, spider_num, custom_style,
+                                        is_transformed, original_article_id, image_task_id, image_enabled,
+                                        image_similarity_threshold, image_max_count, article_topic,
+                                        created_at, updated_at
+                                    ) VALUES (
+                                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+                                    )
+                                    ON CONFLICT (username, topic, created_at) DO NOTHING
+                                    RETURNING id
+                                    """,
+                                    *data
+                                )
+                                
+                                if result:
+                                    success_count += 1
+                                else:
+                                    skipped_count += 1
+                                    
+                        except Exception as e2:
+                            error_msg = f"文章 '{data[1]}' 插入失败: {str(e2)}"
+                            errors.append(error_msg)
+                            self.logger.error(error_msg)
+            
+            failed_count = len(failed_records) + (len(batch_data) - success_count - skipped_count)
+            
+            return {
+                'success': True,
+                'success_count': success_count,
+                'failed_count': failed_count,
+                'skipped_count': skipped_count,
+                'total_count': len(articles_to_sync),
+                'errors': errors
+            }
+            
+        except Exception as e:
+            self.logger.error(f"批量同步失败: {e}")
+            return {
+                'success': False,
+                'error': f'批量同步失败: {str(e)}'
+            }
 
 # 全局实例
 db_adapter = DatabaseAdapter()
@@ -435,6 +739,10 @@ db_adapter = DatabaseAdapter()
 async def add_article(username: str, article_data: Dict[str, Any]) -> Dict[str, Any]:
     """添加文章"""
     return await db_adapter.add_article(username, article_data)
+
+async def get_user_articles_count(username: str) -> int:
+    """获取用户文章总数"""
+    return await db_adapter.get_user_articles_count(username)
 
 async def get_user_articles(username: str, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
     """获取用户文章"""
@@ -447,3 +755,11 @@ async def search_articles(username: str, keyword: str, limit: int = 20) -> List[
 async def delete_article(username: str, article_id: str) -> bool:
     """删除文章"""
     return await db_adapter.delete_article(username, article_id)
+
+async def check_synced_articles(username: str) -> Dict[str, Any]:
+    """检查文章同步状态"""
+    return await db_adapter.check_synced_articles(username)
+
+async def sync_articles_to_db(username: str, article_ids: List[int]) -> Dict[str, Any]:
+    """批量同步文章到数据库"""
+    return await db_adapter.sync_articles_to_db(username, article_ids)

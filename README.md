@@ -327,6 +327,67 @@ graph TD
 5. 在预览界面查看和编辑生成的文章
 6. 导出为Markdown或HTML格式
 
+## 📚 完整文档导航
+
+项目提供了完整的文档体系，涵盖快速入门、功能指南、架构设计、开发文档和故障排除等各个方面。
+
+### 🚀 快速开始
+
+| 文档 | 说明 | 链接 |
+|------|------|------|
+| **默认账号信息** | 数据库默认管理员账号和密码，首次登录必读 | [查看文档](docs/guides/default-account.md) |
+| **认证系统快速入门** | 新版认证系统的快速使用指南，5分钟上手 | [查看文档](docs/guides/quickstart-auth-v2.md) |
+| **UV 包管理器** | 使用 UV 快速安装依赖，比 pip 快 10-100 倍 | [查看文档](docs/guides/uv-quickstart.md) |
+| **数据库配置** | PostgreSQL 数据库配置和连接指南 | [查看文档](docs/guides/database-config.md) |
+
+### 📖 功能指南
+
+#### 认证相关
+
+| 文档 | 说明 | 链接 |
+|------|------|------|
+| **认证系统完整指南** | 多渠道认证系统（Google/微信/本地账号）详细说明 | [查看文档](docs/guides/authentication-v2.md) |
+| **微信登录实现** | 微信开放平台登录集成的技术实现细节 | [查看文档](docs/guides/wechat-login.md) |
+| **微信登录配置** | 配置微信开放平台和授权回调的完整步骤 | [查看文档](docs/guides/wechat-login-setup.md) |
+| **注册策略说明** | 用户注册和账号管理策略，了解系统设计思路 | [查看文档](docs/guides/registration-policy.md) |
+
+#### 数据库相关
+
+| 文档 | 说明 | 链接 |
+|------|------|------|
+| **数据库配置指南** | PostgreSQL 完整配置说明，包括本地和远程部署 | [查看文档](docs/guides/database-config.md) |
+| **默认账号信息** | 数据库初始化的默认管理员账号和安全建议 | [查看文档](docs/guides/default-account.md) |
+
+### 🏗️ 架构文档
+
+| 文档 | 说明 | 链接 |
+|------|------|------|
+| **Streamlit 架构分析** | 深入分析 Streamlit 的并发性能和架构特点 | [查看文档](docs/architecture/streamlit-architecture-analysis.md) |
+| **前端网站方案** | 混合架构方案设计，NextJS + Streamlit 方案探讨 | [查看文档](docs/architecture/frontend-proposal.md) |
+
+### 🔧 开发文档
+
+| 文档 | 说明 | 链接 |
+|------|------|------|
+| **认证系统架构** | 认证系统的技术架构和实现细节 | [查看文档](docs/development/authentication.md) |
+| **实现总结** | 主要功能的实现总结和技术要点 | [查看文档](docs/development/implementation-summary.md) |
+
+### 🆘 故障排除
+
+| 文档 | 说明 | 链接 |
+|------|------|------|
+| **数据库连接问题修复** | 常见数据库连接错误的诊断和解决方案 | [查看文档](docs/troubleshooting/database-connection-fix.md) |
+
+### 📝 变更日志
+
+| 文档 | 说明 | 链接 |
+|------|------|------|
+| **注册功能移除日志** | V2 版本中注册功能的变更记录和原因说明 | [查看文档](docs/CHANGELOG_REGISTRATION_REMOVED.md) |
+
+### 📁 文档索引
+
+完整的文档目录和组织结构说明，请访问：[**文档中心**](docs/README.md)
+
 ## 👨‍💻 开发团队
 
 超级写手由一个致力于AI辅助创作的团队开发，我们的目标是让内容创作变得更加高效、智能和有趣。

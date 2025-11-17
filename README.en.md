@@ -38,3 +38,42 @@ In daily life, we often need to search the internet extensively to understand ne
 ## Installation and Usage
 
 Currently under development, stay tuned.
+
+## 📚 Documentation
+
+For detailed documentation, please visit our [Documentation Center](docs/README.md).
+
+### 🚀 Quick Start
+
+- [Default Account Information](docs/guides/default-account.md) - Database default admin account and password
+- [Authentication System Quick Start](docs/guides/quickstart-auth-v2.md) - Get started in 5 minutes
+- [UV Package Manager](docs/guides/uv-quickstart.md) - Install dependencies 10-100x faster
+- [Database Configuration](docs/guides/database-config.md) - PostgreSQL setup guide
+
+### 📖 Feature Guides
+
+**Authentication**
+- [Authentication System Guide](docs/guides/authentication-v2.md) - Multi-channel authentication (Google/WeChat/Local)
+- [WeChat Login Implementation](docs/guides/wechat-login.md) - Technical details
+- [WeChat Login Setup](docs/guides/wechat-login-setup.md) - Configuration steps
+- [Registration Policy](docs/guides/registration-policy.md) - Account management strategy
+
+**Database**
+- [Database Configuration Guide](docs/guides/database-config.md) - Complete PostgreSQL setup
+- [Default Account Info](docs/guides/default-account.md) - Admin account security
+
+### 🏗️ Architecture
+
+- [Streamlit Architecture Analysis](docs/architecture/streamlit-architecture-analysis.md)
+- [Frontend Website Proposal](docs/architecture/frontend-proposal.md)
+
+### 🔧 Development
+
+- [Authentication Architecture](docs/development/authentication.md)
+- [Implementation Summary](docs/development/implementation-summary.md)
+
+### 🆘 Troubleshooting
+
+- [Database Connection Fix](docs/troubleshooting/database-connection-fix.md)
+
+For the complete documentation index, please visit: [**Documentation Center**](docs/README.md)

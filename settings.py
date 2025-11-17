@@ -193,10 +193,10 @@ SERPER_API_KEY = st.secrets.get('SERPER_API_KEY')
 if SERPER_API_KEY and isinstance(SERPER_API_KEY, str):
     SERPER_API_KEY = SERPER_API_KEY.strip()
     if SERPER_API_KEY:
-        logging.info(f"✅ Serper API Key 已配置: {SERPER_API_KEY[:10]}...{SERPER_API_KEY[-4:]}")
+        logging.debug(f"✅ Serper API Key 已配置: {SERPER_API_KEY[:10]}...{SERPER_API_KEY[-4:]}")
     else:
         SERPER_API_KEY = None
-        logging.warning("⚠️ Serper API Key 为空字符串")
+        logging.debug("⚠️ Serper API Key 为空字符串")
 else:
     SERPER_API_KEY = None
-    logging.warning("⚠️ Serper API Key 未配置")
+    logging.debug("⚠️ Serper API Key 未配置")

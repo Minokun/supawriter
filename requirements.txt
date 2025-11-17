@@ -31,6 +31,8 @@ ddgs>=0.0.1
 
 # 数据库
 mysql-connector-python>=8.0.32
+psycopg2-binary>=2.9.0
+asyncpg>=0.27.0
 
 # 认证和安全
 Authlib>=1.6.0
@@ -49,12 +51,13 @@ extra-streamlit-components>=0.1.0
 jinja2>=3.1.0
 watchdog>=6.0.0
 zai-sdk>=0.0.4
+python-dotenv>=0.19.0
+pandas>=1.5.0
 
 # ============================================================================
 # 已移除的依赖 - 代码中未实际使用
 # ============================================================================
 # transformers>=4.30.0  # 未使用
-# pandas>=1.5.0  # 未使用
 # PyMuPDF>=1.20.0  # 未使用
 # huggingface_hub>=0.16.0  # 未使用
 # streamlit_markdown  # 未使用

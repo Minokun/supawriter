@@ -142,7 +142,7 @@ class ConfigManager:
                 'mtime': current_mtime
             }
             
-            logger.info(f"已从 {config_path} 加载配置")
+            logger.debug(f"已从 {config_path} 加载配置")
             return config_data
         except Exception as e:
             logger.error(f"加载配置失败: {str(e)}")
@@ -216,8 +216,13 @@ class ConfigManager:
         else:
             self._config_cache.clear()
 
+@st.cache_resource(show_spinner=False)
+def _get_config_manager():
+    """获取配置管理器单例（使用Streamlit缓存避免重复初始化）"""
+    return ConfigManager()
+
 # 创建全局配置管理器实例
-config_manager = ConfigManager()
+config_manager = _get_config_manager()
 
 # 默认配置值
 DEFAULT_CONFIG = {

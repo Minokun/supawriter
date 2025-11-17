@@ -32,6 +32,12 @@ def main():
     if not history:
         st.info("暂无历史记录")
         return
+    
+    # 提示用户可以在社区管理页面同步文章
+    st.info("💡 提示：可以前往 **社区管理** 页面将本地文章一键发布到PostgreSQL数据库")
+    
+    st.divider()
+    # ==================== 历史记录显示 ====================
 
     # Dynamically create history filter options
     transformation_type_names = list(ARTICLE_TRANSFORMATIONS.keys())

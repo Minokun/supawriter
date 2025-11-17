@@ -4,6 +4,23 @@ from pathlib import Path
 from datetime import datetime
 import shutil
 
+# 加载环境变量
+from dotenv import load_dotenv
+
+# 优先加载 deployment/.env，然后是根目录的 .env
+# 只在环境变量未设置时加载并打印日志
+if not os.getenv('_ENV_LOADED'):
+    env_files = [
+        os.path.join(os.path.dirname(__file__), 'deployment', '.env'),
+        os.path.join(os.path.dirname(__file__), '.env')
+    ]
+    for env_file in env_files:
+        if os.path.exists(env_file):
+            load_dotenv(env_file, override=True)
+            print(f"✅ 已加载环境变量: {os.path.basename(env_file)}")
+            os.environ['_ENV_LOADED'] = 'true'
+            break
+
 # 检查并创建secrets.toml
 def check_secrets_toml():
     secrets_file = Path(".streamlit/secrets.toml")
@@ -38,7 +55,8 @@ HIDDEN_PAGES = getattr(page_settings, 'HIDDEN_PAGES', [])
 import streamlit as st
 import importlib.util
 import extra_streamlit_components as stx
-from utils.auth import is_authenticated, logout, get_user_motto, update_user_motto, get_user_display_name
+from utils.auth_v2 import is_authenticated, logout, get_user_display_name
+from utils.auth_v2 import AuthService
 
 # Set page configuration at the very beginning
 st.set_page_config(
@@ -179,7 +197,7 @@ def load_module(path):
     spec.loader.exec_module(module)
     return module
 
-login_module = load_module(os.path.join(current_dir, "auth_pages", "login.py"))
+login_module = load_module(os.path.join(current_dir, "auth_pages", "login_v2.py"))
 
 # Initialize session state for user if not exists
 if "user" not in st.session_state:
@@ -231,7 +249,8 @@ else:
             st.image(wechat_qr_path, caption="微信公众号二维码", width='stretch')
     
     # 获取用户座右铭
-    user_motto = get_user_motto()
+    user = AuthService.get_current_user()
+    user_motto = user.get('motto', '创作改变世界') if user else '创作改变世界'
     
     # 使用自定义HTML样式显示用户信息
     # Determine display name using unified helper
