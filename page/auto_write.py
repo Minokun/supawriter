@@ -560,6 +560,7 @@ def main():
                 label='请填写文章的主题', 
                 help='文章将全部围绕该主题撰写，主题越细，文章也越详细',
                 value='',
+                key='article_topic',
                 disabled=(task_state['status'] == 'running')
             )
             custom_style = st.text_area(

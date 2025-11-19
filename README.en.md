@@ -77,3 +77,17 @@ For detailed documentation, please visit our [Documentation Center](docs/README.
 - [Database Connection Fix](docs/troubleshooting/database-connection-fix.md)
 
 For the complete documentation index, please visit: [**Documentation Center**](docs/README.md)
+
+## 📦 Recent Updates
+
+### v2.2 (2025-11)
+
+- ✅ **Market Hotspots Tracking**: New "Market Hotspots" page aggregating top charts from 36Kr (Tech/VC), Baidu, Weibo, and Douyin.
+- ✅ **Integrated Content Workflow**:
+  - Tweet Topics -> One-click Article Generation
+  - Hotspot Topics -> One-click Article Generation
+  - Auto-transfer of topic, style, and context
+- ✅ **Data Acquisition Optimization**:
+  - Implemented robust HTML parsing for Weibo and 36Kr to bypass API limitations
+  - Added Douyin Hot Search API integration
+

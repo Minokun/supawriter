@@ -271,7 +271,7 @@ def main():
                         
                         # 显示每个选题
                         for idx, topic in enumerate(topics_data['topics'], 1):
-                            display_topic_card(idx, topic)
+                            display_topic_card(idx, topic, unique_key_prefix="fresh")
                     else:
                         st.error("❌ 未能成功解析选题结果，请重试")
                         st.code(response, language="text")
@@ -450,7 +450,7 @@ def parse_llm_response(response):
     return None
 
 
-def display_topic_card(index, topic):
+def display_topic_card(index, topic, unique_key_prefix="topic"):
     """显示一个选题卡片"""
     title = topic.get('title', '无标题')
     subtitle = topic.get('subtitle', '')
@@ -517,6 +517,24 @@ def display_topic_card(index, topic):
         
         if estimated_words:
             st.markdown(f"**📏 预计字数**：{estimated_words}")
+    
+    # 生成文章按钮
+    if st.button("✨ 生成文章", key=f"gen_btn_{unique_key_prefix}_{index}", use_container_width=True):
+        # 准备预填数据
+        style_parts = []
+        if angle: style_parts.append(f"切入角度：{angle}")
+        if target_audience: style_parts.append(f"目标读者：{target_audience}")
+        if hook: style_parts.append(f"开篇钩子：{hook}")
+        if value_proposition: style_parts.append(f"价值主张：{value_proposition}")
+        
+        style_prompt = "\n".join(style_parts)
+        
+        # 设置Session State
+        st.session_state['article_topic'] = title
+        st.session_state['custom_style'] = style_prompt
+        
+        # 跳转页面
+        st.switch_page("page/auto_write.py")
     
     st.divider()
 
@@ -591,7 +609,7 @@ def display_history_tab(username):
             if topics:
                 st.markdown(f"**共 {len(topics)} 个选题：**")
                 for idx, topic in enumerate(topics, 1):
-                    display_topic_card(idx, topic)
+                    display_topic_card(idx, topic, unique_key_prefix=f"hist_{record_id}")
             else:
                 st.warning("该记录中没有选题数据")
 
