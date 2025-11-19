@@ -37,6 +37,12 @@ PAGE_ARTICLE_RECREATION = st.Page(
     icon=":material/edit_document:"
 )
 
+PAGE_TWEET_TOPICS = st.Page(
+    "page/tweet_topics.py",
+    title="推文选题",
+    icon=":material/lightbulb:"
+)
+
 # ********************应用商店************************、
 PAGE_GPTS_AUTOWITER = st.Page(
     "page/auto_write.py",
@@ -87,7 +93,7 @@ PAGE_NEWS = st.Page(
 # ******************菜单配置********************
 PAGES = {
     "应用": [PAGE_HOME, PAGE_GPTS, PAGE_DDGS_SEARCH, PAGE_NEWS],  # Chatbot functionality integrated into home page
-    "内容创作": [PAGE_GPTS_AUTOWITER, PAGE_ARTICLE_RECREATION],
+    "内容创作": [PAGE_GPTS_AUTOWITER, PAGE_ARTICLE_RECREATION, PAGE_TWEET_TOPICS],
     "工具": [PAGE_DOCUMENT_UTIL, PAGE_ASR, PAGE_TTS],
     "用户": [PAGE_PROFILE, PAGE_HISTORY, PAGE_COMMUNITY_MANAGEMENT, PAGE_SYSTEM_SETTINGS]
 }

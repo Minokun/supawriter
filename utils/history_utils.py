@@ -471,3 +471,67 @@ def delete_chat_session(username, session_id):
     
     return False
 
+
+# ================ Tweet Topics History Functions ================
+
+TWEET_TOPICS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'tweet_topics')
+os.makedirs(TWEET_TOPICS_DIR, exist_ok=True)
+
+def get_user_tweet_topics_file(username):
+    """Get the path to the user's tweet topics history file."""
+    return os.path.join(TWEET_TOPICS_DIR, f"{username}_tweet_topics.json")
+
+def load_tweet_topics_history(username):
+    """Load tweet topics history from the history file."""
+    history_file = get_user_tweet_topics_file(username)
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            return []
+    return []
+
+def save_tweet_topics_history(username, history):
+    """Save tweet topics history to the history file."""
+    history_file = get_user_tweet_topics_file(username)
+    with open(history_file, 'w', encoding='utf-8') as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
+
+def add_tweet_topics_record(username, news_source, news_count, topics_data, model_type, model_name):
+    """
+    Add a new tweet topics record to the user's history.
+    
+    Args:
+        username: The username of the user
+        news_source: The news source used
+        news_count: Number of news items fetched
+        topics_data: The generated topics data (JSON object)
+        model_type: The type of model used
+        model_name: The name of the model used
+    
+    Returns:
+        dict: The newly created record
+    """
+    history = load_tweet_topics_history(username)
+    record_id = max([r.get("id", 0) for r in history], default=0) + 1
+    record = {
+        "id": record_id,
+        "news_source": news_source,
+        "news_count": news_count,
+        "topics_data": topics_data,
+        "model_type": model_type,
+        "model_name": model_name,
+        "timestamp": datetime.now().isoformat()
+    }
+    history.append(record)
+    save_tweet_topics_history(username, history)
+    return record
+
+def delete_tweet_topics_record(username, record_id):
+    """Delete a tweet topics record by id for the user."""
+    history = load_tweet_topics_history(username)
+    new_history = [r for r in history if r.get("id") != record_id]
+    save_tweet_topics_history(username, new_history)
+    return True
+

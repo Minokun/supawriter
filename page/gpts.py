@@ -114,8 +114,8 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # 提供多个搜索引擎选项
-    search_col1, search_col2, search_col3, search_col4 = st.columns(4)
+    # 提供多个搜索引擎选项 - 第一行
+    search_col1, search_col2, search_col3 = st.columns(3)
     
     with search_col1:
         st.markdown("""
@@ -146,7 +146,12 @@ def main():
             <a href="https://lmarena.ai/leaderboard" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #1e90ff, #00bcd4); font-weight: 700;">打开网站</a>
         </div>
         """, unsafe_allow_html=True)
-        
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # 第二行搜索引擎
+    search_col4, search_col5, search_col6 = st.columns(3)
+    
     with search_col4:
         st.markdown("""
         <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #8E54E9;">
@@ -154,6 +159,26 @@ def main():
             <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">坤塔搜索</div>
             <div class="nav-desc" style="height: 40px;">多功能搜索引擎，支持文本、图片、视频和新闻</div>
             <a href="/ddgs_search" target="_self" class="nav-button" style="background: linear-gradient(45deg, #667eea, #764ba2); font-weight: 700;">打开搜索</a>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with search_col5:
+        st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #00D9FF;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #00D9FF;">🔎</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">Tavily Search</div>
+            <div class="nav-desc" style="height: 40px;">AI驱动的搜索引擎API，专为AI应用优化</div>
+            <a href="https://app.tavily.com/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #00D9FF, #00A8E8); font-weight: 700;">打开平台</a>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with search_col6:
+        st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #FFA500;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #FFA500;">🔍</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">Serper API</div>
+            <div class="nav-desc" style="height: 40px;">强大的Google搜索API服务，快速获取搜索结果</div>
+            <a href="https://serper.dev/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #FFA500, #FF8C00); font-weight: 700;">打开平台</a>
         </div>
         """, unsafe_allow_html=True)
     
