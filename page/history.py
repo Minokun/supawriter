@@ -5,16 +5,344 @@ from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
 from utils.history_utils import load_user_history, save_html_to_user_dir, sanitize_filename
 from utils.playwright_utils import take_webpage_screenshot_sync
+from utils.wechat_converter import markdown_to_wechat_html
 from settings import ARTICLE_TRANSFORMATIONS, HISTORY_FILTER_BASE_OPTIONS, HTML_NGINX_BASE_URL
+import markdown
 import os
 import time
 from urllib.parse import quote
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     handlers=[logging.StreamHandler(sys.stdout)])
 logger = logging.getLogger('history')
+
+def _fix_bento_html_aos(html: str) -> str:
+    """
+    Fix AOS (Animate On Scroll) initialization issues in Bento HTML.
+    AOS hides elements by default, causing blank pages if not properly initialized.
+    """
+    if not html or not isinstance(html, str):
+        return html
+    
+    # Only process if AOS is used
+    if 'aos.js' not in html.lower() and 'data-aos' not in html.lower():
+        return html
+    
+    # Remove any existing inline AOS.init() calls that might execute too early
+    html = re.sub(r'AOS\.init\s*\([^)]*\)\s*;?', '', html, flags=re.IGNORECASE)
+    
+    # Inject robust initialization script
+    init_script = """
+    <script>
+        // Critical AOS initialization - must run after library loads
+        window.addEventListener('load', function() {
+            if (typeof AOS !== 'undefined') {
+                try {
+                    AOS.init({
+                        duration: 800,
+                        easing: 'ease-out-cubic',
+                        once: true,
+                        offset: 50,
+                        disable: false
+                    });
+                    console.log('AOS initialized successfully');
+                } catch (e) {
+                    console.error('AOS init failed:', e);
+                    // Fallback: remove data-aos to make content visible
+                    document.querySelectorAll('[data-aos]').forEach(el => {
+                        el.removeAttribute('data-aos');
+                        el.style.opacity = '1';
+                        el.style.transform = 'none';
+                    });
+                }
+            } else {
+                console.warn('AOS library not loaded, removing animations');
+                // Fallback: remove data-aos to make content visible
+                document.querySelectorAll('[data-aos]').forEach(el => {
+                    el.removeAttribute('data-aos');
+                    el.style.opacity = '1';
+                    el.style.transform = 'none';
+                });
+            }
+        });
+        // Emergency fallback if load event already fired
+        if (document.readyState === 'complete') {
+            setTimeout(function() {
+                if (!window.AOS || !AOS.init) {
+                    document.querySelectorAll('[data-aos]').forEach(el => {
+                        el.removeAttribute('data-aos');
+                        el.style.opacity = '1';
+                        el.style.transform = 'none';
+                    });
+                }
+            }, 1000);
+        }
+    </script>
+    """
+    if '</body>' in html:
+        html = html.replace('</body>', f"{init_script}</body>")
+    else:
+        html += init_script
+    
+    return html
+
+@st.dialog("公众号预览", width="large")
+def preview_wechat_article(markdown_content):
+    """
+    Show a modal dialog with the WeChat-formatted article preview.
+    """
+    if not markdown_content:
+        st.warning("文章内容为空")
+        return
+        
+    # Convert Markdown to WeChat HTML
+    html_content = markdown_to_wechat_html(markdown_content)
+    
+    st.caption("💡 提示：内容已转换为微信公众号格式。点击右下角的“一键复制”按钮，即可粘贴到微信编辑器。")
+    
+    # Inject Copy Button and JS
+    html_with_script = f"""
+    {html_content}
+    <style>
+        .copy-btn-container {{
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+        }}
+        .copy-btn {{
+            background-color: #07c160;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-weight: 500;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }}
+        .copy-btn:hover {{
+            background-color: #06ad56;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+        }}
+        .copy-btn:active {{
+            transform: translateY(0);
+        }}
+        .toast {{
+            visibility: hidden;
+            min-width: 200px;
+            background-color: #333;
+            color: #fff;
+            text-align: center;
+            border-radius: 4px;
+            padding: 12px;
+            position: fixed;
+            z-index: 1001;
+            left: 50%;
+            bottom: 70px;
+            transform: translateX(-50%);
+            font-size: 14px;
+            opacity: 0;
+            transition: opacity 0.3s, bottom 0.3s;
+        }}
+        .toast.show {{
+            visibility: visible;
+            opacity: 1;
+            bottom: 80px;
+        }}
+    </style>
+    
+    <div class="copy-btn-container">
+        <button class="copy-btn" onclick="copyToWeChat()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            一键复制
+        </button>
+    </div>
+    <div id="toast" class="toast">✅ 已复制！请直接粘贴到微信编辑器</div>
+    
+    <script>
+    function copyToWeChat() {{
+        const content = document.getElementById('wechat-content');
+        
+        // Select the content
+        const range = document.createRange();
+        range.selectNode(content);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        
+        try {{
+            // Execute copy command
+            const successful = document.execCommand('copy');
+            
+            // Show toast
+            const toast = document.getElementById("toast");
+            toast.className = "toast show";
+            setTimeout(function(){{ toast.className = toast.className.replace("show", ""); }}, 3000);
+            
+        }} catch (err) {{
+            console.error('Oops, unable to copy', err);
+            alert('复制失败，请手动全选复制');
+        }}
+        
+        // Clear selection
+        selection.removeAllRanges();
+    }}
+    </script>
+    """
+    
+    # Preview container
+    # We use a container with height to simulate mobile view scrolling
+    st.components.v1.html(html_with_script, height=600, scrolling=True)
+
+
+@st.dialog("markdown格式预览", width="large")
+def preview_markdown_article(markdown_content):
+    """
+    Show a modal dialog with the standard Markdown rendered preview.
+    """
+    if not markdown_content:
+        st.warning("文章内容为空")
+        return
+        
+    # Convert Markdown to HTML (Standard/GitHub style)
+    html_body = markdown.markdown(
+        markdown_content, 
+        extensions=['fenced_code', 'tables', 'nl2br', 'sane_lists']
+    )
+    
+    # Define clean styles (GitHub-like)
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+                line-height: 1.6;
+                color: #24292e;
+                padding: 20px;
+                max-width: 100%;
+                margin: 0 auto;
+                background-color: #ffffff;
+            }}
+            h1, h2, h3, h4, h5, h6 {{ margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25; color: #24292e; }}
+            h1 {{ font-size: 2em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }}
+            h2 {{ font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }}
+            p {{ margin-top: 0; margin-bottom: 16px; }}
+            code {{ background-color: rgba(27,31,35,0.05); border-radius: 3px; padding: 0.2em 0.4em; font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace; font-size: 85%; }}
+            pre {{ background-color: #f6f8fa; border-radius: 3px; padding: 16px; overflow: auto; }}
+            pre code {{ background-color: transparent; padding: 0; }}
+            blockquote {{ border-left: 0.25em solid #dfe2e5; color: #6a737d; padding: 0 1em; margin: 0; }}
+            table {{ border-collapse: collapse; border-spacing: 0; width: 100%; margin-bottom: 16px; }}
+            table th, table td {{ padding: 6px 13px; border: 1px solid #dfe2e5; }}
+            table th {{ font-weight: 600; background-color: #f6f8fa; }}
+            table tr:nth-child(2n) {{ background-color: #f6f8fa; }}
+            img {{ max-width: 100%; box-sizing: content-box; background-color: #fff; display: block; margin: 0 auto; }}
+            
+            /* Copy Button Styles */
+            .copy-btn-container {{
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                z-index: 1000;
+            }}
+            .copy-btn {{
+                background-color: #0969da;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                font-weight: 500;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                transition: all 0.2s;
+            }}
+            .copy-btn:hover {{
+                background-color: #0356b7;
+                transform: translateY(-1px);
+                box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+            }}
+            .copy-btn:active {{
+                transform: translateY(0);
+            }}
+            .toast {{
+                visibility: hidden;
+                min-width: 200px;
+                background-color: #333;
+                color: #fff;
+                text-align: center;
+                border-radius: 4px;
+                padding: 12px;
+                position: fixed;
+                z-index: 1001;
+                left: 50%;
+                bottom: 70px;
+                transform: translateX(-50%);
+                font-size: 14px;
+                opacity: 0;
+                transition: opacity 0.3s, bottom 0.3s;
+            }}
+            .toast.show {{
+                visibility: visible;
+                opacity: 1;
+                bottom: 80px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div id="content">
+            {html_body}
+        </div>
+        
+        <div class="copy-btn-container">
+            <button class="copy-btn" onclick="copyContent()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                一键复制
+            </button>
+        </div>
+        <div id="toast" class="toast">✅ 已复制！</div>
+        
+        <script>
+        function copyContent() {{
+            const content = document.getElementById('content');
+            const range = document.createRange();
+            range.selectNode(content);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            
+            try {{
+                document.execCommand('copy');
+                const toast = document.getElementById("toast");
+                toast.className = "toast show";
+                setTimeout(function(){{ toast.className = toast.className.replace("show", ""); }}, 3000);
+            }} catch (err) {{
+                console.error('Unable to copy', err);
+                alert('复制失败');
+            }}
+            selection.removeAllRanges();
+        }}
+        </script>
+    </body>
+    </html>
+    """
+    
+    st.components.v1.html(html_content, height=600, scrolling=True)
+
 
 @require_auth
 def main():
@@ -122,6 +450,11 @@ def main():
                     </html>"""
                     html_content = wrapped_content
                 
+                # 对Bento风格网页应用AOS修复，确保内容可见
+                if is_bento and ('aos.js' in html_content.lower() or 'data-aos' in html_content.lower()):
+                    html_content = _fix_bento_html_aos(html_content)
+                    logger.info(f"已对Bento HTML应用AOS修复: {record['id']}")
+                
                 # 生成唯一文件名并进行清洗，避免非法字符或路径分隔符
                 raw_filename = f"{record.get('topic', 'article').replace(' ', '_')}_{record['id']}.html"
                 html_filename = sanitize_filename(raw_filename)
@@ -130,11 +463,15 @@ def main():
                 user_html_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'html', current_user)
                 file_path = os.path.join(user_html_dir, html_filename)
                 
-                # 如果文件不存在，才保存HTML内容到文件
-                if not os.path.exists(file_path):
+                # 检查文件是否需要（重新）保存
+                # 文件不存在、文件为空、或者是Bento页面（可能需要应用修复）时都需要保存
+                file_needs_save = not os.path.exists(file_path) or os.path.getsize(file_path) < 100 or (is_bento and 'aos.js' in html_content.lower())
+                
+                if file_needs_save:
                     _, url_path = save_html_to_user_dir(current_user, html_content, html_filename)
+                    logger.info(f"已{'重新' if os.path.exists(file_path) else ''}保存HTML文件: {html_filename}")
                 else:
-                    # 如果文件已存在，只生成URL路径
+                    # 如果文件已存在且有内容，只生成URL路径
                     url_path = f"{current_user}/{html_filename}"
                 
                 # 生成可访问的URL（对路径进行URL编码，避免%等特殊字符导致的Nginx访问问题）
@@ -210,14 +547,20 @@ def main():
                         # 使用session_state来触发重新加载
                         st.session_state['history_trigger_rerun'] = True
             else:
-                # 对于MD内容，使用popover显示
-                with st.popover("点击查看文章内容"):
-                    st.markdown(content)
-                
-                # 创建两列布局，分别放置下载按钮和删除按钮
-                col1, col2 = st.columns([1, 1])
+                # 创建四列布局，分别放置Markdown预览、公众号预览、下载按钮和删除按钮
+                col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
                 
                 with col1:
+                    # Markdown预览按钮
+                    if st.button("📄 markdown格式预览", key=f"preview_md_{record['id']}", use_container_width=True, type="secondary"):
+                        preview_markdown_article(content)
+                
+                with col2:
+                    # 公众号预览按钮
+                    if st.button("📱 公众号预览", key=f"wechat_preview_{record['id']}", use_container_width=True, type="primary"):
+                        preview_wechat_article(content)
+
+                with col3:
                     # 下载按钮
                     st.download_button(
                         label="📥 下载文章" + (" (已编辑)" if has_been_edited else ""),
@@ -228,7 +571,7 @@ def main():
                         use_container_width=True,
                         type="secondary"
                     )
-                with col2:
+                with col4:
                     # 删除按钮
                     delete_button = st.button("🗑️ 删除记录", key=f"delete_md_{record['id']}", type="secondary", use_container_width=True)
                     if delete_button:

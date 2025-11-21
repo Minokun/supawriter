@@ -12,6 +12,7 @@ urllib3>=1.26.12
 
 # Web内容解析
 beautifulsoup4>=4.12.3
+markdown>=3.4.3
 readability-lxml>=0.8.1
 lxml>=5.0.0
 

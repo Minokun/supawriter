@@ -56,6 +56,7 @@ dependencies = [
     "watchdog>=6.0.0",
     "zai-sdk>=0.0.4.2",
     "streamlit-autorefresh>=1.0.1",
+    "markdown>=3.10",
 ]
 
 [project.optional-dependencies]

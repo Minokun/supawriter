@@ -131,9 +131,11 @@ def main():
         st.markdown("### ⚙️ 配置选项")
         
         # 新闻源选择
-        news_source = st.selectbox(
+        news_source = st.pills(
             "选择新闻源",
-            ["机器之心", "SOTA开源项目", "实时新闻", "AI企业", "AI创作"],
+            ["机器之心", "SOTA开源项目", "实时新闻"],
+            default="机器之心",
+            selection_mode="single",
             help="选择要分析的新闻来源"
         )
         
@@ -293,10 +295,6 @@ def fetch_news_by_source(source_name, count=15):
             return fetch_sota_projects(count)
         elif source_name == "实时新闻":
             return fetch_chinaz_news(news_type=1, count=count)
-        elif source_name == "AI企业":
-            return fetch_chinaz_news(news_type=4, count=count)
-        elif source_name == "AI创作":
-            return fetch_chinaz_news(news_type=5, count=count)
         else:
             return []
     except Exception as e:

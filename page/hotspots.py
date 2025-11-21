@@ -356,14 +356,26 @@ def fetch_weibo_hot():
             # 匹配内容
             
             # 这里简化处理，直接找所有含有 href="/weibo?q=" 的链接
-            items = re.findall(r'<a href="(/weibo\?q=[^"]+)"[^>]*>([^<]+)</a>\s*(?:<span>(\d+)</span>)?', response.text)
+            # 优化正则：
+            # 1. 允许 span 带属性
+            # 2. 允许 span 内容不仅仅是数字 (虽然通常是数字)
+            # 3. 使用 re.DOTALL (re.S) 确保跨行匹配
+            items = re.findall(r'<a href="(/weibo\?q=[^"]+)"[^>]*>(.*?)</a>.*?<span[^>]*>(.*?)</span>', response.text, re.DOTALL)
+            
+            # 如果上面的没匹配到（比如置顶没有span或者格式不同），尝试宽松匹配
+            if not items:
+                 items = re.findall(r'<a href="(/weibo\?q=[^"]+)"[^>]*>(.*?)</a>', response.text)
+                 # 补全格式
+                 items = [(x[0], x[1], "") for x in items]
             
             # 过滤掉"剧集影响力榜"等导航链接 (通常不带热度或者特定关键词)
             # 真正热搜通常带有热度数字，或者是在特定区域
             
             hot_list = []
             for link, title, heat in items:
-                title = html.unescape(title)
+                title = html.unescape(title).strip()
+                heat = heat.strip()
+                
                 # 排除导航项
                 if title in ['首页', '发现', '游戏', '注册', '登录', '帮助', '剧集影响力榜', '综艺影响力榜', '更多']:
                     continue
@@ -469,7 +481,7 @@ def display_hotspot_card(rank, title, summary, url, meta, source=""):
         
     with col2:
         # 垂直居中按钮
-        st.write("")
+        st.space("medium")
         # 使用source和title生成更唯一的key
         safe_key = f"{source}_{rank}_{hash(title)}"
         if st.button("✨ 写文章", key=safe_key, use_container_width=True):

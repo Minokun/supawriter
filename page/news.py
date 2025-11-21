@@ -5,6 +5,26 @@ from utils.auth_decorator import require_auth
 import json
 import re
 import html
+import base64
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_jiqizhixin_image_base64(url):
+    """获取机器之心图片并转为base64（绕过防盗链）"""
+    if not url:
+        return ''
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://www.jiqizhixin.com/'
+        }
+        r = requests.get(url, headers=headers, timeout=5)
+        if r.status_code == 200:
+            content_type = r.headers.get('Content-Type', 'image/jpeg')
+            b64 = base64.b64encode(r.content).decode('utf-8')
+            return f"data:{content_type};base64,{b64}"
+    except Exception:
+        pass
+    return ''
 
 @require_auth
 def main():
@@ -196,12 +216,10 @@ def main():
     """, unsafe_allow_html=True)
     
     # 创建分类标签页
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3 = st.tabs([
         "📰 机器之心", 
         "⭐ 开源项目", 
-        "🔥 实时新闻", 
-        "🏢 AI企业", 
-        "✨ AI创作"
+        "🔥 实时新闻"
     ])
     
     # 机器之心
@@ -218,16 +236,6 @@ def main():
     with tab3:
         st.markdown("### 实时AI新闻")
         fetch_chinaz_news(news_type=1, title="实时新闻")
-    
-    # AI企业
-    with tab4:
-        st.markdown("### AI企业资讯")
-        fetch_chinaz_news(news_type=4, title="AI企业")
-    
-    # AI创作项目
-    with tab5:
-        st.markdown("### AI创作项目")
-        fetch_chinaz_news(news_type=5, title="AI创作")
 
 
 def fetch_jiqizhixin_news():
@@ -273,7 +281,12 @@ def display_jiqizhixin_card(article):
     
     # 显示列表项（图文式）
     if image_url:
-        img_html = f'''<img src="{image_url}" class="news-image" referrerpolicy="no-referrer" onerror="this.style.display='none'">'''
+        # 使用Base64代理图片绕过防盗链
+        img_src = get_jiqizhixin_image_base64(image_url)
+        if img_src:
+            img_html = f'''<img src="{img_src}" class="news-image">'''
+        else:
+            img_html = '' # 图片加载失败则不显示
     else:
         img_html = ''
     

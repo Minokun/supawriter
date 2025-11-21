@@ -23,6 +23,7 @@ import streamlit.components.v1 as components
 import threading
 import time
 from datetime import datetime
+from utils.wechat_converter import markdown_to_wechat_html
 # 仅在utils中使用DDGS/requests/base64，这里不直接依赖
 
 # 辅助函数：清理大模型输出中的 thinking 标签
@@ -748,12 +749,35 @@ def main():
             full_article_text = '\n\n---\n\n'.join(task_state['result'])
             st.session_state.edited_full_article = full_article_text
 
-        # “编辑/预览”切换按钮
-        if st.button("✍️ 编辑/预览切换", key="toggle_edit_mode"):
-            st.session_state.edit_mode = not st.session_state.edit_mode
+        # “编辑/预览”切换
+        mode = st.segmented_control(
+            "模式选择",
+            ["预览模式", "编辑模式", "公众号预览"],
+            default="编辑模式" if st.session_state.edit_mode else "预览模式",
+            selection_mode="single",
+            label_visibility="collapsed"
+        )
+        st.session_state.edit_mode = (mode == "编辑模式")
 
         # 根据模式显示不同UI
-        if st.session_state.edit_mode:
+        if mode == "公众号预览":
+            st.markdown("### 📱 公众号样式预览")
+            st.info("请直接全选下方内容并复制，然后粘贴到微信公众号编辑器中。")
+            
+            # 转换为公众号HTML
+            wechat_html = markdown_to_wechat_html(st.session_state.edited_full_article)
+            
+            # 在一个白色背景的容器中显示预览，模拟公众号环境
+            st.markdown(
+                f"""
+                <div style="background-color: white; padding: 20px; border-radius: 5px; border: 1px solid #ddd; max-width: 677px; margin: 0 auto;">
+                    {wechat_html}
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
+            
+        elif st.session_state.edit_mode:
             # --- 编辑模式：双栏布局 ---
             st.info("您已进入编辑模式。左右两栏均为独立滚动区域，方便长文对照编辑。")
             

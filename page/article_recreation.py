@@ -11,7 +11,7 @@ if parent_dir not in sys.path:
 
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
-from utils.history_utils import load_user_history, add_history_record, save_html_to_user_dir
+from utils.history_utils import load_user_history, add_history_record, save_html_to_user_dir, sanitize_filename
 from utils.llm_chat import chat
 from settings import LLM_MODEL, ARTICLE_TRANSFORMATIONS
 from utils.config_manager import get_config
@@ -84,6 +84,81 @@ def _enforce_bento_layout_constraints(html: str) -> str:
 
     # Collapse redundant whitespace introduced by removals
     html = re.sub(r"\s{2,}", " ", html)
+    
+    # Ensure Tailwind CSS is present if Tailwind classes are used
+    # Check for common Tailwind classes like "text-", "bg-", "p-", "m-", "grid", "flex"
+    if 'class=' in html.lower() and ('grid' in html.lower() or 'flex' in html.lower() or 'text-' in html.lower()):
+        if 'tailwindcss' not in html.lower() and 'cdn.tailwindcss.com' not in html.lower():
+            tailwind_cdn = '<script src="https://cdn.tailwindcss.com"></script>'
+            if '</head>' in html:
+                html = html.replace('</head>', f"{tailwind_cdn}</head>")
+            elif '<head>' in html:
+                html = html.replace('<head>', f"<head>{tailwind_cdn}")
+            else:
+                # No head tag, prepend to body or html
+                html = f"{tailwind_cdn}\n{html}"
+
+    # Critical fix for AOS (Animate On Scroll) - ensures content visibility
+    # AOS hides elements with data-aos by default, they only show after init
+    if 'aos.js' in html.lower() or 'data-aos' in html.lower():
+        # Remove any existing inline AOS.init() calls that might execute too early
+        html = re.sub(r'AOS\.init\s*\([^)]*\)\s*;?', '', html, flags=re.IGNORECASE)
+        
+        # Inject robust initialization script that:
+        # 1. Waits for window load (ensures AOS library is loaded)
+        # 2. Falls back to removing data-aos if AOS fails to load
+        init_script = """
+    <script>
+        // Critical AOS initialization - must run after library loads
+        window.addEventListener('load', function() {
+            if (typeof AOS !== 'undefined') {
+                try {
+                    AOS.init({
+                        duration: 800,
+                        easing: 'ease-out-cubic',
+                        once: true,
+                        offset: 50,
+                        disable: false
+                    });
+                    console.log('AOS initialized successfully');
+                } catch (e) {
+                    console.error('AOS init failed:', e);
+                    // Fallback: remove data-aos to make content visible
+                    document.querySelectorAll('[data-aos]').forEach(el => {
+                        el.removeAttribute('data-aos');
+                        el.style.opacity = '1';
+                        el.style.transform = 'none';
+                    });
+                }
+            } else {
+                console.warn('AOS library not loaded, removing animations');
+                // Fallback: remove data-aos to make content visible
+                document.querySelectorAll('[data-aos]').forEach(el => {
+                    el.removeAttribute('data-aos');
+                    el.style.opacity = '1';
+                    el.style.transform = 'none';
+                });
+            }
+        });
+        // Emergency fallback if load event already fired
+        if (document.readyState === 'complete') {
+            setTimeout(function() {
+                if (!window.AOS || !AOS.init) {
+                    document.querySelectorAll('[data-aos]').forEach(el => {
+                        el.removeAttribute('data-aos');
+                        el.style.opacity = '1';
+                        el.style.transform = 'none';
+                    });
+                }
+            }, 1000);
+        }
+    </script>
+    """
+        if '</body>' in html:
+            html = html.replace('</body>', f"{init_script}</body>")
+        else:
+            html += init_script
+                
     return html
 
 # 辅助函数：清理大模型输出中的 thinking 标签
@@ -218,6 +293,22 @@ def main():
                     st.error("转换结果未生成有效的HTML，请稍后重试或检查原文内容。")
                     return
                 transformed_content = _enforce_bento_layout_constraints(normalized_html)
+                
+                # 验证HTML内容有效性（至少应该包含基本的HTML结构）
+                if len(transformed_content.strip()) < 200:
+                    st.error(f"生成的HTML内容过短（仅{len(transformed_content.strip())}字符），可能不完整。请重试或检查模型输出。")
+                    st.code(transformed_content[:500], language="html")
+                    return
+                
+                # 立即保存HTML文件到文件系统，避免历史记录页面显示空白
+                # 生成与历史记录页面一致的文件名
+                raw_filename = f"{new_topic.replace(' ', '_')}_{max([r.get('id', 0) for r in history], default=0) + 1}.html"
+                html_filename = sanitize_filename(raw_filename)
+                try:
+                    save_html_to_user_dir(current_user, transformed_content, html_filename)
+                    st.info(f"✅ HTML文件已保存: {html_filename} ({len(transformed_content)}字符)")
+                except Exception as e:
+                    st.warning(f"保存HTML文件时出现警告: {str(e)}，但内容已保存到数据库")
 
             # Save the transformed article
             # 保存转换后的文章（可能包含图片）
