@@ -19,7 +19,7 @@ def index_ddgs_images(
     username: str,
     article_id: str,
     max_results: int = 30,
-    chunk_size: int = 30,
+    chunk_size: int = 5,  # 降低批量大小，避免超时
     log_fn: Callable[[str, str], None] | None = None,
 ) -> int:
     """
@@ -107,20 +107,12 @@ def index_ddgs_images(
             # 批量失败或返回不完整，逐张回退
             _log('warning', f"批量嵌入返回空/不完整结果，回退为逐张处理。本批次大小: {len(batch_urls)}")
             for u, p in zip(batch_urls, batch_payloads):
-                # 简单重试：最多2次，100ms退避
-                attempts = 0
+                # 单次尝试，失败就跳过，不浪费时间
                 single_vecs = None
-                while attempts < 2 and not (single_vecs and isinstance(single_vecs, list) and len(single_vecs) > 0 and isinstance(single_vecs[0], list) and len(single_vecs[0]) > 0):
-                    attempts += 1
-                    try:
-                        single_vecs = embedder.get_embedding([u], is_image_url=True)
-                    except Exception as e:
-                        _log('error', f"单张获取图片embedding失败(第{attempts}次): {str(e)} | url: {u}")
-                        time.sleep(0.1)
-                        continue
-                    if not (single_vecs and isinstance(single_vecs, list) and len(single_vecs) > 0 and isinstance(single_vecs[0], list) and len(single_vecs[0]) > 0):
-                        _log('warning', f"单张embedding返回空向量(第{attempts}次)，url: {u}")
-                        time.sleep(0.1)
+                try:
+                    single_vecs = embedder.get_embedding([u], is_image_url=True)
+                except Exception as e:
+                    _log('debug', f"单张获取图片embedding失败: {str(e)} | url: {u}")
                 if single_vecs and isinstance(single_vecs, list) and len(single_vecs) > 0 and isinstance(single_vecs[0], list) and len(single_vecs[0]) > 0:
                     valid_vectors.append(single_vecs[0])
                     valid_payloads.append(p)

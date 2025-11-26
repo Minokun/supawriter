@@ -162,7 +162,7 @@ def llm_task(search_result, question, output_type, model_type, model_name, max_w
     
     logger.info(f"开始处理LLM任务: 模型={model_type}/{model_name}, 任务类型=---任务---{task_description}---, 搜索结果数量={len(search_result)}")
     
-    MAX_CONTENT_LENGTH = 30000
+    MAX_CONTENT_LENGTH = 80000  # 128K模型支持更长上下文，提高到80K字符
     optimized_search_result = []
     current_chunk = ""
     current_titles = []
@@ -234,12 +234,10 @@ def llm_task(search_result, question, output_type, model_type, model_name, max_w
             current_urls = [item.get('url', '')]
         else:
             if current_chunk:
-                # 使用更清晰的分隔符，包含标题信息
-                separator = f"\n\n{'='*40}\n## {title}\n{'='*40}\n\n"
-                current_chunk += separator
+                # 简化分隔符，减少冗余字符
+                current_chunk += f"\n\n---\n## {title}\n"
             else:
-                # 第一个内容添加标题
-                current_chunk = f"## {title}\n\n"
+                current_chunk = f"## {title}\n"
             current_chunk += content
             current_titles.append(title)
             current_urls.append(item.get('url', ''))
@@ -440,7 +438,7 @@ class Search:
         logger.info(f"合并搜索结果: DDGS ({ddgs_count}) + Serper ({serper_count}) = 总计 {len(all_results)} 条")
         return {'results': all_results}
 
-    def get_search_result(self, question: str, is_multimodal=False, use_direct_image_embedding=False, theme="", spider_mode=False, progress_callback: Optional[callable] = None, username: str = None, article_id: str = None):
+    def get_search_result(self, question: str, is_multimodal=False, use_direct_image_embedding=False, theme="", spider_mode=False, progress_callback: Optional[callable] = None, username: str = None, article_id: str = None, model_type: str = 'deepseek', model_name: str = 'deepseek-chat'):
         # 先优化查询词，提取关键词
         self.search_query = question
         optimizeq = chat(question, system_prompt="""你是搜索引擎查询优化专家。请将用户的问题转换为更适合搜索引擎的查询词。
@@ -451,7 +449,7 @@ class Search:
                 4. 保持查询词简洁自然，避免过于复杂的搜索语法
                 5. 保留年份、版本号等重要限定词
 
-                直接输出优化后的查询词，不要解释，不要添加引号。""")
+                直接输出优化后的查询词，不要解释，不要添加引号。""", model_type=model_type, model_name=model_name)
         logger.info(f"优化后的搜索词: {optimizeq}")
         self.optimized_query = optimizeq
         
@@ -569,8 +567,8 @@ class Search:
                     url = item['url']
                     normalized_url = normalize_url(url)
                     
-                    # 如果URL还未被处理，添加到最终列表
-                    if normalized_url not in final_url_map:
+                    # 如果URL还未被处理且不为空，添加到最终列表
+                    if normalized_url not in final_url_map and url and url.strip():
                         final_urls.append(url)
                         final_url_map[normalized_url] = url
                 
@@ -678,14 +676,26 @@ class Search:
                                     seen.add(img_url)
                                     unique_image_pairs.append((img_url, page_url))
                             if unique_image_pairs:
-                                chunk_size = 30
+                                # 减小批次大小，避免因单张图片下载失败导致整批回退
+                                # 原来是30，现在改为10，提高批量成功率
+                                chunk_size = 10
                                 batch_added = 0
                                 fallback_added = 0
                                 skipped = 0
                                 total = len(unique_image_pairs)
+                                total_batches = (total + chunk_size - 1) // chunk_size
                                 logger.info(f"开始对抓取到的网页图片执行批量嵌入：共 {total} 张，批大小 {chunk_size}")
                                 for i in range(0, total, chunk_size):
                                     chunk = unique_image_pairs[i:i+chunk_size]
+                                    batch_num = i // chunk_size + 1
+                                    # 更新图片 embedding 进度
+                                    if progress_callback:
+                                        try:
+                                            # 使用特殊格式传递图片embedding进度：负数表示图片embedding阶段
+                                            # 格式: (-batch_num, -total_batches) 用负数区分普通进度
+                                            progress_callback(-batch_num, -total_batches)
+                                        except Exception as e:
+                                            logger.debug(f"图片embedding进度回调失败: {e}")
                                     urls_batch = [u for (u, _) in chunk]
                                     data_batch = [{
                                         'image_url': u,
@@ -700,6 +710,11 @@ class Search:
                                         logger.warning(f"批量获取图片嵌入失败（{i}-{i+len(chunk)}）: {e}")
                                     valid_embeds = []
                                     valid_data = []
+                                    # 记录批量嵌入返回情况
+                                    embed_count = len(embeddings) if embeddings else 0
+                                    input_count = len(urls_batch)
+                                    if embed_count != input_count:
+                                        logger.warning(f"批量嵌入数量不匹配：输入 {input_count} 张，返回 {embed_count} 个嵌入向量（批次 {i//chunk_size + 1}）")
                                     if embeddings and len(embeddings) == len(urls_batch):
                                         for emb, data_obj in zip(embeddings, data_batch):
                                             if emb:
@@ -712,9 +727,10 @@ class Search:
                                             add_batch_embeddings_to_faiss_index(valid_embeds, valid_data, faiss_index)
                                             added_now = faiss_index.get_size() - before
                                             batch_added += max(0, added_now)
+                                            logger.debug(f"批次 {i//chunk_size + 1} 批量添加成功：{added_now} 张")
                                     else:
                                         # 批量失败或返回数量不匹配，对每个进行回退处理
-                                        logger.debug(f"批量嵌入返回无效或数量不一致，启用逐项回退（{i}-{i+len(chunk)}）")
+                                        logger.info(f"批量嵌入返回无效或数量不一致（输入{input_count}/返回{embed_count}），启用逐项回退（批次 {i//chunk_size + 1}）")
                                         for (u, p) in chunk:
                                             try:
                                                 ok = add_to_faiss_index(u, {

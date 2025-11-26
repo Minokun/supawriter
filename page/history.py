@@ -12,6 +12,7 @@ import os
 import time
 from urllib.parse import quote
 import re
+import json
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -219,6 +220,9 @@ def preview_markdown_article(markdown_content):
         extensions=['fenced_code', 'tables', 'nl2br', 'sane_lists']
     )
     
+    # Escape the markdown content for embedding in JavaScript
+    escaped_markdown = json.dumps(markdown_content)
+    
     # Define clean styles (GitHub-like)
     html_content = f"""
     <!DOCTYPE html>
@@ -309,22 +313,41 @@ def preview_markdown_article(markdown_content):
         </div>
         
         <div class="copy-btn-container">
-            <button class="copy-btn" onclick="copyContent()">
+            <button class="copy-btn" onclick="copyMarkdown()">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 一键复制
             </button>
         </div>
-        <div id="toast" class="toast">✅ 已复制！</div>
+        <div id="toast" class="toast">✅ 已复制Markdown原文！</div>
         
         <script>
-        function copyContent() {{
-            const content = document.getElementById('content');
-            const range = document.createRange();
-            range.selectNode(content);
-            const selection = window.getSelection();
-            selection.removeAllRanges();
-            selection.addRange(range);
-            
+        // Store the original markdown content
+        const markdownContent = {escaped_markdown};
+        
+        function copyMarkdown() {{
+            // Use modern Clipboard API to copy the original markdown text
+            if (navigator.clipboard && navigator.clipboard.writeText) {{
+                navigator.clipboard.writeText(markdownContent).then(function() {{
+                    const toast = document.getElementById("toast");
+                    toast.className = "toast show";
+                    setTimeout(function(){{ toast.className = toast.className.replace("show", ""); }}, 3000);
+                }}).catch(function(err) {{
+                    console.error('Clipboard API failed:', err);
+                    fallbackCopy();
+                }});
+            }} else {{
+                fallbackCopy();
+            }}
+        }}
+        
+        function fallbackCopy() {{
+            // Fallback for older browsers
+            const textarea = document.createElement('textarea');
+            textarea.value = markdownContent;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
             try {{
                 document.execCommand('copy');
                 const toast = document.getElementById("toast");
@@ -334,7 +357,7 @@ def preview_markdown_article(markdown_content):
                 console.error('Unable to copy', err);
                 alert('复制失败');
             }}
-            selection.removeAllRanges();
+            document.body.removeChild(textarea);
         }}
         </script>
     </body>
@@ -346,40 +369,185 @@ def preview_markdown_article(markdown_content):
 
 @require_auth
 def main():
-    st.title("历史记录")
+    # 自定义CSS样式
+    st.markdown("""
+    <style>
+    /* 主标题样式 */
+    .main-title {
+        font-size: 2.5rem;
+        font-weight: 700;
+        background: linear-gradient(120deg, #f093fb 0%, #f5576c 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.5rem;
+    }
+    
+    /* 统计卡片 */
+    .history-stat-card {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+        border-radius: 16px;
+        padding: 1.5rem;
+        text-align: center;
+        box-shadow: 0 4px 16px rgba(240, 147, 251, 0.3);
+        transition: transform 0.2s;
+    }
+    
+    .history-stat-card:hover {
+        transform: translateY(-4px);
+    }
+    
+    .history-stat-number {
+        font-size: 2.5rem;
+        font-weight: bold;
+        margin: 0;
+    }
+    
+    .history-stat-label {
+        font-size: 1rem;
+        opacity: 0.95;
+        margin-top: 0.5rem;
+        font-weight: 500;
+    }
+    
+    /* 文章卡片 */
+    .article-card {
+        background: white;
+        border-radius: 12px;
+        padding: 0;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        margin-bottom: 1.2rem;
+        border: 1px solid #f0f0f0;
+        overflow: hidden;
+        transition: all 0.3s;
+    }
+    
+    .article-card:hover {
+        box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+        transform: translateY(-2px);
+    }
+    
+    /* 过滤器标签 */
+    .filter-tag {
+        display: inline-block;
+        padding: 0.4rem 1rem;
+        margin: 0.2rem;
+        border-radius: 20px;
+        background: #f0f7ff;
+        color: #1e40af;
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+        border: 2px solid transparent;
+    }
+    
+    .filter-tag:hover {
+        background: #dbeafe;
+        border-color: #3b82f6;
+    }
+    
+    .filter-tag.active {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    
+    /* 提示框 */
+    .info-banner {
+        background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
+        border-left: 4px solid #667eea;
+        padding: 1rem 1.5rem;
+        border-radius: 8px;
+        margin: 1.5rem 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # 页面标题
+    st.markdown('<h1 class="main-title">📚 文章历史记录</h1>', unsafe_allow_html=True)
+    st.markdown("**管理您的所有创作内容，随时查看、编辑和分享**")
+    st.divider()
     
     # Get current user
     current_user = get_current_user()
     if not current_user:
-        st.error("无法获取当前用户信息")
+        st.error("🔒 无法获取当前用户信息")
         return
     
     # Load user history
     history = load_user_history(current_user)
     
     if not history:
-        st.info("暂无历史记录")
+        st.markdown("""
+        <div class="info-banner">
+            <h3 style="margin:0;">📝 暂无历史记录</h3>
+            <p style="margin:0.5rem 0 0 0;">开始您的创作之旅，前往内容创作页面生成第一篇文章！</p>
+        </div>
+        """, unsafe_allow_html=True)
         return
     
+    # 显示统计信息
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.markdown(f"""
+        <div class="history-stat-card">
+            <div class="history-stat-number">{len(history)}</div>
+            <div class="history-stat-label">📄 总文章数</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        original_count = len([r for r in history if not r.get('is_transformed', False)])
+        st.markdown(f"""
+        <div class="history-stat-card">
+            <div class="history-stat-number">{original_count}</div>
+            <div class="history-stat-label">✨ 原创文章</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        transformed_count = len([r for r in history if r.get('is_transformed', False)])
+        st.markdown(f"""
+        <div class="history-stat-card">
+            <div class="history-stat-number">{transformed_count}</div>
+            <div class="history-stat-label">🔄 转换版本</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        total_words = sum(len(r.get('article_content', '')) for r in history)
+        st.markdown(f"""
+        <div class="history-stat-card">
+            <div class="history-stat-number">{total_words:,}</div>
+            <div class="history-stat-label">📊 总字数</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
     # 提示用户可以在社区管理页面同步文章
-    st.info("💡 提示：可以前往 **社区管理** 页面将本地文章一键发布到PostgreSQL数据库")
+    st.markdown("""
+    <div class="info-banner">
+        💡 <strong>提示：</strong>可以前往 <strong>社区管理</strong> 页面将本地文章一键发布到PostgreSQL数据库
+    </div>
+    """, unsafe_allow_html=True)
     
     st.divider()
     # ==================== 历史记录显示 ====================
 
     # Dynamically create history filter options
     transformation_type_names = list(ARTICLE_TRANSFORMATIONS.keys())
-    # Ensure '转换后的文章' is not duplicated if it's a specific transformation type name
-    # For now, we assume transformation names are distinct from '完成文章' or '所有文章'
-    # A more robust approach might be to have '转换后的文章' as a category, then sub-filter by type
-    # But for now, we list all transformation types as top-level filters after base options.
     dynamic_filter_options = HISTORY_FILTER_BASE_OPTIONS + transformation_type_names
 
+    # 使用标签页代替单选按钮，更现代化
+    st.markdown("### 🔍 筛选文章类型")
     history_filter = st.radio(
-        "选择查看的文章类型:", 
+        "选择查看的文章类型", 
         dynamic_filter_options, 
         horizontal=True,
-        key='history_filter_type'
+        key='history_filter_type',
+        label_visibility="collapsed"
     )
     
     # Filter history based on selection
@@ -395,25 +563,61 @@ def main():
         filtered_history = history
 
     if not filtered_history:
-        st.info(f"暂无 {history_filter} 类型的历史记录")
+        st.markdown(f"""
+        <div class="info-banner">
+            <h4 style="margin:0;">🔍 暂无 {history_filter} 类型的历史记录</h4>
+            <p style="margin:0.5rem 0 0 0;">尝试选择其他类型查看更多内容</p>
+        </div>
+        """, unsafe_allow_html=True)
         return
+    
+    st.markdown(f"**共找到 {len(filtered_history)} 篇文章**")
+    st.markdown("<br>", unsafe_allow_html=True)
 
     # Display history in reverse chronological order (newest first)
-    for record in reversed(filtered_history):
-        with st.expander(f"📝 {record['topic']} - {record['timestamp'][:16].replace('T', ' ')}"):
-            # 展示配置信息，单行显示并加粗类别
-            st.markdown(f"**模型供应商**: {record.get('model_type', '-')} &nbsp;&nbsp;&nbsp; **模型名称**: {record.get('model_name', '-')} &nbsp;&nbsp;&nbsp; **写作模式**: {record.get('write_type', '-')} &nbsp;&nbsp;&nbsp; **爬取数量**: {record.get('spider_num', '-')} &nbsp;&nbsp;&nbsp; **写作风格**: {record.get('custom_style', '-')}")
+    for idx, record in enumerate(reversed(filtered_history), 1):
+        # 为每篇文章创建视觉分隔
+        article_icon = "🎨" if record.get('is_transformed') else "📝"
+        timestamp_display = record['timestamp'][:16].replace('T', ' ')
+        
+        with st.expander(f"{article_icon} **{record['topic']}** · {timestamp_display}", expanded=(idx == 1)):
+            # 文章元数据区域 - 使用标签样式
+            st.markdown("##### 📋 文章信息")
+            
+            meta_cols = st.columns([1, 1, 1])
+            with meta_cols[0]:
+                st.markdown(f"""
+                **🤖 AI模型**  
+                `{record.get('model_type', '-')}` / `{record.get('model_name', '-')}`
+                """)
+            with meta_cols[1]:
+                st.markdown(f"""
+                **✍️ 创作信息**  
+                模式: `{record.get('write_type', '-')}`  
+                风格: `{record.get('custom_style', '-')}`
+                """)
+            with meta_cols[2]:
+                st.markdown(f"""
+                **📊 统计**  
+                字数: `{len(record.get('article_content', ''))}` 字  
+                ID: `{record.get('id', '-')}`
+                """)
             
             # 显示文章标签和原始主题（如果存在）
-            if record.get('tags'):
-                st.markdown(f"**文章标签**: {record.get('tags', '-')}")
-                
-            if record.get('article_topic'):
-                st.markdown(f"**原始主题**: {record.get('article_topic', '-')}")
-            
+            if record.get('tags') or record.get('article_topic'):
+                st.divider()
+                if record.get('tags'):
+                    tags = record.get('tags', '').split(',')
+                    tag_html = ' '.join([f'<span style="display:inline-block;background:#e0e7ff;color:#4338ca;padding:0.2rem 0.8rem;border-radius:12px;margin:0.2rem;font-size:0.85rem;">🏷️ {tag.strip()}</span>' for tag in tags if tag.strip()])
+                    st.markdown(tag_html, unsafe_allow_html=True)
+                    
+                if record.get('article_topic'):
+                    st.markdown(f"**💡 原始主题:** {record.get('article_topic', '-')}")
             
             if record.get('is_transformed') and record.get('original_article_id') is not None:
-                st.markdown(f"**源文章ID**: {record.get('original_article_id')}")
+                st.info(f"🔄 此文章由源文章 ID: `{record.get('original_article_id')}` 转换而来")
+            
+            st.divider()
                 
             # 判断内容是Markdown还是HTML
             content = record["article_content"].strip()
@@ -429,7 +633,15 @@ def main():
             if is_html or topic_indicates_html:
                 # 对于HTML内容，不直接显示，而是提供预览链接
                 is_bento = "Bento" in record.get('topic', '') or "网页" in record.get('topic', '')
-                st.info(f"这是一个{'Bento风格' if is_bento else ''}网页内容，点击下方链接查看效果")
+                
+                # 美化提示信息
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%); 
+                     border-left: 4px solid #667eea; padding: 1rem; border-radius: 8px; margin: 1rem 0;">
+                    <strong>🌐 {'Bento风格网页' if is_bento else 'HTML网页'}</strong><br>
+                    <span style="font-size: 0.9rem; opacity: 0.8;">点击下方按钮预览或下载网页</span>
+                </div>
+                """, unsafe_allow_html=True)
                 
                 # 获取HTML内容
                 html_content = record["article_content"]
@@ -480,6 +692,7 @@ def main():
                 article_url = f"{base_url}{safe_url_path}"
                 
                 # 创建四列布局，分别放置预览链接、下载按钮、截图按钮和删除按钮
+                st.markdown("##### 🎯 操作选项")
                 col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
                 
                 with col1:
@@ -547,23 +760,33 @@ def main():
                         # 使用session_state来触发重新加载
                         st.session_state['history_trigger_rerun'] = True
             else:
+                # Markdown 内容
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #f093fb15 0%, #f5576c15 100%); 
+                     border-left: 4px solid #f093fb; padding: 1rem; border-radius: 8px; margin: 1rem 0;">
+                    <strong>📝 Markdown文章</strong><br>
+                    <span style="font-size: 0.9rem; opacity: 0.8;">查看预览或下载到本地编辑</span>
+                </div>
+                """, unsafe_allow_html=True)
+                
                 # 创建四列布局，分别放置Markdown预览、公众号预览、下载按钮和删除按钮
+                st.markdown("##### 🎯 操作选项")
                 col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
                 
                 with col1:
                     # Markdown预览按钮
-                    if st.button("📄 markdown格式预览", key=f"preview_md_{record['id']}", use_container_width=True, type="secondary"):
+                    if st.button("📄 Markdown预览", key=f"preview_md_{record['id']}", use_container_width=True, type="primary"):
                         preview_markdown_article(content)
                 
                 with col2:
                     # 公众号预览按钮
-                    if st.button("📱 公众号预览", key=f"wechat_preview_{record['id']}", use_container_width=True, type="primary"):
+                    if st.button("📱 公众号预览", key=f"wechat_preview_{record['id']}", use_container_width=True, type="secondary"):
                         preview_wechat_article(content)
 
                 with col3:
                     # 下载按钮
                     st.download_button(
-                        label="📥 下载文章" + (" (已编辑)" if has_been_edited else ""),
+                        label="📥 下载" + (" (已编辑)" if has_been_edited else ""),
                         data=content,
                         file_name=f"{record['topic']}{' (已编辑)' if has_been_edited else ''}.md",
                         mime="text/markdown",
@@ -573,12 +796,13 @@ def main():
                     )
                 with col4:
                     # 删除按钮
-                    delete_button = st.button("🗑️ 删除记录", key=f"delete_md_{record['id']}", type="secondary", use_container_width=True)
+                    delete_button = st.button("🗑️ 删除", key=f"delete_md_{record['id']}", type="secondary", use_container_width=True)
                     if delete_button:
                         from utils.history_utils import delete_history_record
                         delete_history_record(current_user, record['id'])
-                        # 使用session_state来触发重新加载
-                        st.session_state['history_trigger_rerun'] = True
+                        st.success("✅ 文章已删除")
+                        time.sleep(1)
+                        st.rerun()
                 
     # 检查是否需要重新加载页面
     if st.session_state.get('history_trigger_rerun', False):

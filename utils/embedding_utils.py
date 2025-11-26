@@ -20,113 +20,134 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
     
+# 是否使用直接 URL 模式（不下载图片转 base64，直接发送 URL 给 API）
+# Jina 官方 API 支持直接 URL，但 Gitee AI 托管版不支持，必须用 base64
+USE_DIRECT_IMAGE_URL = False
+
 class Embedding:
     def get_embedding(self, data, is_image_url=False):
         # Get the latest embedding configuration
         embedding_type = get_embedding_type()
         embedding_config = get_embedding_config()
         
+        # 初始化失败索引跟踪变量
+        failed_indices = []
+        original_count = len(data)
+        
         if is_image_url:
-            # Convert image URLs to Base64-encoded image data (data URL)
-            def _url_to_data_image(url: str) -> Dict[str, str]:
-                timeout = embedding_config.get(embedding_type, {}).get('timeout', 10)
-                # Build realistic headers to avoid 403 from CDNs
-                parsed = urlparse(url)
-                
-                # 针对不同网站使用不同的 Referer 策略来绕过防盗链
-                def get_referer_for_url(url: str, parsed_url) -> str:
-                    """根据 URL 返回合适的 Referer"""
-                    domain = parsed_url.netloc.lower()
+            # 如果启用直接 URL 模式，直接发送 URL 给 API（不下载图片）
+            if USE_DIRECT_IMAGE_URL:
+                logger.info(f"使用直接 URL 模式发送 {len(data)} 张图片给 embedding API")
+                # 转换为 Jina API 格式: [{"image": "url"}, ...]
+                data = [{"image": url} for url in data]
+                # 跳过下载逻辑，直接进入 API 调用
+            else:
+                # Convert image URLs to Base64-encoded image data (data URL)
+                def _url_to_data_image(url: str) -> Dict[str, str]:
+                    # 图片下载超时设为5秒，快速失败避免阻塞
+                    timeout = 5
+                    # Build realistic headers to avoid 403 from CDNs
+                    parsed = urlparse(url)
                     
-                    # CSDN 图片需要特定的 Referer
-                    if 'csdnimg.cn' in domain or 'csdn.net' in domain:
-                        return 'https://blog.csdn.net/'
+                    # 针对不同网站使用不同的 Referer 策略来绕过防盗链
+                    def get_referer_for_url(url: str, parsed_url) -> str:
+                        """根据 URL 返回合适的 Referer"""
+                        domain = parsed_url.netloc.lower()
+                        
+                        # CSDN 图片需要特定的 Referer
+                        if 'csdnimg.cn' in domain or 'csdn.net' in domain:
+                            return 'https://blog.csdn.net/'
+                        
+                        # 知乎图片
+                        elif 'zhihu.com' in domain or 'zhimg.com' in domain:
+                            return 'https://www.zhihu.com/'
+                        
+                        # 简书图片
+                        elif 'jianshu.com' in domain or 'jianshu.io' in domain:
+                            return 'https://www.jianshu.com/'
+                        
+                        # 掘金图片
+                        elif 'juejin.cn' in domain or 'juejin.im' in domain:
+                            return 'https://juejin.cn/'
+                        
+                        # 微信公众号图片
+                        elif 'mmbiz.qpic.cn' in domain or 'qq.com' in domain:
+                            return 'https://mp.weixin.qq.com/'
+                        
+                        # 阿里云 OSS/CDN
+                        elif 'alicdn.com' in domain or 'aliyuncs.com' in domain:
+                            return 'https://developer.aliyun.com/'
+                        
+                        # 51CTO
+                        elif '51cto.com' in domain:
+                            return 'https://www.51cto.com/'
+                        
+                        # InfoQ
+                        elif 'infoq.cn' in domain or 'infoq.com' in domain:
+                            return 'https://www.infoq.cn/'
+                        
+                        # SegmentFault
+                        elif 'segmentfault.com' in domain:
+                            return 'https://segmentfault.com/'
+                        
+                        # 默认使用域名本身作为 Referer
+                        else:
+                            return f"{parsed_url.scheme}://{parsed_url.netloc}/"
                     
-                    # 知乎图片
-                    elif 'zhihu.com' in domain or 'zhimg.com' in domain:
-                        return 'https://www.zhihu.com/'
+                    referer = get_referer_for_url(url, parsed)
                     
-                    # 简书图片
-                    elif 'jianshu.com' in domain or 'jianshu.io' in domain:
-                        return 'https://www.jianshu.com/'
+                    # 构建请求头，模拟真实浏览器
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Referer': referer,
+                        'Connection': 'keep-alive',
+                        'Sec-Fetch-Dest': 'image',
+                        'Sec-Fetch-Mode': 'no-cors',
+                        'Sec-Fetch-Site': 'cross-site',
+                    }
                     
-                    # 掘金图片
-                    elif 'juejin.cn' in domain or 'juejin.im' in domain:
-                        return 'https://juejin.cn/'
-                    
-                    # 微信公众号图片
-                    elif 'mmbiz.qpic.cn' in domain or 'qq.com' in domain:
-                        return 'https://mp.weixin.qq.com/'
-                    
-                    # 阿里云 OSS/CDN
-                    elif 'alicdn.com' in domain or 'aliyuncs.com' in domain:
-                        return 'https://developer.aliyun.com/'
-                    
-                    # 51CTO
-                    elif '51cto.com' in domain:
-                        return 'https://www.51cto.com/'
-                    
-                    # InfoQ
-                    elif 'infoq.cn' in domain or 'infoq.com' in domain:
-                        return 'https://www.infoq.cn/'
-                    
-                    # SegmentFault
-                    elif 'segmentfault.com' in domain:
-                        return 'https://segmentfault.com/'
-                    
-                    # 默认使用域名本身作为 Referer
-                    else:
-                        return f"{parsed_url.scheme}://{parsed_url.netloc}/"
-                
-                referer = get_referer_for_url(url, parsed)
-                
-                # 构建请求头，模拟真实浏览器
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-                    'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Referer': referer,
-                    'Connection': 'keep-alive',
-                    'Sec-Fetch-Dest': 'image',
-                    'Sec-Fetch-Mode': 'no-cors',
-                    'Sec-Fetch-Site': 'cross-site',
-                }
-                
-                # 尝试多种策略下载图片
-                strategies = [
-                    {'headers': headers, 'verify': True},  # 标准方式
-                    {'headers': headers, 'verify': False},  # 禁用 SSL 验证
-                    {'headers': {**headers, 'Referer': f"{parsed.scheme}://{parsed.netloc}/"}, 'verify': False},  # 使用图片域名作为 Referer
-                ]
-                
-                last_error = None
-                for strategy in strategies:
+                    # 快速下载，只尝试一次，失败就跳过
                     try:
-                        resp = requests.get(url, timeout=timeout, **strategy)
+                        resp = requests.get(url, timeout=timeout, headers=headers, verify=False)
                         resp.raise_for_status()
                         mime = resp.headers.get('Content-Type', 'image/jpeg')
                         if not mime or not mime.startswith('image/'):
                             mime = 'image/jpeg'
                         b64 = base64.b64encode(resp.content).decode('utf-8')
-                        logger.debug(f"Successfully fetched image with referer: {strategy['headers'].get('Referer', 'N/A')}")
                         return {"image": f"data:{mime};base64,{b64}"}
-                    except requests.HTTPError as e:
-                        status = getattr(e.response, 'status_code', None)
-                        last_error = f"HTTP {status}"
-                        logger.debug(f"Strategy failed (HTTP {status}) for {url}, trying next...")
-                        continue
                     except Exception as e:
-                        last_error = str(e)
-                        logger.debug(f"Strategy failed ({e}) for {url}, trying next...")
-                        continue
-                
-                # 所有策略都失败
-                logger.warning(f"Failed to fetch image after all strategies (last error: {last_error}): {url}")
-                # Fallback to original URL if encoding fails
-                return {"image": url}
+                        logger.debug(f"图片下载失败: {url} - {e}")
+                        return None
 
-            data = [_url_to_data_image(url) for url in data]
+                # 并发下载图片转base64，大幅提升速度
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                converted_data = [None] * len(data)
+                with ThreadPoolExecutor(max_workers=min(10, len(data))) as executor:
+                    future_to_idx = {executor.submit(_url_to_data_image, url): idx for idx, url in enumerate(data)}
+                    for future in as_completed(future_to_idx):
+                        idx = future_to_idx[future]
+                        try:
+                            converted_data[idx] = future.result()
+                        except Exception as e:
+                            logger.warning(f"并发下载图片失败: {e}")
+                            converted_data[idx] = None
+                # 记录哪些位置的图片下载失败了
+                failed_indices = [i for i, d in enumerate(converted_data) if d is None]
+                
+                # 过滤掉None值，只保留成功下载的图片用于API调用
+                valid_data = [d for d in converted_data if d is not None]
+                if not valid_data:
+                    logger.error("所有图片下载都失败，无法获取嵌入向量")
+                    return []
+                
+                if failed_indices:
+                    logger.info(f"图片下载：成功 {len(valid_data)}/{original_count}，失败位置将填充空向量")
+                
+                # 更新 data 为有效数据（original_count 已在函数开头记录）
+                data = valid_data
         # Defensive: ensure selected embedding_type exists in config
         if embedding_type not in embedding_config:
             logger.error(f"未在EMBEDDING_CONFIG中找到embedding类型: {embedding_type}")
@@ -162,10 +183,17 @@ class Embedding:
                 'encoding_format': "float"
             }
             
-        response = requests.post(url, headers=headers, json=request_data, timeout=embedding_config[embedding_type]['timeout'])
+        input_count = len(data)
+        # 对于图片 embedding，使用更长的超时时间（基础超时 * 输入数量，最少60秒）
+        base_timeout = embedding_config[embedding_type]['timeout']
+        if is_image_url:
+            actual_timeout = max(60, base_timeout * input_count)
+        else:
+            actual_timeout = base_timeout
+        response = requests.post(url, headers=headers, json=request_data, timeout=actual_timeout)
         logger.info(
             f"已发送请求到 {url}，提供商: {embedding_type}，模型: {embedding_config[embedding_type]['model']}，"
-            f"状态码: {response.status_code}，成功: {response.ok}"
+            f"输入数量: {input_count}，状态码: {response.status_code}，成功: {response.ok}"
         )
         
         response_json = response.json()
@@ -175,8 +203,29 @@ class Embedding:
         if 'data' in response_json:
             # Standard format
             embeddings = [i.get('embedding', []) for i in response_json.get('data', [])]
+            output_count = len(embeddings)
+            valid_count = sum(1 for e in embeddings if e)
+            if output_count != input_count:
+                logger.warning(f"嵌入向量数量不匹配：输入 {input_count}，返回 {output_count}（有效 {valid_count}）")
             if embeddings and any(embeddings):
-                logger.debug(f"成功从'data'字段提取嵌入向量，维度: {len(embeddings[0])}")
+                logger.debug(f"成功从'data'字段提取嵌入向量，维度: {len(embeddings[0])}，数量: {output_count}")
+                
+                # 如果是图片URL模式且有下载失败的图片，需要在对应位置填充空向量
+                if is_image_url and failed_indices:
+                    # 重建完整的结果列表，在失败位置插入空列表
+                    full_embeddings = []
+                    embed_iter = iter(embeddings)
+                    for i in range(original_count):
+                        if i in failed_indices:
+                            full_embeddings.append([])  # 失败位置填充空列表
+                        else:
+                            try:
+                                full_embeddings.append(next(embed_iter))
+                            except StopIteration:
+                                full_embeddings.append([])
+                    logger.debug(f"已填充失败位置，最终返回 {len(full_embeddings)} 个嵌入向量")
+                    return full_embeddings
+                
                 return embeddings
         logger.warning("'data'字段中没有找到嵌入向量")
         return []

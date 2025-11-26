@@ -22,7 +22,7 @@ import re
 import hashlib
 from typing import List, Dict
 from pathlib import Path
-from utils.openai_vl_process import process_image
+from utils.openai_vl_process import process_image, process_image_async
 from utils.embedding_utils import add_to_faiss_index, create_faiss_index
 import concurrent.futures
 import threading
@@ -371,7 +371,8 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 image_hash_cache[normalized_img_src] = image_hash_cache[cached_url]
                 return image_hash_cache[cached_url]
         
-    # 直接URL嵌入模式：先校验，合格则无需下载，直接记录并返回
+    # 直接URL嵌入模式：先校验，合格则收集URL，由后续批量处理统一embedding
+    # 注意：这里不再逐张做 embedding，避免与 searxng_utils.py 的批量处理重复
     if use_direct_image_embedding:
         try:
             valid = await is_valid_image_url_for_model(session, normalized_img_src)
@@ -383,31 +384,12 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 stats['skipped'] = stats.get('skipped', 0) + 1
             image_hash_cache[normalized_img_src] = None
             return None
-        logger.debug(f"Fast-path direct embedding for image URL: {normalized_img_src}")
-        try:
-            data = {
-                "image_url": normalized_img_src,
-                "task_id": task_id
-            }
-            try:
-                logger.debug(f"获取FAISS索引以记录图片URL: {username}/{article_id}")
-                current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
-                before_size = current_faiss_index.get_size()
-                add_to_faiss_index(normalized_img_src, data, current_faiss_index, username=username, article_id=article_id, auto_save=True, is_image_url=True)
-                after_size = current_faiss_index.get_size()
-                if after_size > before_size:
-                    logger.debug(f"已添加图片URL到FAISS索引: {normalized_img_src}")
-            except Exception as e:
-                logger.error(f"记录图片URL到FAISS索引失败: {str(e)}")
-            result = {"image_url": normalized_img_src, "embedding_method": "direct_embedding"}
-            image_hash_cache[normalized_img_src] = result
-            stats['success'] += 1 if stats else 0
-            return result
-        except Exception as e:
-            logger.error(f"Direct embedding fast-path error: {str(e)}")
-            stats['failed'] += 1 if stats else 0
-            image_hash_cache[normalized_img_src] = None
-            return None
+        # 只收集URL，不做embedding，后续由searxng_utils批量处理
+        logger.debug(f"收集图片URL用于后续批量嵌入: {normalized_img_src[:50]}...")
+        result = {"image_url": normalized_img_src, "embedding_method": "deferred_batch"}
+        image_hash_cache[normalized_img_src] = result
+        stats['success'] += 1 if stats else 0
+        return result
 
     # 多模态模式：先校验，合格则无需下载图片内容，直接调用识别并入库
     if is_multimodal:
@@ -448,7 +430,8 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                         "Multimodal sending (CSDN base64) image_url=%s bytes=%d task_id=%s",
                         normalized_img_src, len(content), task_id,
                     )
-                    result = process_image(image_content=content)
+                    # 使用异步版本，避免阻塞事件循环
+                    result = await process_image_async(image_content=content)
                 except asyncio.CancelledError:
                     logger.debug(f"CSDN multimodal skipped (cancelled): {normalized_img_src}")
                     image_hash_cache[normalized_img_src] = None
@@ -508,7 +491,8 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                     "Multimodal sending image_url=%s task_id=%s user=%s article_id=%s",
                     normalized_img_src, task_id, username, article_id,
                 )
-                result = process_image(image_url=normalized_img_src)
+                # 使用异步版本，避免阻塞事件循环，实现真正的并发处理
+                result = await process_image_async(image_url=normalized_img_src)
                 if result and isinstance(result, dict) and "describe" in result:
                     description = result.get("describe", "")
                     if description and len(description) > 10:
@@ -810,54 +794,18 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
             return '' if not is_multimodal else None
         
         # 如果是直接图片URL嵌入模式
+        # 注意：这里不再逐张做 embedding，只收集图片 URL
+        # 批量 embedding 由 searxng_utils.py 统一处理，避免重复 embedding
         if use_direct_image_embedding:
-            logger.debug(f"Processing image with direct URL embedding: {img_src}")
+            logger.debug(f"收集图片URL用于后续批量嵌入: {img_src[:50]}...")
             
-            try:
-                # 准备要存储的数据
-                data = {
-                    "image_url": img_src,
-                    "task_id": task_id
-                }
-                
-                # 添加到FAISS索引，使用is_image_url=True标记这是一个图片URL
-                try:
-                    # 获取用户和文章特定的FAISS索引实例
-                    logger.debug(f"正在获取FAISS索引实例用于直接图片URL嵌入: {username}/{article_id}")
-                    current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
-                    
-                    # 记录添加前的索引大小
-                    before_size = current_faiss_index.get_size()
-                    logger.debug(f"添加图片URL前FAISS索引大小: {before_size}")
-                    
-                    # 直接添加图片URL到索引，使用is_image_url=True
-                    add_to_faiss_index(img_src, data, current_faiss_index, username=username, article_id=article_id, auto_save=True, is_image_url=True)
-                    
-                    # 记录添加后的索引大小
-                    after_size = current_faiss_index.get_size()
-                    logger.debug(f"添加图片URL后FAISS索引大小: {after_size}，增加: {after_size - before_size}")
-                    
-                    if after_size > before_size:
-                        logger.debug(f"成功添加图片URL到FAISS索引 {username}/{article_id}: {img_src[:50]}...")
-                    else:
-                        logger.warning(f"图片URL似乎未成功添加到FAISS索引: {img_src[:50]}...")
-                        
-                except Exception as e:
-                    logger.error(f"添加图片URL到FAISS索引失败: {str(e)}")
-                    logger.exception("详细错误信息:" + str(e))
-                
-                # 缓存结果并返回图片URL
-                result = {
-                    "image_url": img_src,
-                    "embedding_method": "direct_embedding"
-                }
-                image_hash_cache[img_src] = result
-                return result
-                
-            except Exception as e:
-                logger.error(f"Error processing image URL for direct embedding: {str(e)}")
-                image_hash_cache[img_src] = None
-                return None
+            # 只返回图片URL，不做embedding，后续由searxng_utils批量处理
+            result = {
+                "image_url": img_src,
+                "embedding_method": "deferred_batch"  # 标记为延迟批量处理
+            }
+            image_hash_cache[img_src] = result
+            return result
                 
         # 如果是多模态处理模式，在通过大小和尺寸检查后再进行多模态处理
         elif is_multimodal:
@@ -865,7 +813,8 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
             
             # 调用Qwen模型进行图片识别
             try:
-                result = process_image(image_url=img_src)
+                # 使用异步版本，避免阻塞事件循环，实现真正的并发处理
+                result = await process_image_async(image_url=img_src)
                 
                 if result and isinstance(result, dict) and "describe" in result:
                     # 将图片描述添加到FAISS索引
@@ -1413,6 +1362,11 @@ async def fetch(browser, url, task_id=None, is_multimodal=False, use_direct_imag
     """
     获取页面内容
     """
+    # 早期检查：跳过空URL
+    if not url or not url.strip():
+        logger.warning("Skipping empty URL")
+        return {"url": url, "text": "", "images": [], "error": "Empty URL"}
+    
     async with aiohttp.ClientSession() as session:
         # 创建一个新的浏览器上下文
         try:
@@ -1428,8 +1382,20 @@ async def fetch(browser, url, task_id=None, is_multimodal=False, use_direct_imag
             await page.route("**/*", lambda route: route.continue_())
             
             # 访问 URL，并等待完成所有重定向
+            # 使用 domcontentloaded 而不是 networkidle，因为很多网站有持续的网络请求导致 networkidle 永远不会触发
             timeout = 30000  # 固定超时时间，毫秒
-            response = await page.goto(url, timeout=timeout, wait_until="networkidle")
+            try:
+                response = await page.goto(url, timeout=timeout, wait_until="domcontentloaded")
+                # 尝试等待 networkidle，但设置较短超时
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    # networkidle 超时不是致命错误，继续处理
+                    logger.debug(f"networkidle timeout for {url}, continuing with domcontentloaded")
+            except Exception as goto_error:
+                # 如果 domcontentloaded 也失败，尝试使用 commit （最快的等待策略）
+                logger.warning(f"domcontentloaded failed for {url}: {goto_error}, trying with commit")
+                response = await page.goto(url, timeout=timeout, wait_until="commit")
             
             # 获取最终 URL（重定向后）
             final_url = page.url

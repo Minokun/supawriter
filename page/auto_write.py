@@ -18,7 +18,7 @@ from utils.embedding_utils import (
     search_similar_text,
 )
 from utils.config_manager import get_config
-from utils.streamlit_thread_helper import create_thread_safe_callback
+from utils.streamlit_thread_helper import create_thread_safe_callback, create_spider_progress_callback
 import streamlit.components.v1 as components
 import threading
 import time
@@ -117,13 +117,15 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
         task_state['progress_text'] = "正在抓取网页内容 (0/未知)..."
         log('info', "开始抓取网页...")
         
-        # 定义线程安全的进度回调函数
-        spider_progress_callback = create_thread_safe_callback(
+        # 定义线程安全的进度回调函数（支持爬虫和图片embedding两个阶段）
+        spider_progress_callback = create_spider_progress_callback(
             task_state=task_state,
             progress_key='progress',
             text_key='progress_text',
             start_percent=10,
-            end_percent=30,
+            end_percent=25,  # 爬虫阶段 10-25%
+            embed_start_percent=25,
+            embed_end_percent=30,  # 图片embedding阶段 25-30%
             log_prefix="正在抓取网页内容"
         )
 
@@ -147,7 +149,9 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
                     theme=article_title, 
                     progress_callback=spider_progress_callback, 
                     username=username, 
-                    article_id=article_id
+                    article_id=article_id,
+                    model_type=model_type,
+                    model_name=model_name
                 )
                 search_result = future.result()
                 log('info', f"搜索成功完成，获取结果数: {len(search_result)}")

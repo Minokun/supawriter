@@ -193,58 +193,242 @@ def remove_thinking_tags(content):
 
 @require_auth
 def main():
-    st.title("文章再创作")
+    # 自定义CSS样式
+    st.markdown("""
+    <style>
+    /* 主标题样式 */
+    .main-title {
+        font-size: 2.5rem;
+        font-weight: 700;
+        background: linear-gradient(120deg, #667eea 0%, #764ba2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.5rem;
+    }
+    
+    /* 卡片样式 */
+    .card {
+        background: white;
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        margin-bottom: 1rem;
+        border-left: 4px solid #667eea;
+    }
+    
+    /* 统计卡片 */
+    .stat-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 1.2rem;
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    }
+    
+    .stat-number {
+        font-size: 2rem;
+        font-weight: bold;
+        margin: 0;
+    }
+    
+    .stat-label {
+        font-size: 0.9rem;
+        opacity: 0.9;
+        margin-top: 0.3rem;
+    }
+    
+    /* 步骤指示器 */
+    .step-indicator {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    
+    .step-number {
+        background: #667eea;
+        color: white;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        flex-shrink: 0;
+    }
+    
+    .step-text {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #333;
+    }
+    
+    /* 提示框 */
+    .tip-box {
+        background: #f0f7ff;
+        border-left: 4px solid #3b82f6;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 1rem 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # 页面标题
+    st.markdown('<h1 class="main-title">✨ 文章再创作工作台</h1>', unsafe_allow_html=True)
+    st.markdown("**将您的文章转换为多种格式，释放内容的无限可能**")
+    st.divider()
 
     current_user = get_current_user()
     if not current_user:
-        st.error("无法获取当前用户信息")
+        st.error("🔒 无法获取当前用户信息")
         return
 
     history = load_user_history(current_user)
     if not history:
-        st.info("暂无历史文章可供转换。")
+        st.info("📝 暂无历史文章可供转换，请先前往内容创作页面生成文章。")
         return
 
-    # Filter for original articles only, or allow transforming transformed ones too?
-    # For now, let's allow transforming any article.
-    article_options = {f"{record['topic']} ({record['timestamp'][:10]}) - ID: {record['id']}": record for record in reversed(history)}
+    # 显示统计信息
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-number">{len(history)}</div>
+            <div class="stat-label">📚 可用文章</div>
+        </div>
+        """, unsafe_allow_html=True)
     
-    selected_article_display_name = st.selectbox(
-        "选择一篇文章进行再创作:", 
-        list(article_options.keys()),
-        help="选择一篇您之前生成的文章。"
-    )
+    with col2:
+        transformation_count = len([r for r in history if r.get('is_transformed')])
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-number">{transformation_count}</div>
+            <div class="stat-label">🔄 已转换</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-number">{len(ARTICLE_TRANSFORMATIONS)}</div>
+            <div class="stat-label">🎨 转换模式</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    if not selected_article_display_name:
-        st.warning("请选择一篇文章。")
-        return
+    # 使用容器和选项卡优化布局
+    with st.container():
+        # 步骤1: 选择文章
+        st.markdown("""
+        <div class="step-indicator">
+            <div class="step-number">1</div>
+            <div class="step-text">选择源文章</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        article_options = {f"📄 {record['topic']} ({record['timestamp'][:10]})": record for record in reversed(history)}
+        
+        selected_article_display_name = st.selectbox(
+            "从历史记录中选择一篇文章",
+            list(article_options.keys()),
+            help="💡 选择您之前生成的文章作为转换源",
+            label_visibility="collapsed"
+        )
 
-    selected_record = article_options[selected_article_display_name]
+        if not selected_article_display_name:
+            st.warning("⚠️ 请选择一篇文章")
+            return
 
-    transformation_options = ARTICLE_TRANSFORMATIONS
-    selected_transformation_name = st.selectbox(
-        "选择转换类型:", 
-        list(transformation_options.keys())
-    )
+        selected_record = article_options[selected_article_display_name]
+        
+        # 显示选中文章的详情
+        with st.expander("📋 查看文章详情", expanded=False):
+            detail_col1, detail_col2 = st.columns(2)
+            with detail_col1:
+                st.markdown(f"**📝 主题:** {selected_record.get('topic', '-')}")
+                st.markdown(f"**📅 创建时间:** {selected_record.get('timestamp', '-')[:16]}")
+                st.markdown(f"**🆔 文章ID:** {selected_record.get('id', '-')}")
+            with detail_col2:
+                st.markdown(f"**🤖 模型:** {selected_record.get('model_type', '-')} / {selected_record.get('model_name', '-')}")
+                st.markdown(f"**✍️ 写作模式:** {selected_record.get('write_type', '-')}")
+                st.markdown(f"**📊 字数:** {len(selected_record.get('article_content', ''))} 字")
 
-    # 使用全局模型设置 - 从配置管理器获取
-    config = get_config()
-    global_settings = config.get('global_model_settings', {})
-    # 如果全局设置为空，则使用第一个可用的模型作为后备
-    if not global_settings:
-        st.warning("尚未配置全局模型，请前往'系统设置'页面进行配置。将使用默认模型。")
-        # 提供一个后备的默认模型
-        default_provider = list(LLM_MODEL.keys())[0]
-        default_model = LLM_MODEL[default_provider]['model'][0] if isinstance(LLM_MODEL[default_provider]['model'], list) else LLM_MODEL[default_provider]['model']
-        model_type = default_provider
-        model_name = default_model
-    else:
-        model_type = global_settings.get('provider')
-        model_name = global_settings.get('model_name')
+    st.divider()
+    
+    with st.container():
+        # 步骤2: 选择转换类型
+        st.markdown("""
+        <div class="step-indicator">
+            <div class="step-number">2</div>
+            <div class="step-text">选择转换模式</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        transformation_options = ARTICLE_TRANSFORMATIONS
+        
+        # 使用网格布局显示转换选项
+        cols = st.columns(3)
+        transformation_icons = {
+            "白话文": "📖",
+            "小红书风格": "💄",
+            "转换为Bento风格网页": "🎨",
+            "深度分析报告": "📊",
+            "问答格式": "❓",
+            "技术文档": "💻"
+        }
+        
+        # 使用单选按钮组
+        selected_transformation_name = st.radio(
+            "选择转换类型",
+            list(transformation_options.keys()),
+            format_func=lambda x: f"{transformation_icons.get(x, '✨')} {x}",
+            horizontal=True,
+            label_visibility="collapsed"
+        )
 
-    st.info(f"将使用模型: **{model_type}/{model_name}**")
+    st.divider()
+    
+    with st.container():
+        # 步骤3: 模型配置
+        st.markdown("""
+        <div class="step-indicator">
+            <div class="step-number">3</div>
+            <div class="step-text">确认模型配置</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # 使用全局模型设置 - 从配置管理器获取
+        config = get_config()
+        global_settings = config.get('global_model_settings', {})
+        
+        # 如果全局设置为空，则使用第一个可用的模型作为后备
+        if not global_settings:
+            st.warning("⚙️ 尚未配置全局模型，请前往'系统设置'页面进行配置。将使用默认模型。")
+            # 提供一个后备的默认模型
+            default_provider = list(LLM_MODEL.keys())[0]
+            default_model = LLM_MODEL[default_provider]['model'][0] if isinstance(LLM_MODEL[default_provider]['model'], list) else LLM_MODEL[default_provider]['model']
+            model_type = default_provider
+            model_name = default_model
+        else:
+            model_type = global_settings.get('provider')
+            model_name = global_settings.get('model_name')
 
-    if st.button(f"开始 {selected_transformation_name}"):
+        # 显示模型信息卡片
+        model_col1, model_col2 = st.columns([2, 1])
+        with model_col1:
+            st.info(f"🤖 **当前模型:** {model_type} / {model_name}")
+        with model_col2:
+            if st.button("⚙️ 修改设置", use_container_width=True):
+                st.switch_page("page/settings.py")
+
+    st.divider()
+    
+    # 执行转换
+    if st.button(f"🚀 开始 {selected_transformation_name}", type="primary", use_container_width=True):
         source_article_content = selected_record['article_content']
         source_article_id = selected_record['id']
         source_article_topic = selected_record['topic']
@@ -336,14 +520,19 @@ def main():
             )
             
             # 转换成功，提示用户在历史记录中查看
-            if selected_transformation_name == "转换为Bento风格网页":
-                st.success(f"Bento风格网页转换成功！请在历史记录中查看结果。")
-            else:
-                st.success(f"文章转换成功！请在历史记录中查看结果。")
-                
-            # 添加导航到历史记录的按钮
-            if st.button("前往历史记录查看"):
-                st.experimental_set_url("/history")
+            st.balloons()
+            
+            success_col1, success_col2 = st.columns([2, 1])
+            with success_col1:
+                if selected_transformation_name == "转换为Bento风格网页":
+                    st.success(f"🎉 Bento风格网页转换成功！请在历史记录中查看精彩结果。")
+                else:
+                    st.success(f"🎉 文章转换成功！新内容已保存到历史记录。")
+            
+            with success_col2:
+                # 添加导航到历史记录的按钮
+                if st.button("📂 查看历史记录", type="primary", use_container_width=True):
+                    st.switch_page("page/history.py")
         else:
             st.error("转换后内容为空，未保存。")
 
