@@ -54,7 +54,7 @@ def main():
             st.session_state.active_chat_id = None
             st.session_state.messages = []
             st.session_state.chat_title = "新对话"
-        st.rerun()
+        # 注意：在 on_click 回调中不能调用 st.rerun()，Streamlit 会自动重新运行
         
     def convert_conversation_to_markdown():
         """将当前对话转换为Markdown格式"""
@@ -161,13 +161,12 @@ def main():
                         with col3:
                             st.button(":material/delete_forever:", key=f"delete_{session['id']}", help="删除该对话", on_click=handle_delete_session, args=(session['id'],))
         
-        # 清空对话按钮
-        if st.button("🚮 清空当前对话", type="secondary", use_container_width=True):
-            # 清空消息
+        # 清空对话按钮 - 使用 on_click 回调避免 st.rerun() 警告
+        def clear_current_chat():
             st.session_state.messages = []
-            # 如果有活动聊天ID，不需要保存空对话
-            # 直接重新加载页面
-            st.rerun()
+            # 回调结束后 Streamlit 会自动重新运行
+            
+        st.button("🚮 清空当前对话", type="secondary", use_container_width=True, on_click=clear_current_chat)
             
         # 下载当前对话按钮
         if st.session_state.messages and len(st.session_state.messages) > 0:
@@ -228,7 +227,10 @@ def main():
         model_api_key = LLM_MODEL[model_type]['api_key']
         model_base_url = LLM_MODEL[model_type]['base_url']
         
-        logger.info(f"使用模型: {model_type} - {model_name}")
+        # 只在首次加载时记录模型信息，避免频繁日志
+        if 'model_logged' not in st.session_state:
+            logger.info(f"使用模型: {model_type} - {model_name}")
+            st.session_state.model_logged = True
         client = openai.OpenAI(api_key=model_api_key, base_url=model_base_url)
     except Exception as e:
         st.error(f"模型配置错误: {str(e)}")

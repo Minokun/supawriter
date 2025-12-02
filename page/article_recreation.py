@@ -13,7 +13,7 @@ from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
 from utils.history_utils import load_user_history, add_history_record, save_html_to_user_dir, sanitize_filename
 from utils.llm_chat import chat
-from settings import LLM_MODEL, ARTICLE_TRANSFORMATIONS
+from settings import LLM_MODEL, ARTICLE_TRANSFORMATIONS, default_provider, openai_model
 from utils.config_manager import get_config
 
 
@@ -405,17 +405,18 @@ def main():
         config = get_config()
         global_settings = config.get('global_model_settings', {})
         
-        # 如果全局设置为空，则使用第一个可用的模型作为后备
-        if not global_settings:
-            st.warning("⚙️ 尚未配置全局模型，请前往'系统设置'页面进行配置。将使用默认模型。")
+        # 获取模型配置，确保不为空
+        model_type = global_settings.get('provider') if global_settings else None
+        model_name = global_settings.get('model_name') if global_settings else None
+        
+        # 如果全局设置为空或模型配置不完整，则使用第一个可用的模型作为后备
+        if not model_type or not model_name or model_type not in LLM_MODEL:
+            st.warning("⚙️ 尚未配置全局模型或配置无效，请前往'系统设置'页面进行配置。将使用默认模型。")
             # 提供一个后备的默认模型
-            default_provider = list(LLM_MODEL.keys())[0]
-            default_model = LLM_MODEL[default_provider]['model'][0] if isinstance(LLM_MODEL[default_provider]['model'], list) else LLM_MODEL[default_provider]['model']
-            model_type = default_provider
-            model_name = default_model
-        else:
-            model_type = global_settings.get('provider')
-            model_name = global_settings.get('model_name')
+            fallback_provider = list(LLM_MODEL.keys())[0]
+            fallback_model = LLM_MODEL[fallback_provider]['model'][0] if isinstance(LLM_MODEL[fallback_provider]['model'], list) else LLM_MODEL[fallback_provider]['model']
+            model_type = fallback_provider
+            model_name = fallback_model
 
         # 显示模型信息卡片
         model_col1, model_col2 = st.columns([2, 1])
@@ -423,7 +424,7 @@ def main():
             st.info(f"🤖 **当前模型:** {model_type} / {model_name}")
         with model_col2:
             if st.button("⚙️ 修改设置", use_container_width=True):
-                st.switch_page("page/settings.py")
+                st.switch_page("page/system_settings.py")
 
     st.divider()
     
@@ -445,7 +446,6 @@ def main():
                     model_name=model_name
                 )
                 transformed_content = remove_thinking_tags(transformed_content)  # 清理 thinking 标签
-                st.success(f"{selected_transformation_name} 完成！")
             except ConnectionError as e:
                 st.error(f"{selected_transformation_name} 转换错误: {str(e)}")
                 return
@@ -453,7 +453,28 @@ def main():
                 st.error(f"{selected_transformation_name} 转换发生未知错误: {str(e)}")
                 return
 
+        # 如果首次调用未返回内容且是 Bento 转换，尝试使用默认模型兜底
+        if selected_transformation_name == "转换为Bento风格网页" and not transformed_content.strip():
+            try:
+                st.info("当前模型未返回内容，正在尝试使用默认模型重新生成 Bento 网页...")
+                fallback_provider = default_provider
+                fallback_model = openai_model
+                transformed_content = chat(
+                    source_article_content,
+                    prompt_to_use,
+                    model_type=fallback_provider,
+                    model_name=fallback_model
+                )
+                transformed_content = remove_thinking_tags(transformed_content)
+                # 更新记录使用的模型信息
+                model_type = fallback_provider
+                model_name = fallback_model
+            except Exception as e:
+                st.error(f"使用默认模型生成 Bento 网页时出错: {str(e)}")
+                return
+
         if transformed_content.strip():
+            st.success(f"{selected_transformation_name} 完成！")
             # Ensure the new topic clearly indicates it's a transformed version based on the selected transformation name
             # If the original topic already indicates a transformation, avoid nesting, e.g. "Topic (白话文) (白话文)"
             base_topic = source_article_topic
@@ -534,6 +555,13 @@ def main():
                 if st.button("📂 查看历史记录", type="primary", use_container_width=True):
                     st.switch_page("page/history.py")
         else:
-            st.error("转换后内容为空，未保存。")
+            st.error("转换后内容为空，未保存。模型可能未返回有效内容，请检查模型配置或稍后重试。")
+            try:
+                raw_preview = transformed_content if isinstance(transformed_content, str) else str(transformed_content)
+                st.info(f"模型原始输出长度: {len(raw_preview)} 字符")
+                if raw_preview:
+                    st.code(raw_preview[:500], language="html")
+            except Exception as e:
+                st.info(f"无法显示模型原始输出，用于调试的错误信息: {str(e)}")
 
 main()

@@ -84,10 +84,78 @@ def main():
         key='selected_model_name'
     )
 
+    # --- 备用模型设置（可折叠） ---
+    with st.expander("🔄 备用模型设置（可选）", expanded=False):
+        st.caption("当默认模型因内容审核、速率限制或连接错误失败时，系统将自动切换到备用模型继续处理。")
+        
+        # 初始化备用模型设置
+        fallback_settings = current_settings.get('fallback', {})
+        fallback_enabled = fallback_settings.get('enabled', False)
+        fallback_provider = fallback_settings.get('provider', '')
+        fallback_model_name = fallback_settings.get('model_name', '')
+        
+        # 启用备用模型开关
+        enable_fallback = st.checkbox(
+            "启用备用模型",
+            value=fallback_enabled,
+            key='enable_fallback_model',
+            help="启用后，当默认模型失败时将自动切换到备用模型"
+        )
+        
+        if enable_fallback:
+            # 备用模型供应商选择（排除当前选择的默认供应商，或允许相同供应商不同模型）
+            fallback_provider_options = list(LLM_MODEL.keys())
+            
+            # 获取备用供应商的索引
+            try:
+                fallback_provider_index = fallback_provider_options.index(fallback_provider) if fallback_provider else 0
+            except ValueError:
+                fallback_provider_index = 0
+            
+            selected_fallback_provider = st.selectbox(
+                '备用模型供应商',
+                options=fallback_provider_options,
+                index=fallback_provider_index,
+                key='selected_fallback_provider'
+            )
+            
+            # 获取备用供应商的模型列表
+            fallback_available_models = LLM_MODEL[selected_fallback_provider]['model']
+            if not isinstance(fallback_available_models, list):
+                fallback_available_models = [fallback_available_models]
+            
+            # 获取备用模型在列表中的索引
+            try:
+                fallback_model_index = fallback_available_models.index(fallback_model_name) if fallback_model_name else 0
+            except ValueError:
+                fallback_model_index = 0
+            
+            selected_fallback_model = st.selectbox(
+                '备用模型名称',
+                options=fallback_available_models,
+                index=fallback_model_index,
+                key='selected_fallback_model'
+            )
+            
+            # 显示提示
+            if selected_fallback_provider == selected_provider and selected_fallback_model == selected_model_name:
+                st.warning("⚠️ 备用模型与默认模型相同，建议选择不同的模型以确保故障转移有效。")
+    
     # 保存按钮
     if st.button("保存LLM模型设置"):
         st.session_state.global_model_settings['provider'] = selected_provider
         st.session_state.global_model_settings['model_name'] = selected_model_name
+        
+        # 保存备用模型设置
+        if 'enable_fallback_model' in st.session_state and st.session_state.enable_fallback_model:
+            st.session_state.global_model_settings['fallback'] = {
+                'enabled': True,
+                'provider': st.session_state.get('selected_fallback_provider', ''),
+                'model_name': st.session_state.get('selected_fallback_model', '')
+            }
+        else:
+            st.session_state.global_model_settings['fallback'] = {'enabled': False}
+        
         # 保存到配置
         set_config('global_model_settings', st.session_state.global_model_settings)
         st.success("LLM模型设置已成功保存！")

@@ -13,6 +13,7 @@ from utils.history_utils import (
     load_tweet_topics_history,
     delete_tweet_topics_record
 )
+# 队列功能已移至超级写手页面统一处理
 import logging
 
 # 配置日志
@@ -133,8 +134,8 @@ def main():
         # 新闻源选择
         news_source = st.pills(
             "选择新闻源",
-            ["机器之心", "SOTA开源项目", "实时新闻"],
-            default="机器之心",
+            ["澎湃科技", "SOTA开源项目", "实时新闻"],
+            default="澎湃科技",
             selection_mode="single",
             help="选择要分析的新闻来源"
         )
@@ -289,8 +290,8 @@ def main():
 def fetch_news_by_source(source_name, count=15):
     """根据新闻源获取新闻数据"""
     try:
-        if source_name == "机器之心":
-            return fetch_jiqizhixin_news(count)
+        if source_name == "澎湃科技":
+            return fetch_thepaper_tech_news(count)
         elif source_name == "SOTA开源项目":
             return fetch_sota_projects(count)
         elif source_name == "实时新闻":
@@ -302,32 +303,43 @@ def fetch_news_by_source(source_name, count=15):
         return []
 
 
-def fetch_jiqizhixin_news(count=15):
-    """获取机器之心文章"""
+def fetch_thepaper_tech_news(count=15):
+    """获取澎湃新闻科技频道文章"""
     try:
-        # 获取昨天和今天的新闻
-        yesterday = datetime.now() - timedelta(days=1)
-        today = datetime.now()
-        
-        url = f"https://www.jiqizhixin.com/api/article_library/articles.json?sort=time&page=1&per={count}"
-        response = requests.get(url, timeout=30)
+        url = "https://api.thepaper.cn/contentapi/nodeCont/getByChannelId"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Content-Type': 'application/json',
+            'Referer': 'https://www.thepaper.cn/',
+        }
+        payload = {
+            "channelId": "119908",
+            "excludeContIds": [],
+            "listRecommendIds": [],
+            "province": None,
+            "pageSize": count,
+            "startTime": None,
+            "pageNum": 1
+        }
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
         
         if response.status_code == 200:
             data = response.json()
-            articles = data.get('articles', [])
+            articles = data.get('data', {}).get('list', [])
             
             news_list = []
             for article in articles[:count]:
                 news_list.append({
-                    'title': article.get('title', ''),
-                    'summary': article.get('content', ''),
-                    'published_at': article.get('publishedAt', ''),
-                    'source': '机器之心'
+                    'title': article.get('name', ''),
+                    'summary': '',  # 澎湃API不返回摘要
+                    'published_at': article.get('pubTime', ''),
+                    'source': '澎湃科技'
                 })
             return news_list
         return []
     except Exception as e:
-        logger.error(f"获取机器之心新闻失败: {str(e)}")
+        logger.error(f"获取澎湃科技新闻失败: {str(e)}")
         return []
 
 
@@ -508,16 +520,26 @@ def display_topic_card(index, topic, unique_key_prefix="topic"):
         if content_outline:
             st.markdown(f"**📑 内容大纲**")
             if isinstance(content_outline, list):
-                for i, point in enumerate(content_outline, 1):
-                    st.markdown(f"{i}. {point}")
+                # 新格式：[{"h1": "标题", "h2": ["子标题1", "子标题2"]}, ...]
+                for i, section in enumerate(content_outline, 1):
+                    if isinstance(section, dict):
+                        h1 = section.get('h1', '')
+                        h2_list = section.get('h2', [])
+                        st.markdown(f"**{i}. {h1}**")
+                        if h2_list and isinstance(h2_list, list):
+                            for h2 in h2_list:
+                                st.markdown(f"   - {h2}")
+                    else:
+                        # 兼容旧格式（纯字符串列表）
+                        st.markdown(f"{i}. {section}")
             else:
                 st.write(content_outline)
         
         if estimated_words:
             st.markdown(f"**📏 预计字数**：{estimated_words}")
     
-    # 生成文章按钮
-    if st.button("✨ 生成文章", key=f"gen_btn_{unique_key_prefix}_{index}", use_container_width=True):
+    # 撰写文章按钮
+    if st.button("✨ 撰写文章", key=f"gen_btn_{unique_key_prefix}_{index}", use_container_width=True):
         # 准备预填数据
         style_parts = []
         if angle: style_parts.append(f"切入角度：{angle}")
@@ -527,11 +549,9 @@ def display_topic_card(index, topic, unique_key_prefix="topic"):
         
         style_prompt = "\n".join(style_parts)
         
-        # 设置Session State
-        st.session_state['article_topic'] = title
-        st.session_state['custom_style'] = style_prompt
-        
-        # 跳转页面
+        # 设置预填数据到 Session State，跳转到超级写手页面让用户确认/修改
+        st.session_state['article_topic_prefill'] = title
+        st.session_state['custom_style_prefill'] = style_prompt
         st.switch_page("page/auto_write.py")
     
     st.divider()

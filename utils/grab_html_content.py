@@ -24,6 +24,13 @@ from typing import List, Dict
 from pathlib import Path
 from utils.openai_vl_process import process_image, process_image_async
 from utils.embedding_utils import add_to_faiss_index, create_faiss_index
+from utils.image_filter import (
+    should_skip_image_url,
+    is_likely_icon_by_dimensions,
+    is_low_quality_image,
+    MIN_WIDTH, MIN_HEIGHT, MIN_AREA,
+    MIN_FILE_SIZE as FILTER_MIN_FILE_SIZE,
+)
 import concurrent.futures
 import threading
 
@@ -164,8 +171,8 @@ GLOBAL_URL_MAPPING = {}
 # 格式: {content_hash: {path: file_path, urls: [url1, url2, ...]}}
 GLOBAL_CONTENT_HASH_MAPPING = {}
 
-# 使用于模型校验的最小尺寸（HEAD Content-Length），更宽松
-MIN_MODEL_IMAGE_SIZE = 5 * 1024
+# 使用于模型校验的最小尺寸（HEAD Content-Length）- 提高阈值
+MIN_MODEL_IMAGE_SIZE = 15 * 1024  # 15KB - 更严格的阈值
 
 async def is_valid_image_url_for_model(session: aiohttp.ClientSession, url: str) -> bool:
     """通过轻量校验避免将无效/不支持的图片URL传给多模态/嵌入模型。
@@ -333,6 +340,13 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
         stats['skipped'] += 1 if stats else 0
         return '' if not is_multimodal else None
         
+    # === 新增：URL预筛选 - 在下载前过滤明显的非内容图片 ===
+    if should_skip_image_url(normalized_img_src):
+        stats['skipped'] = stats.get('skipped', 0) + 1
+        logger.debug(f"URL pre-filter skipped: {normalized_img_src[:80]}...")
+        image_hash_cache[normalized_img_src] = '' if not is_multimodal else None
+        return '' if not is_multimodal else None
+    
     # 检查URL是否已经在当前会话缓存中
     if normalized_img_src in image_hash_cache:
         stats['cached'] += 1
@@ -371,10 +385,11 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 image_hash_cache[normalized_img_src] = image_hash_cache[cached_url]
                 return image_hash_cache[cached_url]
         
-    # 直接URL嵌入模式：先校验，合格则收集URL，由后续批量处理统一embedding
+    # 直接URL嵌入模式：下载图片内容进行尺寸筛选，合格则收集URL
     # 注意：这里不再逐张做 embedding，避免与 searxng_utils.py 的批量处理重复
     if use_direct_image_embedding:
         try:
+            # 先做基本的URL校验
             valid = await is_valid_image_url_for_model(session, normalized_img_src)
         except Exception:
             valid = False
@@ -384,11 +399,43 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 stats['skipped'] = stats.get('skipped', 0) + 1
             image_hash_cache[normalized_img_src] = None
             return None
-        # 只收集URL，不做embedding，后续由searxng_utils批量处理
+        
+        # 下载图片内容进行尺寸筛选
+        try:
+            timeout = aiohttp.ClientTimeout(total=15, connect=10)
+            async with session.get(normalized_img_src, ssl=False, timeout=timeout, allow_redirects=True) as resp:
+                if resp.status != 200:
+                    stats['failed'] = stats.get('failed', 0) + 1
+                    image_hash_cache[normalized_img_src] = None
+                    return None
+                content = await resp.read()
+                
+                # 使用增强的图片筛选逻辑
+                is_filtered, filter_reason, image_info = is_low_quality_image(
+                    content=content,
+                    url=normalized_img_src,
+                    check_url=False,  # URL已在前面检查过
+                    check_dimensions=True,
+                    check_file_size=True,
+                    check_content=True,
+                )
+                
+                if is_filtered:
+                    stats['skipped'] = stats.get('skipped', 0) + 1
+                    logger.debug(f"Direct embedding filtered: {filter_reason} - {normalized_img_src[:60]}...")
+                    image_hash_cache[normalized_img_src] = None
+                    return None
+        except Exception as e:
+            logger.debug(f"Error downloading image for filtering: {e}")
+            stats['failed'] = stats.get('failed', 0) + 1
+            image_hash_cache[normalized_img_src] = None
+            return None
+        
+        # 通过筛选，收集URL用于后续批量嵌入
         logger.debug(f"收集图片URL用于后续批量嵌入: {normalized_img_src[:50]}...")
         result = {"image_url": normalized_img_src, "embedding_method": "deferred_batch"}
         image_hash_cache[normalized_img_src] = result
-        stats['success'] += 1 if stats else 0
+        stats['success'] = stats.get('success', 0) + 1
         return result
 
     # 多模态模式：先校验，合格则无需下载图片内容，直接调用识别并入库
@@ -743,54 +790,21 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
             content = await response.read()
         content_size = len(content)
         
-        # 检查图片大小和尺寸
-        def should_skip_image():
-            """Helper function to determine if image should be skipped"""
-            # 1. 检查文件大小
-            if content_size < MIN_IMAGE_SIZE:
-                # logger.debug(f"Skipping small file: {img_src} ({content_size/1024:.1f}KB < {MIN_IMAGE_SIZE/1024:.1f}KB)")
-                return True
-                
-            # 2. 检查图片尺寸
-            try:
-                img = Image.open(BytesIO(content))
-                width, height = img.size
-                
-                # 常见图标尺寸列表
-                ICON_SIZES = {
-                    (480, 480), 
-                    (226, 226), 
-                    (300, 300), 
-                    (656, 656)
-                }
-                
-                # 检查是否为常见图标尺寸
-                if (width, height) in ICON_SIZES:
-                    logger.debug(f"Skipping common icon size: {img_src} ({width}x{height})")
-                    return True
-                    
-                # 检查是否为小图片 - 要求至少一边大于100px
-                if width < 100 and height < 100:
-                    logger.debug(f"Skipping small image: {img_src} ({width}x{height})")
-                    return True
-                    
-                # 检查宽高比例 - 进一步放宽比例限制以支持banner和竖长图
-                ratio = width / height
-                if ratio > 12 or ratio < 0.08:  # 允许12:1的横幅和1:12的竖长图
-                    logger.debug(f"Skipping abnormal aspect ratio: {img_src} (ratio: {ratio:.2f})")
-                    return True
-                    
-                # 图片通过所有检查
-                return False
-                
-            except Exception as e:
-                # 无法通过PIL识别（如SVG等），不强制跳过，允许后续流程处理
-                return False
+        # === 使用增强的图片筛选逻辑 ===
+        # 综合检查：文件大小、图片尺寸、内容特征
+        is_filtered, filter_reason, image_info = is_low_quality_image(
+            content=content,
+            url=normalized_img_src,
+            check_url=False,  # URL已在前面检查过
+            check_dimensions=True,
+            check_file_size=True,
+            check_content=True,
+        )
         
-        # 如果应该跳过该图片
-        if should_skip_image():
+        if is_filtered:
             stats['skipped'] += 1
-            image_hash_cache[img_src] = '' if not is_multimodal else None
+            logger.debug(f"Image filtered: {filter_reason} - {img_src[:80]}...")
+            image_hash_cache[normalized_img_src] = '' if not is_multimodal else None
             return '' if not is_multimodal else None
         
         # 如果是直接图片URL嵌入模式
@@ -1329,8 +1343,17 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
                 task = download_image(session, candidate, image_hash_cache, task_id, is_multimodal, use_direct_image_embedding, theme, stats, base_url, username, article_id)
                 img_tasks.append(task)
             
-            # 等待所有图片下载完成
-            img_paths = await asyncio.gather(*img_tasks)
+            # 等待所有图片下载完成，设置整体超时（30秒）
+            try:
+                img_paths = await asyncio.wait_for(
+                    asyncio.gather(*img_tasks, return_exceptions=True),
+                    timeout=30
+                )
+                # 过滤掉异常结果
+                img_paths = [p for p in img_paths if not isinstance(p, Exception)]
+            except asyncio.TimeoutError:
+                logger.warning(f"图片下载超时，已处理部分图片")
+                img_paths = []
             
             # 处理直接嵌入模式下的字典结果
             processed_paths = []
@@ -1366,6 +1389,8 @@ async def fetch(browser, url, task_id=None, is_multimodal=False, use_direct_imag
     if not url or not url.strip():
         logger.warning("Skipping empty URL")
         return {"url": url, "text": "", "images": [], "error": "Empty URL"}
+    
+    logger.debug(f"开始抓取URL: {url[:80]}...")
     
     async with aiohttp.ClientSession() as session:
         # 创建一个新的浏览器上下文
@@ -1461,6 +1486,8 @@ async def get_main_content(url_list: List[str], task_id: str = None, is_multimod
     """
     get_executor()
     
+    logger.info(f"开始抓取 {len(url_list)} 个URL的内容...")
+    
     async with async_playwright() as p:
         browser = await p.firefox.launch()
         try:
@@ -1472,17 +1499,33 @@ async def get_main_content(url_list: List[str], task_id: str = None, is_multimod
             results = []
             completed_count = 0
             total_count = len(tasks)
+            
+            # 设置单个任务的超时时间（秒）
+            TASK_TIMEOUT = 60
 
             for future in asyncio.as_completed(tasks):
-                result = await future
-                results.append(result)
-                completed_count += 1
+                try:
+                    # 为每个任务设置超时
+                    result = await asyncio.wait_for(future, timeout=TASK_TIMEOUT)
+                    results.append(result)
+                    completed_count += 1
+                    logger.info(f"抓取进度: {completed_count}/{total_count} - URL: {result.get('url', 'unknown')[:50]}...")
+                except asyncio.TimeoutError:
+                    completed_count += 1
+                    logger.warning(f"抓取超时 ({TASK_TIMEOUT}s): 任务 {completed_count}/{total_count}")
+                    results.append({"url": "timeout", "text": "", "images": [], "error": "timeout"})
+                except Exception as e:
+                    completed_count += 1
+                    logger.error(f"抓取异常: {str(e)}")
+                    results.append({"url": "error", "text": "", "images": [], "error": str(e)})
+                
                 if progress_callback:
                     try:
                         progress_callback(completed_count, total_count)
                     except Exception as e:
                         logger.error(f"Error in progress_callback: {e}")
 
+            logger.info(f"抓取完成: 成功 {len([r for r in results if r.get('text')])} / 总计 {total_count}")
             return results, task_id
         finally:
             await asyncio.sleep(0.5)

@@ -5,26 +5,7 @@ from utils.auth_decorator import require_auth
 import json
 import re
 import html
-import base64
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_jiqizhixin_image_base64(url):
-    """获取机器之心图片并转为base64（绕过防盗链）"""
-    if not url:
-        return ''
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': 'https://www.jiqizhixin.com/'
-        }
-        r = requests.get(url, headers=headers, timeout=5)
-        if r.status_code == 200:
-            content_type = r.headers.get('Content-Type', 'image/jpeg')
-            b64 = base64.b64encode(r.content).decode('utf-8')
-            return f"data:{content_type};base64,{b64}"
-    except Exception:
-        pass
-    return ''
 
 @require_auth
 def main():
@@ -217,15 +198,15 @@ def main():
     
     # 创建分类标签页
     tab1, tab2, tab3 = st.tabs([
-        "📰 机器之心", 
+        "📰 澎湃科技", 
         "⭐ 开源项目", 
         "🔥 实时新闻"
     ])
     
-    # 机器之心
+    # 澎湃科技
     with tab1:
-        st.markdown("### 机器之心 - 专业AI资讯")
-        fetch_jiqizhixin_news()
+        st.markdown("### 澎湃新闻 - 科技频道")
+        fetch_thepaper_tech()
     
     # 最新开源项目
     with tab2:
@@ -238,72 +219,108 @@ def main():
         fetch_chinaz_news(news_type=1, title="实时新闻")
 
 
-def fetch_jiqizhixin_news():
-    """获取机器之心文章"""
+def fetch_thepaper_tech():
+    """获取澎湃新闻科技频道文章"""
     try:
-        url = "https://www.jiqizhixin.com/api/article_library/articles.json?sort=time&page=1&per=12"
-        response = requests.get(url, timeout=30)
+        url = "https://api.thepaper.cn/contentapi/nodeCont/getByChannelId"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Content-Type': 'application/json',
+            'Referer': 'https://www.thepaper.cn/',
+            'Origin': 'https://www.thepaper.cn',
+        }
+        
+        # 科技频道 channelId: 119908
+        payload = {
+            "channelId": "119908",
+            "excludeContIds": [],
+            "listRecommendIds": [],
+            "province": None,
+            "pageSize": 15,
+            "startTime": None,
+            "pageNum": 1
+        }
+        
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
         
         if response.status_code == 200:
             data = response.json()
-            articles = data.get('articles', [])
+            articles = data.get('data', {}).get('list', [])
             
             if articles:
-                # 使用单列列表展示
                 for article in articles:
-                    display_jiqizhixin_card(article)
+                    display_thepaper_tech_card(article)
             else:
                 st.info("暂无文章数据")
+                _fetch_fallback_ai_news()
         else:
-            st.error(f"获取数据失败，状态码：{response.status_code}")
+            st.warning(f"获取澎湃科技新闻失败，状态码：{response.status_code}")
+            _fetch_fallback_ai_news()
     except Exception as e:
-        st.error(f"获取机器之心新闻失败：{str(e)}")
+        st.warning(f"获取澎湃科技新闻失败：{str(e)[:100]}")
+        _fetch_fallback_ai_news()
 
 
-def display_jiqizhixin_card(article):
-    """显示机器之心文章列表项"""
-    title = article.get('title', '无标题')
-    summary = article.get('content', '暂无摘要')  # 使用content字段作为摘要
-    image_url = article.get('coverImageUrl', '')  # 使用coverImageUrl字段
-    published_at = article.get('publishedAt', '')  # 使用publishedAt字段
-    slug = article.get('slug', '')
-    url = f"https://www.jiqizhixin.com/articles/{slug}" if slug else f"https://www.jiqizhixin.com/articles/{article.get('id', '')}"
+def _fetch_fallback_ai_news():
+    """备用新闻源：使用站长之家AI新闻"""
+    st.info("💡 已切换到站长之家AI新闻")
+    try:
+        url = "https://app.chinaz.com/djflkdsoisknfoklsyhownfrlewfknoiaewf/ai/GetAiInfoList.aspx?flag=zh_cn&type=1&page=1&pagesize=12"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://app.chinaz.com/',
+            'Accept': 'application/json, text/plain, */*',
+        }
+        response = requests.get(url, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            news_list = data if isinstance(data, list) else data.get('data', [])
+            
+            if news_list:
+                for idx, news in enumerate(news_list):
+                    display_chinaz_card(news, 1, idx)
+            else:
+                st.warning("暂无新闻数据")
+        else:
+            st.error(f"获取备用新闻失败，状态码：{response.status_code}")
+    except Exception as e:
+        st.error(f"获取备用新闻失败：{str(e)[:100]}")
+
+
+def display_thepaper_tech_card(article):
+    """显示澎湃科技文章列表项"""
+    title = html.escape(article.get('name', '无标题'))
+    cont_id = article.get('contId', '')
+    article_url = f"https://www.thepaper.cn/newsDetail_forward_{cont_id}" if cont_id else "https://www.thepaper.cn/"
+    pub_time = article.get('pubTime', '')
+    praise_times = article.get('praiseTimes', '0')
+    interaction_num = article.get('interactionNum', '')
+    pic = article.get('smallPic', '') or article.get('pic', '')
+    node_name = html.escape(article.get('nodeInfo', {}).get('name', '澎湃科技'))
     
-    # 格式化时间
-    if published_at:
-        try:
-            dt = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
-            time_str = dt.strftime('%Y-%m-%d %H:%M')
-        except:
-            time_str = published_at
-    else:
-        time_str = "未知时间"
+    # 获取标签
+    tag_list = article.get('tagList', [])
+    tags_html = ''
+    if tag_list:
+        tags = [html.escape(tag.get('tag', '')) for tag in tag_list[:3] if tag.get('tag')]
+        if tags:
+            tags_html = ' '.join([f'<span class="category-badge" style="font-size:0.7rem; padding:2px 6px;">{tag}</span>' for tag in tags])
     
     # 显示列表项（图文式）
-    if image_url:
-        # 使用Base64代理图片绕过防盗链
-        img_src = get_jiqizhixin_image_base64(image_url)
-        if img_src:
-            img_html = f'''<img src="{img_src}" class="news-image">'''
-        else:
-            img_html = '' # 图片加载失败则不显示
-    else:
-        img_html = ''
+    img_html = ''
+    if pic:
+        img_html = f'<img src="{html.escape(pic)}" class="news-image" referrerpolicy="no-referrer" onerror="this.style.display=\'none\'">'
     
-    st.markdown(f"""
-    <div class="news-item">
-        {img_html}
-        <div class="news-content">
-            <div class="news-title">{title}</div>
-            <div class="news-summary">{summary}</div>
-            <div class="news-meta">
-                <span class="news-source">机器之心</span>
-                <span>⏰ {time_str}</span>
-            </div>
-            <a href="{url}" target="_blank" class="news-button">📖 阅读全文</a>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # 互动信息
+    interaction_html = ''
+    if interaction_num:
+        interaction_html = f' · 💬 {interaction_num}'
+    
+    card_html = f'''<div class="news-item">{img_html}<div class="news-content"><div style="margin-bottom: 0.5rem;"><span style="background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); color:white; padding:3px 10px; border-radius:6px; font-size:0.75rem; font-weight:600; display:inline-block;">{node_name}</span> {tags_html}</div><div class="news-title">{title}</div><div class="news-meta" style="margin-top: 0.5rem;"><span>⏰ {pub_time}</span><span>· 👍 {praise_times}{interaction_html}</span></div><a href="{article_url}" target="_blank" class="news-button">📖 阅读全文</a></div></div>'''
+    
+    st.markdown(card_html, unsafe_allow_html=True)
 
 
 def fetch_sota_projects():

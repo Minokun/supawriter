@@ -17,6 +17,7 @@ import threading
 import asyncio
 import concurrent.futures
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
+from utils.image_filter import should_skip_image_url, filter_image_urls
 
 # 配置日志
 logging.basicConfig(
@@ -104,7 +105,7 @@ from utils.embedding_utils import (
     add_to_faiss_index,
 )
 from utils.embedding_utils import create_faiss_index
-from utils.image_search_indexer import index_ddgs_images
+from utils.image_search_indexer import index_ddgs_images, fetch_ddgs_images
 from utils.serper_search import serper_search
 from utils.ddgs_utils import search_ddgs
 
@@ -655,125 +656,143 @@ class Search:
                                urlparse(url).netloc == urlparse(crawled_url).netloc:
                                 item['images'] = images
                                 logger.info(f"Found partial match for images: {url} -> {crawled_url}")
-                # 抓取与映射完成后，触发DDGS图片补充并写入用户/文章FAISS索引（若提供）
+                # 抓取与映射完成后，收集所有图片（网页+DDGS）并统一批量嵌入
                 try:
-                    # 仅在直接URL嵌入模式下进行“批量URL嵌入”；多模态模式应逐图识别，不进行批量URL嵌入
-                    # 先对本次抓取到的网页图片执行批量嵌入与入库（每批最多30）
-                    try:
-                        if username and article_id and image_dict and (use_direct_image_embedding and not is_multimodal):
-                            faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss', username=username, article_id=article_id)
-                            # 收集所有图片URL与其来源页面
-                            all_image_pairs = []  # [(img_url, page_url)]
+                    # 仅在直接URL嵌入模式下进行"批量URL嵌入"；多模态模式应逐图识别，不进行批量URL嵌入
+                    if username and article_id and (use_direct_image_embedding and not is_multimodal):
+                        faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss', username=username, article_id=article_id)
+                        
+                        # 1. 收集网页抓取的图片（带URL预筛选）
+                        all_image_data = []  # [(img_url, payload_dict)]
+                        web_image_count = 0
+                        web_filtered_count = 0
+                        if image_dict:
                             for page_url, imgs in image_dict.items():
                                 for img_url in imgs:
                                     if isinstance(img_url, str) and img_url.startswith(('http://', 'https://')) and not img_url.lower().endswith('.svg'):
-                                        all_image_pairs.append((img_url, page_url))
-                            # 去重，保持顺序
-                            seen = set()
-                            unique_image_pairs = []
-                            for img_url, page_url in all_image_pairs:
-                                if img_url not in seen:
-                                    seen.add(img_url)
-                                    unique_image_pairs.append((img_url, page_url))
-                            if unique_image_pairs:
-                                # 减小批次大小，避免因单张图片下载失败导致整批回退
-                                # 原来是30，现在改为10，提高批量成功率
-                                chunk_size = 10
-                                batch_added = 0
-                                fallback_added = 0
-                                skipped = 0
-                                total = len(unique_image_pairs)
-                                total_batches = (total + chunk_size - 1) // chunk_size
-                                logger.info(f"开始对抓取到的网页图片执行批量嵌入：共 {total} 张，批大小 {chunk_size}")
-                                for i in range(0, total, chunk_size):
-                                    chunk = unique_image_pairs[i:i+chunk_size]
-                                    batch_num = i // chunk_size + 1
-                                    # 更新图片 embedding 进度
-                                    if progress_callback:
-                                        try:
-                                            # 使用特殊格式传递图片embedding进度：负数表示图片embedding阶段
-                                            # 格式: (-batch_num, -total_batches) 用负数区分普通进度
-                                            progress_callback(-batch_num, -total_batches)
-                                        except Exception as e:
-                                            logger.debug(f"图片embedding进度回调失败: {e}")
-                                    urls_batch = [u for (u, _) in chunk]
-                                    data_batch = [{
-                                        'image_url': u,
-                                        'source_url': p,
-                                        'source': 'searxng_crawl',
-                                        'embedding_method': 'batch_image_url'
-                                    } for (u, p) in chunk]
+                                        # === 新增：URL预筛选 - 过滤logo/图标/广告等非内容图片 ===
+                                        if should_skip_image_url(img_url):
+                                            web_filtered_count += 1
+                                            continue
+                                        payload = {
+                                            'image_url': img_url,
+                                            'source_url': page_url,
+                                            'source': 'searxng_crawl',
+                                            'embedding_method': 'batch_image_url'
+                                        }
+                                        all_image_data.append((img_url, payload))
+                                        web_image_count += 1
+                        logger.info(f"收集到网页图片: {web_image_count} 张，预筛选过滤: {web_filtered_count} 张")
+                        
+                        # 2. 获取DDGS图片（仅获取URL，不做embedding）
+                        ddgs_image_count = 0
+                        try:
+                            # 优先使用优化后的查询词，其次是主题，最后是原始问题
+                            query_for_ddgs = self.optimized_query or theme or question
+                            logger.info(f"开始获取DDGS图片: query='{query_for_ddgs}'")
+                            ddgs_pairs = fetch_ddgs_images(
+                                query=query_for_ddgs,
+                                max_results=30,
+                                log_fn=lambda level, msg: getattr(logger, level if level in ("info","warning","error","debug") else "info")(msg)
+                            )
+                            ddgs_filtered_count = 0
+                            for img_url, payload in ddgs_pairs:
+                                # === 新增：DDGS图片也进行URL预筛选 ===
+                                if should_skip_image_url(img_url):
+                                    ddgs_filtered_count += 1
+                                    continue
+                                all_image_data.append((img_url, payload))
+                                ddgs_image_count += 1
+                            logger.info(f"收集到DDGS图片: {ddgs_image_count} 张，预筛选过滤: {ddgs_filtered_count} 张")
+                        except Exception as e:
+                            logger.warning(f"DDGS图片获取失败: {e}，继续处理网页图片")
+                        
+                        # 3. 去重，保持顺序
+                        seen = set()
+                        unique_image_data = []
+                        for img_url, payload in all_image_data:
+                            if img_url not in seen:
+                                seen.add(img_url)
+                                unique_image_data.append((img_url, payload))
+                        
+                        logger.info(f"图片去重后总计: {len(unique_image_data)} 张 (网页: {web_image_count}, DDGS: {ddgs_image_count})")
+                        
+                        # 4. 统一批量嵌入
+                        if unique_image_data:
+                            chunk_size = 10
+                            batch_added = 0
+                            fallback_added = 0
+                            skipped = 0
+                            total = len(unique_image_data)
+                            total_batches = (total + chunk_size - 1) // chunk_size
+                            logger.info(f"开始对所有图片执行统一批量嵌入：共 {total} 张，批大小 {chunk_size}")
+                            
+                            for i in range(0, total, chunk_size):
+                                chunk = unique_image_data[i:i+chunk_size]
+                                batch_num = i // chunk_size + 1
+                                # 更新图片 embedding 进度
+                                if progress_callback:
                                     try:
-                                        embeddings = Embedding().get_embedding(urls_batch, is_image_url=True)
+                                        # 使用特殊格式传递图片embedding进度：负数表示图片embedding阶段
+                                        progress_callback(-batch_num, -total_batches)
                                     except Exception as e:
-                                        embeddings = []
-                                        logger.warning(f"批量获取图片嵌入失败（{i}-{i+len(chunk)}）: {e}")
-                                    valid_embeds = []
-                                    valid_data = []
-                                    # 记录批量嵌入返回情况
-                                    embed_count = len(embeddings) if embeddings else 0
-                                    input_count = len(urls_batch)
-                                    if embed_count != input_count:
-                                        logger.warning(f"批量嵌入数量不匹配：输入 {input_count} 张，返回 {embed_count} 个嵌入向量（批次 {i//chunk_size + 1}）")
-                                    if embeddings and len(embeddings) == len(urls_batch):
-                                        for emb, data_obj in zip(embeddings, data_batch):
-                                            if emb:
-                                                valid_embeds.append(emb)
-                                                valid_data.append(data_obj)
+                                        logger.debug(f"图片embedding进度回调失败: {e}")
+                                
+                                urls_batch = [u for (u, _) in chunk]
+                                data_batch = [p for (_, p) in chunk]
+                                
+                                try:
+                                    embeddings = Embedding().get_embedding(urls_batch, is_image_url=True)
+                                except Exception as e:
+                                    embeddings = []
+                                    logger.warning(f"批量获取图片嵌入失败（{i}-{i+len(chunk)}）: {e}")
+                                
+                                valid_embeds = []
+                                valid_data = []
+                                embed_count = len(embeddings) if embeddings else 0
+                                input_count = len(urls_batch)
+                                
+                                if embed_count != input_count:
+                                    logger.warning(f"批量嵌入数量不匹配：输入 {input_count} 张，返回 {embed_count} 个嵌入向量（批次 {batch_num}）")
+                                
+                                if embeddings and len(embeddings) == len(urls_batch):
+                                    for emb, data_obj in zip(embeddings, data_batch):
+                                        if emb:
+                                            valid_embeds.append(emb)
+                                            valid_data.append(data_obj)
+                                        else:
+                                            skipped += 1
+                                    if valid_embeds:
+                                        before = faiss_index.get_size()
+                                        add_batch_embeddings_to_faiss_index(valid_embeds, valid_data, faiss_index)
+                                        added_now = faiss_index.get_size() - before
+                                        batch_added += max(0, added_now)
+                                        logger.debug(f"批次 {batch_num} 批量添加成功：{added_now} 张")
+                                else:
+                                    # 批量失败或返回数量不匹配，对每个进行回退处理
+                                    logger.info(f"批量嵌入返回无效或数量不一致（输入{input_count}/返回{embed_count}），启用逐项回退（批次 {batch_num}）")
+                                    for (u, p) in chunk:
+                                        try:
+                                            fallback_payload = p.copy()
+                                            fallback_payload['embedding_method'] = 'fallback_single_image_url'
+                                            ok = add_to_faiss_index(u, fallback_payload, faiss_index, auto_save=False, username=username, article_id=article_id, is_image_url=True)
+                                            if ok:
+                                                fallback_added += 1
                                             else:
                                                 skipped += 1
-                                        if valid_embeds:
-                                            before = faiss_index.get_size()
-                                            add_batch_embeddings_to_faiss_index(valid_embeds, valid_data, faiss_index)
-                                            added_now = faiss_index.get_size() - before
-                                            batch_added += max(0, added_now)
-                                            logger.debug(f"批次 {i//chunk_size + 1} 批量添加成功：{added_now} 张")
-                                    else:
-                                        # 批量失败或返回数量不匹配，对每个进行回退处理
-                                        logger.info(f"批量嵌入返回无效或数量不一致（输入{input_count}/返回{embed_count}），启用逐项回退（批次 {i//chunk_size + 1}）")
-                                        for (u, p) in chunk:
-                                            try:
-                                                ok = add_to_faiss_index(u, {
-                                                    'image_url': u,
-                                                    'source_url': p,
-                                                    'source': 'searxng_crawl',
-                                                    'embedding_method': 'fallback_single_image_url'
-                                                }, faiss_index, auto_save=False, username=username, article_id=article_id, is_image_url=True)
-                                                if ok:
-                                                    fallback_added += 1
-                                                else:
-                                                    skipped += 1
-                                            except Exception as e:
-                                                skipped += 1
-                                                logger.debug(f"单图回退嵌入失败: {u}, 错误: {e}")
-                                # 全部批次完成后统一保存一次
-                                try:
-                                    save_faiss_index(faiss_index, username=username, article_id=article_id)
-                                except Exception as e:
-                                    logger.warning(f"保存FAISS索引失败: {e}")
-                                logger.info(f"网页图片批量嵌入完成：批量新增 {batch_added}，回退新增 {fallback_added}，跳过/失败 {skipped}，总计处理 {total}")
-                    except Exception as e:
-                        logger.error(f"网页图片批量嵌入阶段出错: {e}")
-                    # 然后触发DDGS图片补充
-                    if username and article_id:
-                        faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss', username=username, article_id=article_id)
-                        query_for_ddgs = theme or (self.optimized_query or question)
-                        logger.info(f"触发DDGS图片补充：query='{query_for_ddgs}', user='{username}', article='{article_id}'")
-                        ddgs_added = index_ddgs_images(
-                            query=query_for_ddgs,
-                            faiss_index=faiss_index,
-                            username=username,
-                            article_id=article_id,
-                            max_results=30,
-                            chunk_size=10,
-                            log_fn=lambda level, msg: getattr(logger, level if level in ("info","warning","error","debug") else "info")(msg)
-                        )
-                        if ddgs_added > 0:
-                            logger.info(f"DDGS图片补充完成，新增 {ddgs_added} 条。")
-                        else:
-                            logger.info(f"DDGS图片补充完成，但未新增图片（可能是无搜索结果或反爬虫限制）。")
+                                        except Exception as e:
+                                            skipped += 1
+                                            logger.debug(f"单图回退嵌入失败: {u}, 错误: {e}")
+                            
+                            # 全部批次完成后统一保存一次
+                            try:
+                                save_faiss_index(faiss_index, username=username, article_id=article_id)
+                            except Exception as e:
+                                logger.warning(f"保存FAISS索引失败: {e}")
+                            
+                            logger.info(f"图片批量嵌入完成：批量新增 {batch_added}，回退新增 {fallback_added}，跳过/失败 {skipped}，总计处理 {total}")
                 except Exception as e:
-                    logger.warning(f"DDGS图片补充阶段跳过: {e}（这是正常现象，不影响文章生成）")
+                    logger.warning(f"图片批量嵌入阶段出错: {e}（这是正常现象，不影响文章生成）")
             # 返回整合后的结果
             logger.info(f"最终返回搜索结果: {len(search_result)} 条")
             return search_result

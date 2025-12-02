@@ -18,7 +18,7 @@ classifiers = [
 
 dependencies = [
     # Web框架和HTTP请求
-    "streamlit>=1.22.0",
+    "streamlit>=1.51.0",  # v2 components API required
     "fastapi>=0.95.0",
     "uvicorn>=0.20.0",
     "requests>=2.28.1",

@@ -511,10 +511,10 @@ def main():
     with ai_col10:
         st.markdown("""
         <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #FF5722;">
-            <div class="nav-icon" style="font-size: 2.8rem; color: #FF5722;">🖥️</div>
-            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">超算互联网</div>
-            <div class="nav-desc" style="height: 40px;">算力与AI服务商城，一站式算力资源平台</div>
-            <a href="https://www.scnet.cn/ui/mall/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #FF5722, #FF9800); font-weight: 700;">进入平台</a>
+            <div class="nav-icon" style="font-size: 2.8rem; color: #FF5722;">�</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">灵光</div>
+            <div class="nav-desc" style="height: 40px;">国内领先的AI模型与应用平台，提供多种AI服务</div>
+            <a href="https://www.lingguang.com/chat" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #FF5722, #FF9800); font-weight: 700;">进入平台</a>
         </div>
         """, unsafe_allow_html=True)
     
@@ -538,6 +538,46 @@ def main():
         </div>
         """, unsafe_allow_html=True)
         
+    # 算力平台区域
+    st.markdown("""
+    <div class="section-title" style="background: linear-gradient(90deg, #FF512F, #DD2476); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700; font-size: 1.8rem; margin: 1.5rem 0;">
+        💻 算力平台
+    </div>
+    <p style="text-align: center; margin-bottom: 2rem; color: #555; font-size: 1rem;">一站式 GPU / Serverless 算力平台，支持大模型推理与训练</p>
+    """, unsafe_allow_html=True)
+
+    power_col1, power_col2, power_col3 = st.columns(3)
+
+    with power_col1:
+        st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #4A90E2;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #4A90E2;">☁️</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">共绩云 Serverless</div>
+            <div class="nav-desc" style="height: 40px;">多地域 Serverless 与算力服务平台，支持 AI 应用部署</div>
+            <a href="https://www.gongjiyun.com/product/serverless/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #4A90E2, #50C9C3); font-weight: 700;">进入平台</a>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with power_col2:
+        st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #CA0C16;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #CA0C16;">🧮</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">CSDN GPU 算力</div>
+            <div class="nav-desc" style="height: 40px;">CSDN 官方 GPU 云算力平台，适用于大模型训练与推理</div>
+            <a href="https://gpu.csdn.net/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #CA0C16, #e74c3c); font-weight: 700;">进入平台</a>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with power_col3:
+        st.markdown("""
+        <div class="nav-card" style="background: linear-gradient(145deg, #ffffff, #f0f0f0); border-left: 4px solid #FF5722;">
+            <div class="nav-icon" style="font-size: 2.8rem; color: #FF5722;">🖥️</div>
+            <div class="nav-title" style="font-size: 1.3rem; margin: 0.7rem 0;">超算互联网</div>
+            <div class="nav-desc" style="height: 40px;">算力与AI服务商城，一站式算力资源平台</div>
+            <a href="https://www.scnet.cn/ui/mall/" target="_blank" class="nav-button" style="background: linear-gradient(45deg, #FF5722, #FF9800); font-weight: 700;">进入平台</a>
+        </div>
+        """, unsafe_allow_html=True)
+
     # 页脚信息
     st.markdown("<br><br>", unsafe_allow_html=True)
     st.markdown("""

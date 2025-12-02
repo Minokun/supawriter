@@ -255,18 +255,6 @@ def show_security_settings(user):
     st.markdown("#### 修改密码")
     
     with st.form("change_password", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            old_password = st.text_input(
-                "当前密码",
-                type="password",
-                placeholder="请输入当前密码"
-            )
-        
-        with col2:
-            st.empty()
-        
         new_password = st.text_input(
             "新密码",
             type="password",
@@ -302,16 +290,15 @@ def show_security_settings(user):
                     st.warning("⚠️ 密码强度：弱")
         
         if st.form_submit_button("🔄 更新密码", use_container_width=True, type="primary"):
-            if not all([old_password, new_password, confirm_password]):
-                st.error("❌ 所有密码字段都必须填写")
+            if not all([new_password, confirm_password]):
+                st.error("❌ 请填写新密码")
             elif new_password != confirm_password:
                 st.error("❌ 两次输入的新密码不一致")
             elif len(new_password) < 8:
                 st.error("❌ 密码长度至少8位")
             else:
-                success, message = AuthService.change_password(
+                success, message = AuthService.reset_password(
                     user['id'],
-                    old_password,
                     new_password
                 )
                 if success:

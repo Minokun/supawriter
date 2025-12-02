@@ -26,11 +26,20 @@ def clean_text(text):
 
 def fetch_jiqizhixin_news():
     """获取机器之心文章"""
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    
     print("正在获取机器之心新闻...")
     try:
         # 获取更多文章以便筛选昨天到今天的
         url = "https://www.jiqizhixin.com/api/article_library/articles.json?sort=time&page=1&per=50"
-        response = requests.get(url, timeout=30)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Referer': 'https://www.jiqizhixin.com/',
+        }
+        # 快速尝试，设置较短超时，跳过 SSL 验证
+        response = requests.get(url, headers=headers, timeout=15, verify=False)
         
         if response.status_code == 200:
             data = response.json()

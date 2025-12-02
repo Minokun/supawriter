@@ -180,6 +180,33 @@ def delete_history_record(username, record_id):
     save_user_history(username, new_history)
     return True
 
+def update_history_record(username, record_id, new_content):
+    """
+    Update the content of a history record by id.
+    
+    Args:
+        username: The username of the user
+        record_id: The id of the record to update
+        new_content: The new article content
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    from datetime import datetime
+    
+    history = load_user_history(username)
+    
+    for record in history:
+        if record.get("id") == record_id:
+            record["article_content"] = new_content
+            record["edited_at"] = datetime.now().isoformat()
+            save_user_history(username, history)
+            logging.info(f"Updated history record {record_id} for user {username}")
+            return True
+    
+    logging.warning(f"Record {record_id} not found for user {username}")
+    return False
+
 def save_html_to_user_dir(username, html_content, filename=None):
     """
     Save HTML content to the user's HTML directory.

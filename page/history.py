@@ -3,7 +3,8 @@ import sys
 import logging
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
-from utils.history_utils import load_user_history, save_html_to_user_dir, sanitize_filename
+from utils.history_utils import load_user_history, save_html_to_user_dir, sanitize_filename, update_history_record
+from components.markdown_editor import markdown_editor
 from utils.playwright_utils import take_webpage_screenshot_sync
 from utils.wechat_converter import markdown_to_wechat_html
 from settings import ARTICLE_TRANSFORMATIONS, HISTORY_FILTER_BASE_OPTIONS, HTML_NGINX_BASE_URL
@@ -367,6 +368,85 @@ def preview_markdown_article(markdown_content):
     st.components.v1.html(html_content, height=600, scrolling=True)
 
 
+@st.dialog("编辑文章", width="large")
+def edit_article_dialog(record_id, current_content, topic, username):
+    """
+    Show a modal dialog for editing article content with synchronized scrolling preview.
+    Uses custom markdown_editor component for Markdown content.
+    """
+    st.markdown(f"**正在编辑:** {topic}")
+    
+    # 判断是否为HTML内容
+    is_html = current_content.strip().startswith('<') and current_content.strip().endswith('>')
+    
+    # 初始化 session_state 存储编辑内容
+    edit_key = f"edit_content_{record_id}"
+    if edit_key not in st.session_state:
+        st.session_state[edit_key] = current_content
+    
+    if is_html:
+        # HTML 内容使用传统编辑方式
+        st.caption("💡 HTML 内容编辑模式")
+        
+        edit_col, preview_col = st.columns(2)
+        with edit_col:
+            st.markdown("##### ✏️ 编辑区")
+            edited_content = st.text_area(
+                "HTML内容",
+                value=st.session_state[edit_key],
+                height=450,
+                key=f"_textarea_html_{record_id}",
+                label_visibility="collapsed"
+            )
+            st.session_state[edit_key] = edited_content
+        
+        with preview_col:
+            st.markdown("##### 👁️ 实时预览")
+            st.components.v1.html(edited_content, height=450, scrolling=True)
+    else:
+        # Markdown 内容使用自定义同步滚动编辑器
+        st.caption("💡 编辑区与预览区同步滚动，实时预览 Markdown 渲染效果")
+        
+        # 使用自定义组件
+        edited_content = markdown_editor(
+            content=st.session_state[edit_key],
+            key=f"md_editor_{record_id}",
+        )
+        
+        # 更新 session_state
+        if edited_content:
+            st.session_state[edit_key] = edited_content
+        else:
+            edited_content = st.session_state[edit_key]
+    
+    # 按钮区域
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("💾 保存修改", type="primary", use_container_width=True):
+            if edited_content != current_content:
+                success = update_history_record(username, record_id, edited_content)
+                if success:
+                    st.success("✅ 文章已保存！")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("❌ 保存失败，请重试")
+            else:
+                st.info("内容未修改")
+    
+    with col2:
+        # 公众号预览按钮（仅Markdown）
+        if not is_html:
+            if st.button("📱 公众号预览", use_container_width=True):
+                preview_wechat_article(edited_content)
+        else:
+            st.button("📱 公众号预览", use_container_width=True, disabled=True)
+    
+    with col3:
+        if st.button("❌ 取消", use_container_width=True):
+            st.rerun()
+
+
 @require_auth
 def main():
     # 自定义CSS样式
@@ -691,15 +771,14 @@ def main():
                 safe_url_path = f"{quote(current_user)}/{quote(html_filename)}"
                 article_url = f"{base_url}{safe_url_path}"
                 
-                # 创建四列布局，分别放置预览链接、下载按钮、截图按钮和删除按钮
+                # 创建五列布局：预览、编辑、下载、截图、删除
                 st.markdown("##### 🎯 操作选项")
-                col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+                col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 1])
                 
                 with col1:
                     # 使用Streamlit的按钮来打开预览链接
-                    # 使用原生链接按钮，避免在受限iframe中注入JS导致无效点击
                     st.link_button(
-                        label="👁️ 预览网页",
+                        label="👁️ 预览",
                         url=article_url,
                         use_container_width=True,
                         type="primary",
@@ -707,9 +786,14 @@ def main():
                     )
                 
                 with col2:
+                    # 编辑按钮
+                    if st.button("✏️ 编辑", key=f"edit_html_{record['id']}", use_container_width=True, type="secondary"):
+                        edit_article_dialog(record['id'], record["article_content"], record['topic'], current_user)
+                
+                with col3:
                     # 下载按钮
                     st.download_button(
-                        label="📥 下载网页",
+                        label="📥 下载",
                         data=record["article_content"],
                         file_name=f"{record['topic']}.html",
                         mime="text/html",
@@ -717,10 +801,10 @@ def main():
                         use_container_width=True,
                         type="secondary"
                     )
-                with col3:
+                with col4:
                     # 截图按钮 - 仅对Bento风格网页显示
                     if "Bento" in record.get('topic', '') or "网页" in record.get('topic', ''):
-                        screenshot_button = st.button("📸 截图下载", key=f"screenshot_{record['id']}", type="secondary", use_container_width=True)
+                        screenshot_button = st.button("📸 截图", key=f"screenshot_{record['id']}", type="secondary", use_container_width=True)
                         if screenshot_button:
                             try:
                                 # 显示加载状态
@@ -749,11 +833,11 @@ def main():
                                 st.error(f"生成截图时出错: {str(e)}")
                     else:
                         # 对非Bento网页显示禁用的按钮
-                        st.button("📸 截图下载", key=f"screenshot_disabled_{record['id']}", type="secondary", disabled=True, use_container_width=True)
+                        st.button("📸 截图", key=f"screenshot_disabled_{record['id']}", type="secondary", disabled=True, use_container_width=True)
                 
-                with col4:
+                with col5:
                     # 删除按钮
-                    delete_button = st.button("🗑️ 删除记录", key=f"delete_html_{record['id']}", type="secondary", use_container_width=True)
+                    delete_button = st.button("🗑️ 删除", key=f"delete_html_{record['id']}", type="secondary", use_container_width=True)
                     if delete_button:
                         from utils.history_utils import delete_history_record
                         delete_history_record(current_user, record['id'])
@@ -765,28 +849,33 @@ def main():
                 <div style="background: linear-gradient(135deg, #f093fb15 0%, #f5576c15 100%); 
                      border-left: 4px solid #f093fb; padding: 1rem; border-radius: 8px; margin: 1rem 0;">
                     <strong>📝 Markdown文章</strong><br>
-                    <span style="font-size: 0.9rem; opacity: 0.8;">查看预览或下载到本地编辑</span>
+                    <span style="font-size: 0.9rem; opacity: 0.8;">查看预览、编辑或下载到本地</span>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # 创建四列布局，分别放置Markdown预览、公众号预览、下载按钮和删除按钮
+                # 创建五列布局：Markdown预览、公众号预览、编辑、下载、删除
                 st.markdown("##### 🎯 操作选项")
-                col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+                col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 1])
                 
                 with col1:
                     # Markdown预览按钮
-                    if st.button("📄 Markdown预览", key=f"preview_md_{record['id']}", use_container_width=True, type="primary"):
+                    if st.button("📄 预览", key=f"preview_md_{record['id']}", use_container_width=True, type="primary"):
                         preview_markdown_article(content)
                 
                 with col2:
                     # 公众号预览按钮
-                    if st.button("📱 公众号预览", key=f"wechat_preview_{record['id']}", use_container_width=True, type="secondary"):
+                    if st.button("📱 公众号", key=f"wechat_preview_{record['id']}", use_container_width=True, type="secondary"):
                         preview_wechat_article(content)
 
                 with col3:
+                    # 编辑按钮
+                    if st.button("✏️ 编辑", key=f"edit_{record['id']}", use_container_width=True, type="secondary"):
+                        edit_article_dialog(record['id'], content, record['topic'], current_user)
+
+                with col4:
                     # 下载按钮
                     st.download_button(
-                        label="📥 下载" + (" (已编辑)" if has_been_edited else ""),
+                        label="📥 下载",
                         data=content,
                         file_name=f"{record['topic']}{' (已编辑)' if has_been_edited else ''}.md",
                         mime="text/markdown",
@@ -794,7 +883,7 @@ def main():
                         use_container_width=True,
                         type="secondary"
                     )
-                with col4:
+                with col5:
                     # 删除按钮
                     delete_button = st.button("🗑️ 删除", key=f"delete_md_{record['id']}", type="secondary", use_container_width=True)
                     if delete_button:

@@ -490,6 +490,21 @@ class AuthService:
             return True, "更新成功"
         else:
             return False, "更新失败"
+    
+    @staticmethod
+    def reset_password(user_id: int, new_password: str) -> Tuple[bool, str]:
+        """重置密码（无需验证旧密码）"""
+        user = User.get_user_by_id(user_id)
+        if not user:
+            return False, "用户不存在"
+        
+        # 更新密码
+        new_password_hash = hash_password(new_password)
+        if User.update_user(user_id, password_hash=new_password_hash):
+            logger.info(f"✅ 用户重置密码成功: {user['username']}")
+            return True, "密码重置成功"
+        else:
+            return False, "密码重置失败"
 
 
 # 向后兼容的函数

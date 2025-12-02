@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Callable, List, Dict
+from typing import Callable, List, Dict, Tuple
 
 from utils.ddgs_utils import search_ddgs
 
@@ -11,6 +11,62 @@ from utils.embedding_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def fetch_ddgs_images(
+    query: str,
+    max_results: int = 30,
+    log_fn: Callable[[str, str], None] | None = None,
+) -> List[Tuple[str, Dict]]:
+    """
+    仅获取 DDGS 图片 URL 和元数据，不进行 embedding。
+    用于与网页图片合并后统一批处理 embedding。
+
+    Args:
+        query: 搜索查询词
+        max_results: 最大获取图片数量
+        log_fn: 可选的日志函数
+
+    Returns:
+        List of (image_url, payload_dict) tuples
+    """
+    def _log(level: str, msg: str):
+        if log_fn:
+            log_fn(level, msg)
+        else:
+            getattr(logger, level if level in ("info", "warning", "error", "debug") else "info")(msg)
+
+    _log('info', f"开始使用DDGS进行图片搜索: query='{query}' ...")
+
+    try:
+        ddgs_results = search_ddgs(query, 'images', max_results=max_results)
+        _log('info', f"DDGS图片搜索完成，获取到 {len(ddgs_results)} 条图片结果")
+    except Exception as e:
+        _log('warning', f"DDGS图片搜索失败: {e}，将跳过图片补充")
+        return []
+
+    image_pairs: List[Tuple[str, Dict]] = []
+    for item in ddgs_results:
+        image_url = item.get('image') or item.get('thumbnail')
+        if not image_url:
+            continue
+        title = item.get('title') or ''
+        source_url = item.get('url') or item.get('source') or ''
+        payload = {
+            'image_url': image_url,
+            'title': title,
+            'source_url': source_url,
+            'provider': 'ddgs',
+        }
+        image_pairs.append((image_url, payload))
+
+    if not image_pairs:
+        if not ddgs_results:
+            _log('info', 'DDGS图片搜索无结果（可能是反爬虫限制或查询词无匹配）')
+        else:
+            _log('warning', 'DDGS返回结果但未包含有效图片URL')
+
+    return image_pairs
 
 
 def index_ddgs_images(

@@ -24,6 +24,14 @@ import threading
 import time
 from datetime import datetime
 from utils.wechat_converter import markdown_to_wechat_html
+from utils.article_queue import (
+    add_to_queue, remove_from_queue, move_task,
+    get_next_pending_task, get_running_task, start_task, complete_task,
+    get_pending_count, get_pending_tasks, get_all_tasks, clear_completed_tasks,
+    get_source_display_name, get_status_display, check_duplicate_topic,
+    QUEUE_STATUS_PENDING, QUEUE_STATUS_RUNNING, QUEUE_STATUS_COMPLETED, QUEUE_STATUS_ERROR,
+    SOURCE_MANUAL
+)
 # 仅在utils中使用DDGS/requests/base64，这里不直接依赖
 
 # 辅助函数：清理大模型输出中的 thinking 标签
@@ -63,6 +71,166 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
+
+
+def render_queue_tab():
+    """渲染任务队列标签页"""
+    st.markdown("### 📋 文章撰写队列")
+    st.caption("在此查看和管理待撰写的文章任务。其他页面（推文主题、全网热点等）点击「撰写文章」后，任务会加入此队列。")
+    
+    all_tasks = get_all_tasks()
+    pending_tasks = [t for t in all_tasks if t['status'] == QUEUE_STATUS_PENDING]
+    running_task = get_running_task()
+    completed_tasks = [t for t in all_tasks if t['status'] in (QUEUE_STATUS_COMPLETED, QUEUE_STATUS_ERROR)]
+    
+    # 同时检查 session_state 中的任务状态，因为当前执行的任务可能在 session_state 中
+    task_state = st.session_state.get('article_task', {})
+    is_session_running = task_state.get('status') == 'running'
+    
+    # 计算实际执行中的任务数
+    running_count = 1 if (running_task or is_session_running) else 0
+    
+    # 队列状态概览
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("等待中", len(pending_tasks))
+    with col2:
+        st.metric("执行中", running_count)
+    with col3:
+        st.metric("已完成", len(completed_tasks))
+    
+    st.divider()
+    
+    # 正在执行的任务
+    if running_task or is_session_running:
+        st.markdown("#### 🔄 正在执行")
+        with st.container(border=True):
+            if running_task:
+                st.markdown(f"**{running_task['topic'][:50]}{'...' if len(running_task['topic']) > 50 else ''}**")
+                st.caption(f"来源: {get_source_display_name(running_task['source'])} | 开始时间: {running_task.get('started_at', 'N/A')[:19] if running_task.get('started_at') else 'N/A'}")
+            elif is_session_running:
+                # 从 session_state 获取当前任务信息
+                current_topic = task_state.get('topic', st.session_state.get('_article_topic_value', '当前任务'))
+                progress_text = task_state.get('progress_text', '执行中...')
+                st.markdown(f"**{current_topic[:50]}{'...' if len(current_topic) > 50 else ''}**")
+                st.caption(f"状态: {progress_text}")
+    
+    # 等待中的任务
+    st.markdown("#### ⏳ 等待队列")
+    if pending_tasks:
+        for idx, task in enumerate(pending_tasks):
+            with st.container(border=True):
+                col_info, col_actions = st.columns([3, 1])
+                
+                with col_info:
+                    st.markdown(f"**{idx + 1}. {task['topic'][:60]}{'...' if len(task['topic']) > 60 else ''}**")
+                    source_name = get_source_display_name(task['source'])
+                    created_time = task.get('created_at', '')[:16] if task.get('created_at') else 'N/A'
+                    st.caption(f"来源: {source_name} | 创建时间: {created_time}")
+                    
+                    # 显示自定义风格（如果有）
+                    if task.get('custom_style'):
+                        st.caption(f"风格: {task['custom_style'][:50]}...")
+                
+                with col_actions:
+                    # 操作按钮
+                    btn_col1, btn_col2, btn_col3 = st.columns(3)
+                    
+                    with btn_col1:
+                        if idx > 0:  # 不是第一个才能上移
+                            if st.button("⬆️", key=f"up_{task['id']}", help="上移"):
+                                move_task(task['id'], 'up')
+                                st.rerun()
+                    
+                    with btn_col2:
+                        if idx < len(pending_tasks) - 1:  # 不是最后一个才能下移
+                            if st.button("⬇️", key=f"down_{task['id']}", help="下移"):
+                                move_task(task['id'], 'down')
+                                st.rerun()
+                    
+                    with btn_col3:
+                        if st.button("🗑️", key=f"del_{task['id']}", help="删除"):
+                            remove_from_queue(task['id'])
+                            st.rerun()
+    else:
+        st.info("暂无等待中的任务。您可以从推文主题、全网热点等页面添加文章到队列。")
+    
+    # 已完成的任务（可折叠）
+    if completed_tasks:
+        with st.expander(f"📜 已完成/失败的任务 ({len(completed_tasks)})", expanded=False):
+            for task in completed_tasks:
+                status_text, status_color = get_status_display(task['status'])
+                st.markdown(f":{status_color}[{status_text}] **{task['topic'][:50]}...**")
+                if task.get('error_message'):
+                    st.caption(f"错误: {task['error_message'][:100]}")
+            
+            if st.button("🧹 清除已完成任务", key="clear_completed"):
+                cleared = clear_completed_tasks()
+                st.success(f"已清除 {cleared} 个任务")
+                st.rerun()
+
+
+def _auto_start_next_task(task_state, log_func, username: str):
+    """
+    自动启动队列中的下一个任务（在后台线程中调用）
+    
+    Args:
+        task_state: 任务状态字典
+        log_func: 日志函数
+        username: 用户名
+    """
+    next_task = get_next_pending_task()
+    if not next_task:
+        log_func('info', "队列中没有更多待执行任务")
+        return
+    
+    log_func('info', f"自动启动下一个任务: {next_task['topic'][:30]}...")
+    
+    # 标记任务开始执行
+    start_task(next_task['id'])
+    
+    # 重置任务状态
+    task_state['status'] = 'running'
+    task_state['progress'] = 0
+    task_state['progress_text'] = '准备开始...'
+    task_state['result'] = ''
+    task_state['error_message'] = ''
+    task_state['log'] = [f"自动启动任务: {next_task['topic'][:30]}..."]
+    task_state['search_result'] = []
+    task_state['outline'] = {}
+    task_state['live_article'] = ''
+    task_state['queue_task_id'] = next_task['id']
+    
+    # 从队列任务获取参数
+    queue_topic = next_task['topic']
+    queue_custom_style = next_task.get('custom_style', '')
+    queue_extra_urls = next_task.get('extra_urls', [])
+    
+    # 获取模型设置
+    from utils.config_manager import get_config
+    config = get_config()
+    global_settings = config.get('global_model_settings', {})
+    if not global_settings:
+        default_provider = list(LLM_MODEL.keys())[0]
+        default_model = LLM_MODEL[default_provider]['model'][0] if isinstance(LLM_MODEL[default_provider]['model'], list) else LLM_MODEL[default_provider]['model']
+        model_type = default_provider
+        model_name = default_model
+    else:
+        model_type = global_settings.get('provider')
+        model_name = global_settings.get('model_name')
+    
+    # 创建并启动新的后台线程
+    thread = threading.Thread(
+        target=generate_article_background,
+        name="generate_article_background",
+        args=(
+            task_state, queue_topic, model_type, model_name, 
+            DEFAULT_SPIDER_NUM, queue_custom_style, DEFAULT_ENABLE_IMAGES, 
+            queue_topic, username, queue_extra_urls
+        )
+    )
+    thread.start()
+    log_func('info', f"后台线程已启动: {next_task['id']}")
 
 
 def generate_article_background(task_state, text_input, model_type, model_name, spider_num, custom_style, enable_images, article_title, username: str, extra_urls: list = None):
@@ -478,6 +646,16 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
 
         task_state['result'] = article_chapters
         task_state['status'] = 'completed'
+        
+        # 更新队列中任务的状态为已完成（现在可以在后台线程中调用，因为使用全局变量）
+        queue_task_id = task_state.get('queue_task_id')
+        if queue_task_id:
+            complete_task(queue_task_id, success=True)
+            log('info', f"队列任务已完成: {queue_task_id}")
+            task_state['queue_task_id'] = None
+            
+            # 检查是否有下一个待执行任务，自动启动
+            _auto_start_next_task(task_state, log, username)
 
     except BaseException as e:
         import traceback
@@ -492,6 +670,16 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
         task_state['error_message'] = str(e)
         log('error', error_message)
         log('error', full_traceback) # Make traceback visible in UI
+        
+        # 更新队列中任务的状态为失败
+        queue_task_id = task_state.get('queue_task_id')
+        if queue_task_id:
+            complete_task(queue_task_id, success=False, error_message=str(e))
+            log('error', f"队列任务失败: {queue_task_id}")
+            task_state['queue_task_id'] = None
+            
+            # 即使失败也尝试启动下一个任务
+            _auto_start_next_task(task_state, log, username)
 
 @require_auth
 def main():
@@ -523,15 +711,27 @@ def main():
         }
     
     task_state = st.session_state.article_task
+    
+    # 注意：队列状态更新和自动启动下一个任务现在由后台线程处理
+    # 这里只需要同步 session_state 和全局队列的状态
 
     with st.sidebar:
         st.title("超级写手配置项：")
+        
+        # 显示任务状态
+        pending_count = get_pending_count()
+        if task_state['status'] == 'running':
+            st.success(f"🔄 任务执行中 | 队列等待: {pending_count}")
+        elif pending_count > 0:
+            st.info(f"📋 队列中有 {pending_count} 个待执行任务")
+        else:
+            st.caption("💤 当前空闲，可立即执行任务")
 
         # 显示当前使用的全局模型 - 从配置管理器获取
         config = get_config()
         global_settings = config.get('global_model_settings', {})
         if global_settings:
-            st.info(f"当前模型: **{global_settings.get('provider')}/{global_settings.get('model_name')}**")
+            st.caption(f"模型: {global_settings.get('provider')}/{global_settings.get('model_name')}")
         else:
             st.warning("尚未配置全局模型，请前往'系统设置'页面配置。")
 
@@ -541,8 +741,7 @@ def main():
         enable_extra_urls = st.checkbox(
             "添加抓取额外网页链接",
             value=False,
-            help="启用后，可以手动添加需要爬取内容的网页URL，这些内容将合并到搜索结果中",
-            disabled=(task_state['status'] == 'running')
+            help="启用后，可以手动添加需要爬取内容的网页URL，这些内容将合并到搜索结果中"
         )
         
         extra_urls_text = ""
@@ -552,347 +751,447 @@ def main():
                 help='每行输入一个URL，这些网页的内容将被抓取并合并到搜索结果中',
                 placeholder='https://example.com/article1\nhttps://example.com/article2',
                 height=150,
-                key='extra_urls_input',
-                disabled=(task_state['status'] == 'running')
+                key='extra_urls_input'
             )
             if extra_urls_text:
                 # 统计有效的URL数量
                 valid_urls = [url.strip() for url in extra_urls_text.strip().split('\n') if url.strip() and url.strip().startswith('http')]
                 st.caption(f"已输入 {len(valid_urls)} 个有效URL")
 
+        # 检查是否有从其他页面传来的预填数据
+        if 'article_topic_prefill' in st.session_state:
+            prefill_topic = st.session_state.pop('article_topic_prefill')
+            st.session_state['_article_topic_value'] = prefill_topic
+        if 'custom_style_prefill' in st.session_state:
+            prefill_style = st.session_state.pop('custom_style_prefill')
+            st.session_state['_custom_style_value'] = prefill_style
+        
+        # 获取当前值（优先使用预填值，否则使用之前保存的值）
+        current_topic = st.session_state.get('_article_topic_value', '')
+        current_style = st.session_state.get('_custom_style_value', '')
+        
+        # 根据任务状态显示不同的按钮文案
+        is_running = task_state['status'] == 'running'
+        button_label = '📋 加入队列' if is_running else '🚀 执行'
+        button_help = '当前有任务执行中，新任务将加入队列等待执行' if is_running else '立即开始执行文章生成任务'
+        
         with st.form(key='my_form'):
             text_input = st.text_input(
                 label='请填写文章的主题', 
                 help='文章将全部围绕该主题撰写，主题越细，文章也越详细',
-                value='',
-                key='article_topic',
-                disabled=(task_state['status'] == 'running')
+                value=current_topic
             )
             custom_style = st.text_area(
                 label='自定义书写风格和要求',
                 help='在此输入特定的写作风格和要求...',
                 placeholder='例如：请以幽默风趣的口吻撰写...',
-                height=100,
-                key='custom_style',
-                disabled=(task_state['status'] == 'running')
+                value=current_style,
+                height=100
             )
-            submit_button = st.form_submit_button(label='执行', disabled=(task_state['status'] == 'running'))
+            submit_button = st.form_submit_button(label=button_label, help=button_help)
+        
+        # 保存用户输入的值（用于下次渲染）
+        if text_input:
+            st.session_state['_article_topic_value'] = text_input
+        if custom_style:
+            st.session_state['_custom_style_value'] = custom_style
 
     st.caption('SuperWriter by WuXiaokun.')
     st.subheader("超级写手🤖", divider='rainbow')
-
-    # 主页面UI逻辑
+    
+    # ==================== 处理表单提交 ====================
+    # 注意：这段代码必须在 tab 外部，否则表单提交不会被正确处理
     if submit_button and text_input:
-        # 重置状态并开始新任务
-        st.session_state.article_task = {
-            "status": "running", "progress": 0, "progress_text": "准备开始...",
-            "result": "", "error_message": "", "log": ["任务已启动..."],
-            "search_result": [], "outline": {}, "live_article": ""
-        }
-        
-        # 从UI收集所有需要的参数
-        article_title = text_input # 使用主题作为标题
-        enable_images = DEFAULT_ENABLE_IMAGES
-        spider_num = DEFAULT_SPIDER_NUM
-
-        # 在主线程中获取当前用户，作为子线程的只读上下文数据
-        current_user = get_current_user()
-        username = current_user if current_user else "anonymous"
-
-        # 获取全局模型设置 - 从配置管理器获取
-        config = get_config()
-        global_settings = config.get('global_model_settings', {})
-        # 如果全局设置为空，则使用第一个可用的模型作为后备
-        if not global_settings:
-            default_provider = list(LLM_MODEL.keys())[0]
-            default_model = LLM_MODEL[default_provider]['model'][0] if isinstance(LLM_MODEL[default_provider]['model'], list) else LLM_MODEL[default_provider]['model']
-            model_type = default_provider
-            model_name = default_model
+        # 先检查是否有重复任务
+        duplicate_task = check_duplicate_topic(text_input)
+        if duplicate_task:
+            # 显示重复提示
+            st.warning(f"⚠️ 该主题已在队列中：「{duplicate_task['topic'][:30]}...」\n\n状态：{get_status_display(duplicate_task['status'])}")
+            st.info("如需重新撰写，请先从队列中删除已有任务，或修改主题后重新提交。")
         else:
-            model_type = global_settings.get('provider')
-            model_name = global_settings.get('model_name')
-
-        # 解析额外的URL（如果有）
-        extra_urls = []
-        if 'extra_urls_input' in st.session_state and st.session_state.extra_urls_input:
-            extra_urls_text = st.session_state.extra_urls_input.strip()
-            if extra_urls_text:
-                # 按行分割并过滤有效的URL
-                extra_urls = [url.strip() for url in extra_urls_text.split('\n') 
-                             if url.strip() and url.strip().startswith('http')]
-                logger.info(f"用户添加了 {len(extra_urls)} 个额外URL: {extra_urls}")
-        
-        # 创建并启动后台线程（不传递 Streamlit 上下文，仅传递必要数据）
-        thread = threading.Thread(
-            target=generate_article_background,
-            name="generate_article_background", # 为线程命名
-            args=(
-                st.session_state.article_task, text_input, model_type, model_name, 
-                spider_num, custom_style, enable_images, article_title, username, extra_urls
+            # 解析额外的URL（如果有）
+            extra_urls = []
+            if 'extra_urls_input' in st.session_state and st.session_state.extra_urls_input:
+                extra_urls_text = st.session_state.extra_urls_input.strip()
+                if extra_urls_text:
+                    extra_urls = [url.strip() for url in extra_urls_text.split('\n') 
+                                 if url.strip() and url.strip().startswith('http')]
+            
+            # 添加任务到队列（插入最前面，优先执行）
+            new_task = add_to_queue(
+                topic=text_input,
+                source=SOURCE_MANUAL,
+                custom_style=custom_style,
+                extra_urls=extra_urls if extra_urls else None,
+                insert_first=True
             )
-        )
-        thread.start()
-        st.rerun()
+            
+            # 清除输入框的值
+            st.session_state['_article_topic_value'] = ''
+            st.session_state['_custom_style_value'] = ''
+            
+            # 如果当前空闲或已完成，立即开始执行新任务
+            if task_state['status'] in ('idle', 'completed', 'error') and new_task:
+                # 标记任务开始执行
+                start_task(new_task['id'])
+                
+                # 重置状态并开始新任务
+                st.session_state.article_task = {
+                    "status": "running", "progress": 0, "progress_text": "准备开始...",
+                    "result": "", "error_message": "", "log": ["任务已启动..."],
+                    "search_result": [], "outline": {}, "live_article": "",
+                    "queue_task_id": new_task['id']
+                }
+                
+                # 获取用户和模型设置
+                current_user = get_current_user()
+                username = current_user if current_user else "anonymous"
 
-    # 根据任务状态显示UI
-    status = task_state['status']
+                config = get_config()
+                global_settings = config.get('global_model_settings', {})
+                if not global_settings:
+                    default_provider = list(LLM_MODEL.keys())[0]
+                    default_model = LLM_MODEL[default_provider]['model'][0] if isinstance(LLM_MODEL[default_provider]['model'], list) else LLM_MODEL[default_provider]['model']
+                    model_type = default_provider
+                    model_name = default_model
+                else:
+                    model_type = global_settings.get('provider')
+                    model_name = global_settings.get('model_name')
+                
+                # 创建并启动后台线程
+                thread = threading.Thread(
+                    target=generate_article_background,
+                    name="generate_article_background",
+                    args=(
+                        st.session_state.article_task, text_input, model_type, model_name, 
+                        DEFAULT_SPIDER_NUM, custom_style, DEFAULT_ENABLE_IMAGES, 
+                        text_input, username, extra_urls
+                    )
+                )
+                thread.start()
+                st.rerun()
+            elif new_task:
+                # 当前有任务在执行，显示已加入队列的提示
+                st.toast(f"✅ 已加入撰写队列，当前任务完成后将自动执行", icon="📋")
+                st.rerun()
+    
+    # ==================== 自动执行队列任务 ====================
+    # 如果当前空闲/已完成/出错且队列中有待执行任务，自动开始执行
+    if task_state['status'] in ('idle', 'completed', 'error'):
+        next_task = get_next_pending_task()
+        if next_task:
+            # 标记任务开始执行
+            start_task(next_task['id'])
+            
+            # 重置状态并开始新任务
+            st.session_state.article_task = {
+                "status": "running", "progress": 0, "progress_text": "准备开始...",
+                "result": "", "error_message": "", "log": [f"从队列启动任务: {next_task['topic'][:30]}..."],
+                "search_result": [], "outline": {}, "live_article": "",
+                "queue_task_id": next_task['id']  # 记录队列任务ID
+            }
+            
+            # 从队列任务获取参数
+            queue_topic = next_task['topic']
+            queue_custom_style = next_task.get('custom_style', '')
+            queue_extra_urls = next_task.get('extra_urls', [])
+            
+            # 获取用户和模型设置
+            current_user = get_current_user()
+            username = current_user if current_user else "anonymous"
+            
+            config = get_config()
+            global_settings = config.get('global_model_settings', {})
+            if not global_settings:
+                default_provider = list(LLM_MODEL.keys())[0]
+                default_model = LLM_MODEL[default_provider]['model'][0] if isinstance(LLM_MODEL[default_provider]['model'], list) else LLM_MODEL[default_provider]['model']
+                model_type = default_provider
+                model_name = default_model
+            else:
+                model_type = global_settings.get('provider')
+                model_name = global_settings.get('model_name')
+            
+            # 创建并启动后台线程
+            thread = threading.Thread(
+                target=generate_article_background,
+                name="generate_article_background",
+                args=(
+                    st.session_state.article_task, queue_topic, model_type, model_name, 
+                    DEFAULT_SPIDER_NUM, queue_custom_style, DEFAULT_ENABLE_IMAGES, 
+                    queue_topic, username, queue_extra_urls
+                )
+            )
+            thread.start()
+            st.rerun()
+    
+    # 创建标签页：当前任务 / 任务队列
+    tab_current, tab_queue = st.tabs(["📝 当前任务", f"📋 任务队列 ({get_pending_count()})"])
+    
+    # ==================== 任务队列标签页 ====================
+    with tab_queue:
+        render_queue_tab()
+    
+    # ==================== 当前任务标签页 ====================
+    with tab_current:
+        # 根据任务状态显示UI
+        status = task_state['status']
 
-    # --- UI for Running Task ---
-    if status == 'running':
-        st.info("任务正在后台执行中... 您可以切换到其他页面，任务不会中断。")
-        st.progress(task_state['progress'], text=task_state['progress_text'])
-        
-        # 确保faiss_index和enable_images变量可用
-        enable_images = DEFAULT_ENABLE_IMAGES
-        faiss_index = None
-        
-        # 尝试从任务状态获取当前用户和文章ID
-        current_user = get_current_user()
-        username = current_user if current_user else "anonymous"
-        
-        # 从日志中尝试提取文章ID
-        article_id = None
-        for log_line in task_state.get('log', []):
-            if "FAISS索引加载成功" in log_line and "/article_" in log_line:
-                match = re.search(r"\(([^/]+)/(article_[^\)]+)\)", log_line)
-                if match and match.group(2):
-                    article_id = match.group(2)
-                    break
-        
-        # 加载FAISS索引
-        if enable_images and username and article_id:
-            try:
-                from utils.embedding_utils import create_faiss_index
-                faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss', username=username, article_id=article_id)
-            except Exception as e:
-                logger.error(f"无法加载FAISS索引用于图片显示: {e}")
-        
-        # 创建四列布局，用于放置按钮
-        col1, col2, col3, col4 = st.columns(4)
+        # --- UI for Running Task ---
+        if status == 'running':
+            st.info("任务正在后台执行中... 您可以切换到其他页面，任务不会中断。")
+            st.progress(task_state['progress'], text=task_state['progress_text'])
+            
+            # 确保faiss_index和enable_images变量可用
+            enable_images = DEFAULT_ENABLE_IMAGES
+            faiss_index = None
+            
+            # 尝试从任务状态获取当前用户和文章ID
+            current_user = get_current_user()
+            username = current_user if current_user else "anonymous"
+            
+            # 从日志中尝试提取文章ID
+            article_id = None
+            for log_line in task_state.get('log', []):
+                if "FAISS索引加载成功" in log_line and "/article_" in log_line:
+                    match = re.search(r"\(([^/]+)/(article_[^\)]+)\)", log_line)
+                    if match and match.group(2):
+                        article_id = match.group(2)
+                        break
+            
+            # 加载FAISS索引
+            if enable_images and username and article_id:
+                try:
+                    from utils.embedding_utils import create_faiss_index
+                    faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss', username=username, article_id=article_id)
+                except Exception as e:
+                    logger.error(f"无法加载FAISS索引用于图片显示: {e}")
+            
+            # 创建四列布局，用于放置按钮
+            col1, col2, col3, col4 = st.columns(4)
 
-        with col1:
-            # 将日志显示也改为Popover，保持UI一致性
-            with st.popover("查看实时日志"):
+            with col1:
+                # 将日志显示也改为Popover，保持UI一致性
+                with st.popover("查看实时日志"):
+                    log_html = ""
+                    for line in task_state['log']:
+                        color = "#FFFFFF" # 默认白色
+                        if "[ERROR]" in line:
+                            color = "#FF4B4B" # 红色
+                        elif "[WARN]" in line:
+                            color = "#FFA500" # 橙色
+                        elif "[INFO]" in line:
+                            color = "#26C485" # 绿色
+                        log_html += f'<div style="color: {color}; font-family: monospace; font-size: 13px;">{line}</div>'
+                    
+                    components.html(f'''
+                        <div style="height: 300px; overflow-y: scroll; background-color: #1E1E1E; border: 1px solid #444; padding: 10px; border-radius: 5px;">
+                            {log_html}
+                        </div>
+                    ''', height=320)
+
+            with col2:
+                if task_state['search_result']:
+                    with st.popover("查看抓取结果"):
+                        for item in task_state['search_result']:
+                            st.markdown(f"- **{item.get('title', 'N/A')}**\n  <small>[{item.get('url', 'N/A')}]</small>", unsafe_allow_html=True)
+
+            with col3:
+                if task_state['outline']:
+                    with st.popover("查看生成的大纲"):
+                        st.json(task_state['outline'])
+            
+            with col4:
+                # 显示FAISS索引中的图片
+                if enable_images and faiss_index and faiss_index.get_size() > 0:
+                    with st.popover("查看抓取的图片"):
+                        # 从FAISS索引中提取图片数据
+                        all_data = faiss_index.get_all_data()
+                        image_data = [data for data in all_data if isinstance(data, dict) and 'image_url' in data]
+                        
+                        if image_data:
+                            st.write(f"共找到 {len(image_data)} 张图片：")
+                            
+                            # 创建三列网格布局显示图片
+                            img_cols = st.columns(3)
+                            
+                            for i, data in enumerate(image_data):
+                                # 轮流使用三列中的一列
+                                with img_cols[i % 3]:
+                                    image_url = data.get('image_url')
+                                    # 显示图片标题和缩略图
+                                    if image_url:
+                                        image_title = data.get('title', '未命名图片')
+                                        st.image(image_url, caption=f"{i+1}. {image_title[:20]}...", use_column_width=True)
+                        else:
+                            st.info("暂无图片数据")
+
+            # 实时文章预览
+            if task_state.get('live_article'):
+                with st.expander("实时文章预览", expanded=True):
+                    st.markdown(task_state['live_article'])
+            
+            # ** 使用服务器端主动刷新机制 **
+            time.sleep(3)
+            st.rerun()
+            
+            # 自动刷新
+            components.html("<meta http-equiv='refresh' content='3'>", height=0)
+
+        # --- UI for Completed Task ---
+        elif status == 'completed':
+            st.success("文章生成完成！您可以预览、编辑并下载文章。")
+            st.balloons()
+
+            # 初始化编辑模式的session_state
+            if 'edit_mode' not in st.session_state:
+                st.session_state.edit_mode = False
+
+            # 将生成的章节合并为单篇完整文章，并存入session_state
+            # 这样可以确保即使用户刷新页面，编辑的内容也不会丢失
+            if 'edited_full_article' not in st.session_state:
+                full_article_text = '\n\n---\n\n'.join(task_state['result'])
+                st.session_state.edited_full_article = full_article_text
+
+            # "编辑/预览"切换
+            mode = st.segmented_control(
+                "模式选择",
+                ["预览模式", "编辑模式", "公众号预览"],
+                default="编辑模式" if st.session_state.edit_mode else "预览模式",
+                selection_mode="single",
+                label_visibility="collapsed"
+            )
+            st.session_state.edit_mode = (mode == "编辑模式")
+
+            # 根据模式显示不同UI
+            if mode == "公众号预览":
+                st.markdown("### 📱 公众号样式预览")
+                st.info("请直接全选下方内容并复制，然后粘贴到微信公众号编辑器中。")
+                
+                # 转换为公众号HTML
+                wechat_html = markdown_to_wechat_html(st.session_state.edited_full_article)
+                
+                # 在一个白色背景的容器中显示预览，模拟公众号环境
+                st.markdown(
+                    f"""
+                    <div style="background-color: white; padding: 20px; border-radius: 5px; border: 1px solid #ddd; max-width: 677px; margin: 0 auto;">
+                        {wechat_html}
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
+                )
+                
+            elif st.session_state.edit_mode:
+                # --- 编辑模式：双栏布局 ---
+                st.info("您已进入编辑模式。左右两栏均为独立滚动区域，方便长文对照编辑。")
+                
+                # 注入CSS，使两栏高度固定且可滚动
+                st.markdown("""
+                <style>
+                /* 定位到Streamlit生成的水平块的直接子元素，即我们的列 */
+                div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(1),
+                div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(2) {
+                    height: 70vh; /* 设置一个固定的视窗高度 */
+                    overflow-y: auto; /* 当内容超出时，显示垂直滚动条 */
+                    border: 1px solid #444; /* 添加边框以区分 */
+                    padding: 15px; /* 增加内边距 */
+                    border-radius: 8px; /* 圆角 */
+                }
+                </style>
+                """, unsafe_allow_html=True)
+
+                edit_col, preview_col = st.columns(2)
+
+                with edit_col:
+                    st.markdown("#### 📝 编辑区")
+                    # 创建一个大的文本框用于编辑全文
+                    edited_text = st.text_area(
+                        label="全文内容",
+                        value=st.session_state.edited_full_article,
+                        height=600, # 这个高度现在会被CSS覆盖，但保留也无妨
+                        key="full_article_editor",
+                        label_visibility="collapsed"
+                    )
+                    # 实时更新session_state中的内容
+                    st.session_state.edited_full_article = edited_text
+                
+                with preview_col:
+                    st.markdown("#### 👁️ 实时预览")
+                    # 实时渲染编辑区的内容
+                    st.markdown(st.session_state.edited_full_article, unsafe_allow_html=True)
+            
+            else:
+                # --- 预览模式：单栏显示完整文章 ---
+                st.markdown("### 📄 文章预览")
+                # 显示当前已编辑的最新版本
+                st.markdown(st.session_state.edited_full_article, unsafe_allow_html=True)
+
+            # 下载按钮（始终可见）
+            st.download_button(
+                label="📥 下载最终文章",
+                data=st.session_state.edited_full_article, # 直接使用session_state中的最新内容
+                file_name=f"{task_state.get('outline', {}).get('title', 'untitled')}_final.md",
+                mime="text/markdown",
+                key="download_final_article"
+            )
+
+            # 添加保存编辑按钮
+            if st.button("💾 保存编辑", key="save_edited_article"):
+                try:
+                    # 获取当前用户
+                    current_user = get_current_user()
+                    if current_user:
+                        # 获取原始记录信息
+                        from utils.history_utils import load_user_history, save_user_history
+                        history = load_user_history(current_user)
+                        
+                        # 查找最新的记录（应该是刚刚生成的文章）
+                        latest_record = None
+                        for record in reversed(history):
+                            if record.get('topic') == task_state.get('outline', {}).get('title'):
+                                latest_record = record
+                                break
+                        
+                        if latest_record:
+                            # 更新文章内容
+                            latest_record['article_content'] = st.session_state.edited_full_article
+                            # 添加编辑时间戳
+                            latest_record['edited_at'] = datetime.now().isoformat()
+                            # 保存更新后的历史记录
+                            save_user_history(current_user, history)
+                            st.success("✅ 编辑已保存到数据库！")
+                        else:
+                            st.error("❌ 无法找到原始文章记录，请尝试重新生成文章。")
+                    else:
+                        st.error("❌ 无法获取当前用户信息，请重新登录。")
+                except Exception as e:
+                    st.error(f"❌ 保存编辑时出错: {str(e)}")
+
+        # --- UI for Error ---
+        elif status == 'error':
+            st.error(f"任务执行失败: {task_state['error_message']}")
+            with st.expander("查看错误日志", expanded=True):
                 log_html = ""
                 for line in task_state['log']:
-                    color = "#FFFFFF" # 默认白色
-                    if "[ERROR]" in line:
-                        color = "#FF4B4B" # 红色
-                    elif "[WARN]" in line:
-                        color = "#FFA500" # 橙色
-                    elif "[INFO]" in line:
-                        color = "#26C485" # 绿色
-                    log_html += f'<div style="color: {color}; font-family: monospace; font-size: 13px;">{line}</div>'
+                    color = "#FFFFFF"
+                    if "[ERROR]" in line or "Traceback" in line:
+                        color = "#FF4B4B"
+                    # 先处理换行符替换，再放入 f-string
+                    formatted_line = line.replace("\n", "<br>")
+                    log_html += f'<div style="color: {color}; font-family: monospace; font-size: 13px;">{formatted_line}</div>'
+                components.html(f'''<div style="height: 400px; overflow-y: scroll; background-color: #1E1E1E; border: 1px solid #444; padding: 10px; border-radius: 5px;">{log_html}</div>''', height=420)
+
+        # --- UI for Idle State ---
+        else: # idle
+            st.caption("""
+                **简介：** 这是一个结合了LLM、搜索引擎和网络爬虫的自动化文章写作机器人。您只需在左侧输入文章主题，它就能自动完成资料搜集、生成大纲、并撰写完整的文章。
                 
-                components.html(f'''
-                    <div style="height: 300px; overflow-y: scroll; background-color: #1E1E1E; border: 1px solid #444; padding: 10px; border-radius: 5px;">
-                        {log_html}
-                    </div>
-                ''', height=320)
-
-        with col2:
-            if task_state['search_result']:
-                with st.popover("查看抓取结果"):
-                    for item in task_state['search_result']:
-                        st.markdown(f"- **{item.get('title', 'N/A')}**\n  <small>[{item.get('url', 'N/A')}]</small>", unsafe_allow_html=True)
-
-        with col3:
-            if task_state['outline']:
-                with st.popover("查看生成的大纲"):
-                    st.json(task_state['outline'])
-        
-        with col4:
-            # 显示FAISS索引中的图片
-            if enable_images and faiss_index and faiss_index.get_size() > 0:
-                with st.popover("查看抓取的图片"):
-                    # 从FAISS索引中提取图片数据
-                    all_data = faiss_index.get_all_data()
-                    image_data = [data for data in all_data if isinstance(data, dict) and 'image_url' in data]
-                    
-                    if image_data:
-                        st.write(f"共找到 {len(image_data)} 张图片：")
-                        
-                        # 创建三列网格布局显示图片
-                        img_cols = st.columns(3)
-                        
-                        for i, data in enumerate(image_data):
-                            # 轮流使用三列中的一列
-                            with img_cols[i % 3]:
-                                image_url = data.get('image_url')
-                                # 显示图片标题和缩略图
-                                if image_url:
-                                    image_title = data.get('title', '未命名图片')
-                                    st.image(image_url, caption=f"{i+1}. {image_title[:20]}...", use_column_width=True)
-                    else:
-                        st.info("暂无图片数据")
-
-        # 实时文章预览
-        if task_state.get('live_article'):
-            with st.expander("实时文章预览", expanded=True):
-                st.markdown(task_state['live_article'])
-        
-        # ** 使用服务器端主动刷新机制 **
-        time.sleep(3)
-        st.rerun()
-        
-        # 自动刷新
-        components.html("<meta http-equiv='refresh' content='3'>", height=0)
-
-    # --- UI for Completed Task ---
-    elif status == 'completed':
-        st.success("文章生成完成！您可以预览、编辑并下载文章。")
-        st.balloons()
-
-        # 初始化编辑模式的session_state
-        if 'edit_mode' not in st.session_state:
-            st.session_state.edit_mode = False
-
-        # 将生成的章节合并为单篇完整文章，并存入session_state
-        # 这样可以确保即使用户刷新页面，编辑的内容也不会丢失
-        if 'edited_full_article' not in st.session_state:
-            full_article_text = '\n\n---\n\n'.join(task_state['result'])
-            st.session_state.edited_full_article = full_article_text
-
-        # “编辑/预览”切换
-        mode = st.segmented_control(
-            "模式选择",
-            ["预览模式", "编辑模式", "公众号预览"],
-            default="编辑模式" if st.session_state.edit_mode else "预览模式",
-            selection_mode="single",
-            label_visibility="collapsed"
-        )
-        st.session_state.edit_mode = (mode == "编辑模式")
-
-        # 根据模式显示不同UI
-        if mode == "公众号预览":
-            st.markdown("### 📱 公众号样式预览")
-            st.info("请直接全选下方内容并复制，然后粘贴到微信公众号编辑器中。")
-            
-            # 转换为公众号HTML
-            wechat_html = markdown_to_wechat_html(st.session_state.edited_full_article)
-            
-            # 在一个白色背景的容器中显示预览，模拟公众号环境
-            st.markdown(
-                f"""
-                <div style="background-color: white; padding: 20px; border-radius: 5px; border: 1px solid #ddd; max-width: 677px; margin: 0 auto;">
-                    {wechat_html}
-                </div>
-                """, 
-                unsafe_allow_html=True
-            )
-            
-        elif st.session_state.edit_mode:
-            # --- 编辑模式：双栏布局 ---
-            st.info("您已进入编辑模式。左右两栏均为独立滚动区域，方便长文对照编辑。")
-            
-            # 注入CSS，使两栏高度固定且可滚动
-            st.markdown("""
-            <style>
-            /* 定位到Streamlit生成的水平块的直接子元素，即我们的列 */
-            div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(1),
-            div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlock"]:nth-child(2) {
-                height: 70vh; /* 设置一个固定的视窗高度 */
-                overflow-y: auto; /* 当内容超出时，显示垂直滚动条 */
-                border: 1px solid #444; /* 添加边框以区分 */
-                padding: 15px; /* 增加内边距 */
-                border-radius: 8px; /* 圆角 */
-            }
-            </style>
-            """, unsafe_allow_html=True)
-
-            edit_col, preview_col = st.columns(2)
-
-            with edit_col:
-                st.markdown("#### 📝 编辑区")
-                # 创建一个大的文本框用于编辑全文
-                edited_text = st.text_area(
-                    label="全文内容",
-                    value=st.session_state.edited_full_article,
-                    height=600, # 这个高度现在会被CSS覆盖，但保留也无妨
-                    key="full_article_editor",
-                    label_visibility="collapsed"
-                )
-                # 实时更新session_state中的内容
-                st.session_state.edited_full_article = edited_text
-            
-            with preview_col:
-                st.markdown("#### 👁️ 实时预览")
-                # 实时渲染编辑区的内容
-                st.markdown(st.session_state.edited_full_article, unsafe_allow_html=True)
-        
-        else:
-            # --- 预览模式：单栏显示完整文章 ---
-            st.markdown("### 📄 文章预览")
-            # 显示当前已编辑的最新版本
-            st.markdown(st.session_state.edited_full_article, unsafe_allow_html=True)
-
-        # 下载按钮（始终可见）
-        st.download_button(
-            label="📥 下载最终文章",
-            data=st.session_state.edited_full_article, # 直接使用session_state中的最新内容
-            file_name=f"{task_state.get('outline', {}).get('title', 'untitled')}_final.md",
-            mime="text/markdown",
-            key="download_final_article"
-        )
-
-        # 添加保存编辑按钮
-        if st.button("💾 保存编辑", key="save_edited_article"):
-            try:
-                # 获取当前用户
-                current_user = get_current_user()
-                if current_user:
-                    # 获取原始记录信息
-                    from utils.history_utils import load_user_history, save_user_history
-                    history = load_user_history(current_user)
-                    
-                    # 查找最新的记录（应该是刚刚生成的文章）
-                    latest_record = None
-                    for record in reversed(history):
-                        if record.get('topic') == task_state.get('outline', {}).get('title'):
-                            latest_record = record
-                            break
-                    
-                    if latest_record:
-                        # 更新文章内容
-                        latest_record['article_content'] = st.session_state.edited_full_article
-                        # 添加编辑时间戳
-                        latest_record['edited_at'] = datetime.now().isoformat()
-                        # 保存更新后的历史记录
-                        save_user_history(current_user, history)
-                        st.success("✅ 编辑已保存到数据库！")
-                    else:
-                        st.error("❌ 无法找到原始文章记录，请尝试重新生成文章。")
-                else:
-                    st.error("❌ 无法获取当前用户信息，请重新登录。")
-            except Exception as e:
-                st.error(f"❌ 保存编辑时出错: {str(e)}")
-
-    # --- UI for Error ---
-    elif status == 'error':
-        st.error(f"任务执行失败: {task_state['error_message']}")
-        with st.expander("查看错误日志", expanded=True):
-            log_html = ""
-            for line in task_state['log']:
-                color = "#FFFFFF"
-                if "[ERROR]" in line or "Traceback" in line:
-                    color = "#FF4B4B"
-                # 先处理换行符替换，再放入 f-string
-                formatted_line = line.replace("\n", "<br>")
-                log_html += f'<div style="color: {color}; font-family: monospace; font-size: 13px;">{formatted_line}</div>'
-            components.html(f'''<div style="height: 400px; overflow-y: scroll; background-color: #1E1E1E; border: 1px solid #444; padding: 10px; border-radius: 5px;">{log_html}</div>''', height=420)
-
-    # --- UI for Idle State ---
-    else: # idle
-        st.caption("""
-            **简介：** 这是一个结合了LLM、搜索引擎和网络爬虫的自动化文章写作机器人。您只需在左侧输入文章主题，它就能自动完成资料搜集、生成大纲、并撰写完整的文章。
-            
-            **工作流程：**
-            1.  **输入主题：** 在左侧边栏输入您想写的文章主题，并可自定义写作风格。
-            2.  **执行任务：** 点击“执行”按钮。整个过程根据主题复杂度，可能需要3到10分钟。
-            3.  **实时监控：** 任务开始后，您可以实时查看运行日志、抓取进度和生成的大纲。任务在后台运行，您可以随时离开页面再回来查看。
-            4.  **编辑与下载：** 文章生成后，您可以在“预览/编辑”双模式下对内容进行修改和润色，然后下载最终的Markdown文件。
-            
-            **⚠️ 注意：** 请在左侧填写文章主题后点击执行。
-        """)
+                **工作流程：**
+                1.  **输入主题：** 在左侧边栏输入您想写的文章主题，并可自定义写作风格。
+                2.  **执行任务：** 点击"执行"按钮。整个过程根据主题复杂度，可能需要3到10分钟。
+                3.  **实时监控：** 任务开始后，您可以实时查看运行日志、抓取进度和生成的大纲。任务在后台运行，您可以随时离开页面再回来查看。
+                4.  **编辑与下载：** 文章生成后，您可以在"预览/编辑"双模式下对内容进行修改和润色，然后下载最终的Markdown文件。
+                
+                **⚠️ 注意：** 请在左侧填写文章主题后点击执行。
+            """)
 
 main()
