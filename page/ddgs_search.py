@@ -4,7 +4,7 @@ import json
 import time
 import asyncio
 import nest_asyncio
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 import traceback
 
 # 确保在Streamlit环境中可以运行异步代码
@@ -13,12 +13,8 @@ try:
 except RuntimeError:
     pass
 
-# 尝试导入ddgs，如果不存在则提示安装
-try:
-    from ddgs import DDGS
-except ImportError:
-    st.error("请先安装DDGS库: `pip install ddgs`")
-    st.stop()
+# 使用工具层封装的DDGS接口，避免页面直接依赖第三方库
+from utils.ddgs_utils import search_ddgs as util_search_ddgs
 
 @require_auth
 def main():
@@ -191,24 +187,13 @@ def main():
         )
 
 def search_ddgs(query, search_type, max_results=30):
-    """使用DDGS执行搜索"""
-    results = []
-    
+    """使用DDGS执行搜索（调用utils封装）"""
     try:
-        with DDGS() as ddgs:
-            if search_type == "text":
-                results = list(ddgs.text(query, max_results=max_results))
-            elif search_type == "images":
-                results = list(ddgs.images(query, max_results=max_results))
-            elif search_type == "videos":
-                results = list(ddgs.videos(query, max_results=max_results))
-            elif search_type == "news":
-                results = list(ddgs.news(query, max_results=max_results))
+        return util_search_ddgs(query, search_type, max_results=max_results)
     except Exception as e:
         st.error(f"DDGS搜索出错: {str(e)}")
         st.code(traceback.format_exc())
-    
-    return results
+        return []
 
 def display_search_results(results, search_type, page=1):
     """显示搜索结果"""
@@ -258,12 +243,31 @@ def display_text_results(results):
         title = result.get("title", "无标题")
         url = result.get("href", "#")
         snippet = result.get("body", "无描述")
+        # 提取来源与时间（不同结果可能字段名不同）
+        source = (
+            result.get("source")
+            or result.get("website")
+            or result.get("publisher")
+            or result.get("hostname")
+        )
+        if not source and url and url != "#":
+            try:
+                source = urlparse(url).netloc
+            except Exception:
+                source = ""
+        date = (
+            result.get("date")
+            or result.get("published")
+            or result.get("published_time")
+            or result.get("time")
+        )
         
         st.markdown(f"""
         <div class="result-card">
             <a href="{url}" target="_blank" class="result-title">{title}</a>
             <div class="result-url">{url}</div>
             <div class="result-snippet">{snippet}</div>
+            <div><small>{(source or '')}{(' · ' + date) if date else ''}</small></div>
         </div>
         """, unsafe_allow_html=True)
 

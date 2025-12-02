@@ -7,8 +7,32 @@ import logging
 import time
 from pathlib import Path
 import streamlit as st
+import toml
+from utils.auth import get_current_user as auth_get_current_user
 
 logger = logging.getLogger(__name__)
+
+SECRETS_FILE_PATH = Path(".streamlit/secrets.toml")
+
+def load_secrets_toml():
+    """加载.streamlit/secrets.toml文件内容"""
+    if SECRETS_FILE_PATH.is_file():
+        try:
+            return toml.load(SECRETS_FILE_PATH)
+        except toml.TomlDecodeError as e:
+            logger.error(f"Error decoding secrets.toml: {e}")
+            return {}
+    return {}
+
+def save_secrets_toml(data):
+    """保存内容到.streamlit/secrets.toml文件"""
+    try:
+        with open(SECRETS_FILE_PATH, 'w', encoding='utf-8') as f:
+            toml.dump(data, f)
+        return True
+    except Exception as e:
+        logger.error(f"Error saving secrets.toml: {e}")
+        return False
 
 class ConfigManager:
     """
@@ -118,7 +142,7 @@ class ConfigManager:
                 'mtime': current_mtime
             }
             
-            logger.info(f"已从 {config_path} 加载配置")
+            logger.debug(f"已从 {config_path} 加载配置")
             return config_data
         except Exception as e:
             logger.error(f"加载配置失败: {str(e)}")
@@ -192,17 +216,22 @@ class ConfigManager:
         else:
             self._config_cache.clear()
 
+@st.cache_resource(show_spinner=False)
+def _get_config_manager():
+    """获取配置管理器单例（使用Streamlit缓存避免重复初始化）"""
+    return ConfigManager()
+
 # 创建全局配置管理器实例
-config_manager = ConfigManager()
+config_manager = _get_config_manager()
 
 # 默认配置值
 DEFAULT_CONFIG = {
     'global_model_settings': {
-        'provider': 'openai',  # 默认提供商
-        'model_name': 'gpt-3.5-turbo'  # 默认模型
+        'provider': 'kimi',  # 默认提供商
+        'model_name': 'kimi-k2-0711-preview'  # 默认模型
     },
     'embedding_settings': {
-        'type': 'xinference',  # 默认嵌入类型: gitee, xinference, jina, local
+        'type': 'gitee',  # 默认嵌入类型: gitee, xinference, jina, local
         'model': 'jina-embeddings-v4',  # 默认嵌入模型
         'dimension': 2048,  # 默认嵌入维度
         'timeout': 10  # 默认超时时间
@@ -211,14 +240,10 @@ DEFAULT_CONFIG = {
 
 def get_current_user():
     """
-    获取当前登录用户
-    
-    Returns:
-        str: 当前用户名，如果未登录则返回None
+    获取当前登录用户（兼容OAuth身份）。
+    优先使用统一的认证层标识。
     """
-    if 'username' in st.session_state:
-        return st.session_state.username
-    return None
+    return auth_get_current_user()
 
 def get_config(key=None, default_value=None):
     """
@@ -232,7 +257,7 @@ def get_config(key=None, default_value=None):
         任意类型: 配置值或整个配置字典
     """
     username = get_current_user()
-    
+
     if key is None:
         # 返回整个配置
         user_config = config_manager.load_config(username)
@@ -244,9 +269,14 @@ def get_config(key=None, default_value=None):
     else:
         # 返回特定配置值
         value = config_manager.get_config_value(key, None, username)
-        if value is None and key in DEFAULT_CONFIG:
-            return DEFAULT_CONFIG[key]
-        elif value is None:
+        if value is None:
+            # 优先回退到默认配置文件（default用户）中已保存的值
+            default_profile_value = config_manager.get_config_value(key, None, None)
+            if default_profile_value is not None:
+                return default_profile_value
+            # 最后回退到编译时的DEFAULT_CONFIG
+            if key in DEFAULT_CONFIG:
+                return DEFAULT_CONFIG[key]
             return default_value
         return value
 
@@ -262,7 +292,16 @@ def set_config(key, value):
         bool: 设置是否成功
     """
     username = get_current_user()
-    return config_manager.set_config_value(key, value, username)
+    # 先保存到当前用户配置
+    ok = config_manager.set_config_value(key, value, username)
+    # 对全局关键配置，额外写入到默认配置文件，便于无会话/后台线程读取
+    if key in ("embedding_settings", "global_model_settings"):
+        try:
+            config_manager.set_config_value(key, value, None)
+        except Exception:
+            # 仅记录，不影响主流程
+            logger.debug("Failed to mirror global config to default profile", exc_info=True)
+    return ok
 
 def get_embedding_type():
     """

@@ -98,6 +98,54 @@ def app():
     if not user:
         st.warning("请先登录")
         return
+
+    # If OAuth2 user is logged in, render a simplified OAuth profile and return
+    try:
+        oauth_logged_in = hasattr(st, "user") and getattr(st.user, "is_logged_in", False)
+    except Exception:
+        oauth_logged_in = False
+
+    if oauth_logged_in:
+        st.subheader("个人信息")
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            try:
+                if hasattr(st.user, "picture") and st.user.picture:
+                    picture_url = st.user.picture
+                    # Prefer HTML img to avoid hotlink/referrer issues some CDNs enforce
+                    st.markdown(
+                        f'<img src="{picture_url}" width="100" style="border-radius:50%;" referrerpolicy="no-referrer" />',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.write("👤")
+            except Exception:
+                # Fallback to st.image if HTML rendering fails
+                try:
+                    st.image(getattr(st.user, "picture", None), width=100)
+                except Exception:
+                    st.write("👤")
+        with col2:
+            if getattr(st.user, "name", None):
+                st.write(f"**名称：** {st.user.name}")
+            if getattr(st.user, "email", None):
+                st.write(f"**邮箱：** {st.user.email}")
+            if getattr(st.user, "sub", None):
+                st.write(f"**标识：** {st.user.sub}")
+
+        st.markdown("---")
+        st.subheader("个性化设置")
+        current_motto = get_user_motto(user)
+        new_motto = st.text_input("座右铭", value=current_motto, help="将显示在侧边栏")
+        if st.button("保存座右铭"):
+            ok, msg = update_user_motto(user, new_motto)
+            if ok:
+                st.success(msg)
+            else:
+                st.error(msg)
+
+        st.info("密码与邮箱由第三方账号提供商管理，此处不可修改。")
+        return
     
     # 现代标题设计
     st.markdown("""

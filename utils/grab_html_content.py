@@ -1,4 +1,5 @@
 import os
+import sys
 # 将本文件上一级目录作为主目录
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import asyncio
@@ -21,15 +22,24 @@ import re
 import hashlib
 from typing import List, Dict
 from pathlib import Path
-from utils.openai_vl_process import process_image
+from utils.openai_vl_process import process_image, process_image_async
 from utils.embedding_utils import add_to_faiss_index, create_faiss_index
+from utils.image_filter import (
+    should_skip_image_url,
+    is_likely_icon_by_dimensions,
+    is_low_quality_image,
+    MIN_WIDTH, MIN_HEIGHT, MIN_AREA,
+    MIN_FILE_SIZE as FILTER_MIN_FILE_SIZE,
+)
 import concurrent.futures
 import threading
 
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True
 )
 logger = logging.getLogger(__name__)
 
@@ -121,7 +131,7 @@ def get_streamlit_faiss_index(username: str = None, article_id: str = None):
     return faiss_index
 
 # 常量配置
-MIN_IMAGE_SIZE = 20 * 1024  # 降低到20KB以捕获更多图片
+MIN_IMAGE_SIZE = 8 * 1024  # 降低到8KB，支持webp等高度优化的格式
 VALID_IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'}  # 增加更多图片格式
 IMAGES_DIR = Path('images')
 IMAGES_DIR.mkdir(exist_ok=True)
@@ -160,6 +170,110 @@ GLOBAL_URL_MAPPING = {}
 # 全局内容哈希映射 - 用于快速查找相同内容的图片
 # 格式: {content_hash: {path: file_path, urls: [url1, url2, ...]}}
 GLOBAL_CONTENT_HASH_MAPPING = {}
+
+# 使用于模型校验的最小尺寸（HEAD Content-Length）- 提高阈值
+MIN_MODEL_IMAGE_SIZE = 15 * 1024  # 15KB - 更严格的阈值
+
+async def is_valid_image_url_for_model(session: aiohttp.ClientSession, url: str) -> bool:
+    """通过轻量校验避免将无效/不支持的图片URL传给多模态/嵌入模型。
+    规则：
+    - 必须是http/https
+    - 过滤data:、空URL
+    - 过滤广告跟踪域名和URL模式
+    - 后缀或Content-Type不得为svg
+    - 通过HEAD获取Content-Type应为image/*；若有Content-Length则不小于MIN_MODEL_IMAGE_SIZE
+    """
+    if not url:
+        return False
+    u = url.strip()
+    if u.startswith('data:'):
+        return False
+    if not (u.startswith('http://') or u.startswith('https://')):
+        return False
+    lower = u.lower()
+    
+    # 过滤广告跟踪域名
+    ad_domains = [
+        'kunyu.csdn.net',      # CSDN广告网络
+        'ad.csdn.net',         # CSDN广告
+        'ads.csdn.net',        # CSDN广告
+        'googleads.g.doubleclick.net',  # Google广告
+        'pagead2.googlesyndication.com', # Google广告
+        'doubleclick.net',     # 广告网络
+        'googlesyndication.com', # Google广告联盟
+        'adservice.google.com', # Google广告服务
+        'amazon-adsystem.com',  # 亚马逊广告
+        'scorecardresearch.com', # 广告跟踪
+        'advertising.com',     # 广告
+        'adnxs.com',          # AppNexus广告
+        'adsrvr.org',         # Trade Desk广告
+    ]
+    
+    # 检查是否为广告域名
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(u)
+        domain = parsed.netloc.lower()
+        for ad_domain in ad_domains:
+            if ad_domain in domain:
+                logger.debug(f"Filtered ad domain: {url}")
+                return False
+    except Exception:
+        pass
+    
+    # 过滤包含广告标识的URL
+    ad_indicators = [
+        'adid=', 'ad_id=', 'adblockflag=', 'ad_block',
+        'advertisement', 'ad_banner', 'ad_image',
+        'tracking_pixel', 'track_pixel', 'beacon',
+        'ad.png', 'ad.jpg', 'ad.gif', 'ad.webp',
+        'banner.png', 'banner.jpg', 'banner.gif',
+        '/ads/', '/ad/', '/advertisement/',
+    ]
+    
+    for indicator in ad_indicators:
+        if indicator in lower:
+            logger.debug(f"Filtered ad indicator URL: {url}")
+            return False
+    
+    # 先用后缀粗过滤svg
+    if lower.endswith('.svg') or 'format=svg' in lower:
+        return False
+    # 用HEAD验证资源可达和类型
+    try:
+        timeout = aiohttp.ClientTimeout(total=8, connect=5)
+        async with session.head(u, ssl=False, allow_redirects=True, timeout=timeout) as resp:
+            if resp.status != 200:
+                return False
+            ctype = resp.headers.get('Content-Type', '').lower()
+            # 过滤svg
+            if 'image/svg' in ctype:
+                return False
+            if not ctype.startswith('image/'):
+                return False
+            cl = resp.headers.get('Content-Length')
+            if cl is not None:
+                try:
+                    if int(cl) < MIN_MODEL_IMAGE_SIZE:
+                        return False
+                except Exception:
+                    pass
+            return True
+    except Exception:
+        # 有些服务器不支持HEAD，尝试GET前几个字节
+        try:
+            timeout = aiohttp.ClientTimeout(total=8, connect=5)
+            async with session.get(u, ssl=False, allow_redirects=True, timeout=timeout) as resp:
+                if resp.status != 200:
+                    return False
+                ctype = resp.headers.get('Content-Type', '').lower()
+                if 'image/svg' in ctype:
+                    return False
+                if not ctype.startswith('image/'):
+                    return False
+                return True
+        except Exception:
+            return False
 
 # 创建一个全局的ThreadPoolExecutor，使用线程锁保护其访问
 _EXECUTOR_LOCK = threading.Lock()
@@ -226,6 +340,13 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
         stats['skipped'] += 1 if stats else 0
         return '' if not is_multimodal else None
         
+    # === 新增：URL预筛选 - 在下载前过滤明显的非内容图片 ===
+    if should_skip_image_url(normalized_img_src):
+        stats['skipped'] = stats.get('skipped', 0) + 1
+        logger.debug(f"URL pre-filter skipped: {normalized_img_src[:80]}...")
+        image_hash_cache[normalized_img_src] = '' if not is_multimodal else None
+        return '' if not is_multimodal else None
+    
     # 检查URL是否已经在当前会话缓存中
     if normalized_img_src in image_hash_cache:
         stats['cached'] += 1
@@ -264,6 +385,192 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 image_hash_cache[normalized_img_src] = image_hash_cache[cached_url]
                 return image_hash_cache[cached_url]
         
+    # 直接URL嵌入模式：下载图片内容进行尺寸筛选，合格则收集URL
+    # 注意：这里不再逐张做 embedding，避免与 searxng_utils.py 的批量处理重复
+    if use_direct_image_embedding:
+        try:
+            # 先做基本的URL校验
+            valid = await is_valid_image_url_for_model(session, normalized_img_src)
+        except Exception:
+            valid = False
+        if not valid:
+            logger.debug(f"Skip direct embedding due to validation failure: {normalized_img_src}")
+            if stats is not None:
+                stats['skipped'] = stats.get('skipped', 0) + 1
+            image_hash_cache[normalized_img_src] = None
+            return None
+        
+        # 下载图片内容进行尺寸筛选
+        try:
+            timeout = aiohttp.ClientTimeout(total=15, connect=10)
+            async with session.get(normalized_img_src, ssl=False, timeout=timeout, allow_redirects=True) as resp:
+                if resp.status != 200:
+                    stats['failed'] = stats.get('failed', 0) + 1
+                    image_hash_cache[normalized_img_src] = None
+                    return None
+                content = await resp.read()
+                
+                # 使用增强的图片筛选逻辑
+                is_filtered, filter_reason, image_info = is_low_quality_image(
+                    content=content,
+                    url=normalized_img_src,
+                    check_url=False,  # URL已在前面检查过
+                    check_dimensions=True,
+                    check_file_size=True,
+                    check_content=True,
+                )
+                
+                if is_filtered:
+                    stats['skipped'] = stats.get('skipped', 0) + 1
+                    logger.debug(f"Direct embedding filtered: {filter_reason} - {normalized_img_src[:60]}...")
+                    image_hash_cache[normalized_img_src] = None
+                    return None
+        except Exception as e:
+            logger.debug(f"Error downloading image for filtering: {e}")
+            stats['failed'] = stats.get('failed', 0) + 1
+            image_hash_cache[normalized_img_src] = None
+            return None
+        
+        # 通过筛选，收集URL用于后续批量嵌入
+        logger.debug(f"收集图片URL用于后续批量嵌入: {normalized_img_src[:50]}...")
+        result = {"image_url": normalized_img_src, "embedding_method": "deferred_batch"}
+        image_hash_cache[normalized_img_src] = result
+        stats['success'] = stats.get('success', 0) + 1
+        return result
+
+    # 多模态模式：先校验，合格则无需下载图片内容，直接调用识别并入库
+    if is_multimodal:
+        # 对 CSDN 图片采用本地下载再以base64传给多模态，避免直链受限
+        if ('csdnimg.cn' in domain) or ('csdn.net' in domain and 'csdnimg' in domain):
+            try:
+                logger.debug(f"CSDN image detected, using local download + base64 for multimodal: {normalized_img_src}")
+                user_agents = [
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+                ]
+                headers = {
+                    'User-Agent': random.choice(user_agents),
+                    'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache',
+                    'Referer': 'https://blog.csdn.net/',
+                    'Origin': 'https://blog.csdn.net',
+                    'Host': domain
+                }
+                timeout = aiohttp.ClientTimeout(total=15, connect=10)
+                async with session.get(normalized_img_src, ssl=False, headers=headers, timeout=timeout, allow_redirects=True) as resp:
+                    if resp.status != 200:
+                        logger.debug(f"CSDN image download failed status={resp.status}: {normalized_img_src}")
+                        image_hash_cache[normalized_img_src] = None
+                        stats['failed'] += 1 if stats else 0
+                        return None
+                    content = await resp.read()
+                if not content or len(content) < MIN_MODEL_IMAGE_SIZE:
+                    logger.debug(f"CSDN image too small or empty: {normalized_img_src} size={len(content) if content else 0}")
+                    image_hash_cache[normalized_img_src] = None
+                    stats['skipped'] += 1 if stats else 0
+                    return None
+                # 发送为base64
+                try:
+                    logger.debug(
+                        "Multimodal sending (CSDN base64) image_url=%s bytes=%d task_id=%s",
+                        normalized_img_src, len(content), task_id,
+                    )
+                    # 使用异步版本，避免阻塞事件循环
+                    result = await process_image_async(image_content=content)
+                except asyncio.CancelledError:
+                    logger.debug(f"CSDN multimodal skipped (cancelled): {normalized_img_src}")
+                    image_hash_cache[normalized_img_src] = None
+                    stats['skipped'] += 1 if stats else 0
+                    return None
+                except Exception as e:
+                    logger.debug(
+                        "CSDN multimodal via base64 failed: %s (%s) | url=%s",
+                        str(e) or "Unknown error", type(e).__name__, normalized_img_src
+                    )
+                    image_hash_cache[normalized_img_src] = None
+                    stats['failed'] += 1 if stats else 0
+                    return None
+
+                if result and isinstance(result, dict) and "describe" in result:
+                    description = result.get("describe", "")
+                    if description and len(description) > 10:
+                        data = {"image_url": normalized_img_src, "task_id": task_id, "description": description}
+                        try:
+                            current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
+                            before_size = current_faiss_index.get_size()
+                            add_to_faiss_index(description, data, current_faiss_index, username=username, article_id=article_id, auto_save=True)
+                            after_size = current_faiss_index.get_size()
+                            if after_size > before_size:
+                                logger.debug(f"已添加图片描述到FAISS索引: {normalized_img_src}")
+                        except Exception as e:
+                            logger.error(f"记录图片描述到FAISS索引失败: {str(e)}")
+                    image_hash_cache[normalized_img_src] = result
+                    stats['success'] += 1 if stats else 0
+                    return result
+                else:
+                    logger.debug(f"Multimodal returned empty/invalid for CSDN {normalized_img_src}")
+                    image_hash_cache[normalized_img_src] = None
+                    stats['failed'] += 1 if stats else 0
+                    return None
+            except Exception as e:
+                # 这里捕获的是下载阶段的错误（非多模态处理错误）
+                logger.debug(f"CSDN image download/processing error: {str(e) or 'Unknown'} | url={normalized_img_src}")
+                image_hash_cache[normalized_img_src] = None
+                stats['failed'] += 1 if stats else 0
+                return None
+        else:
+            try:
+                valid = await is_valid_image_url_for_model(session, normalized_img_src)
+            except Exception:
+                valid = False
+            if not valid:
+                logger.debug(f"Skip multimodal due to validation failure: {normalized_img_src}")
+                if stats is not None:
+                    stats['skipped'] = stats.get('skipped', 0) + 1
+                image_hash_cache[normalized_img_src] = None
+                return None
+            logger.debug(f"Fast-path multimodal processing for image URL: {normalized_img_src}")
+            try:
+                # 重要：在调用多模态前打印即将发送的图片和上下文，便于定位400错误
+                logger.info(
+                    "Multimodal sending image_url=%s task_id=%s user=%s article_id=%s",
+                    normalized_img_src, task_id, username, article_id,
+                )
+                # 使用异步版本，避免阻塞事件循环，实现真正的并发处理
+                result = await process_image_async(image_url=normalized_img_src)
+                if result and isinstance(result, dict) and "describe" in result:
+                    description = result.get("describe", "")
+                    if description and len(description) > 10:
+                        data = {"image_url": normalized_img_src, "task_id": task_id, "description": description}
+                        try:
+                            current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
+                            before_size = current_faiss_index.get_size()
+                            add_to_faiss_index(description, data, current_faiss_index, username=username, article_id=article_id, auto_save=True)
+                            after_size = current_faiss_index.get_size()
+                            if after_size > before_size:
+                                logger.debug(f"已添加图片描述到FAISS索引: {normalized_img_src}")
+                        except Exception as e:
+                            logger.error(f"记录图片描述到FAISS索引失败: {str(e)}")
+                    image_hash_cache[normalized_img_src] = result
+                    stats['success'] += 1 if stats else 0
+                    return result
+                else:
+                    logger.debug(f"Multimodal returned empty/invalid for {normalized_img_src}")
+                    image_hash_cache[normalized_img_src] = None
+                    stats['failed'] += 1 if stats else 0
+                    return None
+            except Exception as e:
+                # 重要：错误时也打印发送的图片URL和上下文
+                logger.error(
+                    "Multimodal fast-path error: %s | image_url=%s task_id=%s user=%s article_id=%s",
+                    str(e), normalized_img_src, task_id, username, article_id,
+                )
+                image_hash_cache[normalized_img_src] = None
+                stats['failed'] += 1 if stats else 0
+                return None
+
     try:
         # 设置基础请求头，模拟浏览器行为
         user_agents = [
@@ -483,105 +790,36 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
             content = await response.read()
         content_size = len(content)
         
-        # 检查图片大小和尺寸
-        def should_skip_image():
-            """Helper function to determine if image should be skipped"""
-            # 1. 检查文件大小
-            if content_size < MIN_IMAGE_SIZE:
-                # logger.debug(f"Skipping small file: {img_src} ({content_size/1024:.1f}KB < {MIN_IMAGE_SIZE/1024:.1f}KB)")
-                return True
-                
-            # 2. 检查图片尺寸
-            try:
-                img = Image.open(BytesIO(content))
-                width, height = img.size
-                
-                # 常见图标尺寸列表
-                ICON_SIZES = {
-                    (480, 480), 
-                    (226, 226), 
-                    (300, 300), 
-                    (656, 656)
-                }
-                
-                # 检查是否为常见图标尺寸
-                if (width, height) in ICON_SIZES:
-                    logger.debug(f"Skipping common icon size: {img_src} ({width}x{height})")
-                    return True
-                    
-                # 检查是否为小图片 - 降低尺寸限制
-                if width < 150 and height < 150:
-                    logger.debug(f"Skipping small image: {img_src} ({width}x{height})")
-                    return True
-                    
-                # 检查宽高比例 - 放宽比例限制
-                ratio = width / height
-                if ratio > 8 or ratio < 0.125:  # 更宽容的比例限制
-                    logger.debug(f"Skipping abnormal aspect ratio: {img_src} (ratio: {ratio:.2f})")
-                    return True
-                    
-                # 图片通过所有检查
-                return False
-                
-            except Exception as e:
-                # logger.warning(f"Failed to check image dimensions for {img_src}: {str(e)}")
-                return True  # 出错时跳过图片
+        # === 使用增强的图片筛选逻辑 ===
+        # 综合检查：文件大小、图片尺寸、内容特征
+        is_filtered, filter_reason, image_info = is_low_quality_image(
+            content=content,
+            url=normalized_img_src,
+            check_url=False,  # URL已在前面检查过
+            check_dimensions=True,
+            check_file_size=True,
+            check_content=True,
+        )
         
-        # 如果应该跳过该图片
-        if should_skip_image():
+        if is_filtered:
             stats['skipped'] += 1
-            image_hash_cache[img_src] = '' if not is_multimodal else None
+            logger.debug(f"Image filtered: {filter_reason} - {img_src[:80]}...")
+            image_hash_cache[normalized_img_src] = '' if not is_multimodal else None
             return '' if not is_multimodal else None
         
         # 如果是直接图片URL嵌入模式
+        # 注意：这里不再逐张做 embedding，只收集图片 URL
+        # 批量 embedding 由 searxng_utils.py 统一处理，避免重复 embedding
         if use_direct_image_embedding:
-            logger.debug(f"Processing image with direct URL embedding: {img_src}")
+            logger.debug(f"收集图片URL用于后续批量嵌入: {img_src[:50]}...")
             
-            try:
-                # 准备要存储的数据
-                data = {
-                    "image_url": img_src,
-                    "task_id": task_id
-                }
-                
-                # 添加到FAISS索引，使用is_image_url=True标记这是一个图片URL
-                try:
-                    # 获取用户和文章特定的FAISS索引实例
-                    logger.debug(f"正在获取FAISS索引实例用于直接图片URL嵌入: {username}/{article_id}")
-                    current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
-                    
-                    # 记录添加前的索引大小
-                    before_size = current_faiss_index.get_size()
-                    logger.debug(f"添加图片URL前FAISS索引大小: {before_size}")
-                    
-                    # 直接添加图片URL到索引，使用is_image_url=True
-                    add_to_faiss_index(img_src, data, current_faiss_index, username=username, article_id=article_id, auto_save=True, is_image_url=True)
-                    
-                    # 记录添加后的索引大小
-                    after_size = current_faiss_index.get_size()
-                    logger.debug(f"添加图片URL后FAISS索引大小: {after_size}，增加: {after_size - before_size}")
-                    
-                    if after_size > before_size:
-                        logger.debug(f"成功添加图片URL到FAISS索引 {username}/{article_id}: {img_src[:50]}...")
-                    else:
-                        logger.warning(f"图片URL似乎未成功添加到FAISS索引: {img_src[:50]}...")
-                        
-                except Exception as e:
-                    logger.error(f"添加图片URL到FAISS索引失败: {str(e)}")
-                    logger.exception("详细错误信息:" + str(e))
-                
-                # 缓存结果并返回图片URL
-                result = {
-                    "image_url": img_src,
-                    "embedding_method": "direct_embedding"
-                }
-                image_hash_cache[img_src] = result
-                return result
-                
-            except Exception as e:
-                logger.error(f"Error processing image URL for direct embedding: {str(e)}")
-                image_hash_cache[img_src] = None
-                return None
+            # 只返回图片URL，不做embedding，后续由searxng_utils批量处理
+            result = {
+                "image_url": img_src,
+                "embedding_method": "deferred_batch"  # 标记为延迟批量处理
+            }
+            image_hash_cache[img_src] = result
+            return result
                 
         # 如果是多模态处理模式，在通过大小和尺寸检查后再进行多模态处理
         elif is_multimodal:
@@ -589,7 +827,8 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
             
             # 调用Qwen模型进行图片识别
             try:
-                result = process_image(image_url=img_src)
+                # 使用异步版本，避免阻塞事件循环，实现真正的并发处理
+                result = await process_image_async(image_url=img_src)
                 
                 if result and isinstance(result, dict) and "describe" in result:
                     # 将图片描述添加到FAISS索引
@@ -620,9 +859,9 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                             logger.debug(f"添加图片后FAISS索引大小: {after_size}，增加: {after_size - before_size}")
                             
                             if after_size > before_size:
-                                logger.debug(f"成功添加图片到FAISS索引 {username}/{article_id}: {img_src[:50]}...")
+                                logger.info(f"成功添加图片到FAISS索引 {username}/{article_id}: 数量：{after_size}")
                             else:
-                                logger.warning(f"图片似乎未成功添加到FAISS索引: {img_src[:50]}...")
+                                logger.warning(f"图片似乎未成功添加到FAISS索引: {after_size}...")
                                 
                         except Exception as e:
                             logger.error(f"添加图片到FAISS索引失败: {str(e)}")
@@ -995,32 +1234,126 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
             except Exception as e:
                 logger.warning(f"Error extracting base URL: {str(e)}")
                 
-            # 初始化统计字典
+            # 收集更全面的图片URL来源
+            img_src_candidates = []
+
+            # 1) 常规 <img> 标签
+            for img in img_tags:
+                candidates = set()
+
+                # src
+                val = (img.get('src') or '').strip()
+                if val:
+                    candidates.add(val)
+
+                # 常见的懒加载与自定义属性
+                for attr in ['data-src', 'data-original', 'data-actualsrc', 'data-orig-src', 'data-lazy-src', 'data-image', 'data-url']:
+                    v = (img.get(attr) or '').strip()
+                    if v:
+                        candidates.add(v)
+
+                # srcset（选择最大分辨率或最后一个）
+                srcset = (img.get('srcset') or '').strip()
+                if srcset:
+                    try:
+                        parts = [p.strip() for p in srcset.split(',') if p.strip()]
+                        # 提取 (url, descriptor)，优先包含 'w' 的最大，否则取最后一个
+                        parsed = []
+                        for p in parts:
+                            seg = p.split()
+                            if len(seg) >= 1:
+                                url = seg[0]
+                                desc = seg[1] if len(seg) > 1 else ''
+                                parsed.append((url, desc))
+                        # 选择最大 w 值
+                        best = None
+                        maxw = -1
+                        for url, desc in parsed:
+                            if desc.endswith('w'):
+                                try:
+                                    w = int(desc[:-1])
+                                    if w > maxw:
+                                        maxw = w
+                                        best = url
+                                except:
+                                    pass
+                        if not best and parsed:
+                            best = parsed[-1][0]
+                        if best:
+                            candidates.add(best)
+                    except Exception:
+                        pass
+
+                # 父级 <a> 可能直接链接图片
+                parent = img.parent
+                if parent and getattr(parent, 'name', '').lower() == 'a':
+                    href = (parent.get('href') or '').strip()
+                    if href and any(href.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']):
+                        candidates.add(href)
+
+                # 去重后加入全局候选
+                for c in candidates:
+                    img_src_candidates.append(c)
+
+            # 2) <picture> 中的 <source srcset>
+            for picture in soup.find_all('picture'):
+                for source in picture.find_all('source'):
+                    srcset = (source.get('srcset') or '').strip()
+                    if srcset:
+                        try:
+                            parts = [p.strip() for p in srcset.split(',') if p.strip()]
+                            for p in parts:
+                                url = p.split()[0]
+                                if url:
+                                    img_src_candidates.append(url)
+                        except Exception:
+                            pass
+
+            # 3) CSS 背景图片 url(...) 提取
+            for elem in soup.find_all(style=True):
+                style = elem.get('style') or ''
+                # 简单提取 url('...') / url("...") / url(...)
+                urls = re.findall(r"url\((?:'|\")?(.*?)(?:'|\")?\)", style)
+                for u in urls:
+                    if u:
+                        img_src_candidates.append(u)
+
+            # 去重
+            unique_candidates = []
+            seen = set()
+            for u in img_src_candidates:
+                if not u:
+                    continue
+                if u in seen:
+                    continue
+                seen.add(u)
+                unique_candidates.append(u)
+
+            # 初始化统计字典（以候选URL数为准）
             stats = {
-                'total': len(img_tags),
+                'total': len(unique_candidates),
                 'success': 0,
                 'failed': 0,
                 'cached': 0,
                 'skipped': 0
             }
-            
-            # 处理所有图片标签
-            for img in img_tags:
-                img_src = img.get('src', '')
-                
-                # 检查图片URL是否为空
-                if not img_src or img_src.strip() == '':
-                    stats['skipped'] += 1
-                    continue
-                    
-                # 直接传递原始img_src，让download_image函数处理URL规范化
-                
-                # 创建异步任务，传递base_url、用户名和文章ID
-                task = download_image(session, img_src, image_hash_cache, task_id, is_multimodal, use_direct_image_embedding, theme, stats, base_url, username, article_id)
+
+            # 创建下载/处理任务
+            for candidate in unique_candidates:
+                task = download_image(session, candidate, image_hash_cache, task_id, is_multimodal, use_direct_image_embedding, theme, stats, base_url, username, article_id)
                 img_tasks.append(task)
             
-            # 等待所有图片下载完成
-            img_paths = await asyncio.gather(*img_tasks)
+            # 等待所有图片下载完成，设置整体超时（30秒）
+            try:
+                img_paths = await asyncio.wait_for(
+                    asyncio.gather(*img_tasks, return_exceptions=True),
+                    timeout=30
+                )
+                # 过滤掉异常结果
+                img_paths = [p for p in img_paths if not isinstance(p, Exception)]
+            except asyncio.TimeoutError:
+                logger.warning(f"图片下载超时，已处理部分图片")
+                img_paths = []
             
             # 处理直接嵌入模式下的字典结果
             processed_paths = []
@@ -1052,6 +1385,13 @@ async def fetch(browser, url, task_id=None, is_multimodal=False, use_direct_imag
     """
     获取页面内容
     """
+    # 早期检查：跳过空URL
+    if not url or not url.strip():
+        logger.warning("Skipping empty URL")
+        return {"url": url, "text": "", "images": [], "error": "Empty URL"}
+    
+    logger.debug(f"开始抓取URL: {url[:80]}...")
+    
     async with aiohttp.ClientSession() as session:
         # 创建一个新的浏览器上下文
         try:
@@ -1067,8 +1407,20 @@ async def fetch(browser, url, task_id=None, is_multimodal=False, use_direct_imag
             await page.route("**/*", lambda route: route.continue_())
             
             # 访问 URL，并等待完成所有重定向
+            # 使用 domcontentloaded 而不是 networkidle，因为很多网站有持续的网络请求导致 networkidle 永远不会触发
             timeout = 30000  # 固定超时时间，毫秒
-            response = await page.goto(url, timeout=timeout, wait_until="networkidle")
+            try:
+                response = await page.goto(url, timeout=timeout, wait_until="domcontentloaded")
+                # 尝试等待 networkidle，但设置较短超时
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    # networkidle 超时不是致命错误，继续处理
+                    logger.debug(f"networkidle timeout for {url}, continuing with domcontentloaded")
+            except Exception as goto_error:
+                # 如果 domcontentloaded 也失败，尝试使用 commit （最快的等待策略）
+                logger.warning(f"domcontentloaded failed for {url}: {goto_error}, trying with commit")
+                response = await page.goto(url, timeout=timeout, wait_until="commit")
             
             # 获取最终 URL（重定向后）
             final_url = page.url
@@ -1134,6 +1486,8 @@ async def get_main_content(url_list: List[str], task_id: str = None, is_multimod
     """
     get_executor()
     
+    logger.info(f"开始抓取 {len(url_list)} 个URL的内容...")
+    
     async with async_playwright() as p:
         browser = await p.firefox.launch()
         try:
@@ -1145,17 +1499,33 @@ async def get_main_content(url_list: List[str], task_id: str = None, is_multimod
             results = []
             completed_count = 0
             total_count = len(tasks)
+            
+            # 设置单个任务的超时时间（秒）
+            TASK_TIMEOUT = 60
 
             for future in asyncio.as_completed(tasks):
-                result = await future
-                results.append(result)
-                completed_count += 1
+                try:
+                    # 为每个任务设置超时
+                    result = await asyncio.wait_for(future, timeout=TASK_TIMEOUT)
+                    results.append(result)
+                    completed_count += 1
+                    logger.info(f"抓取进度: {completed_count}/{total_count} - URL: {result.get('url', 'unknown')[:50]}...")
+                except asyncio.TimeoutError:
+                    completed_count += 1
+                    logger.warning(f"抓取超时 ({TASK_TIMEOUT}s): 任务 {completed_count}/{total_count}")
+                    results.append({"url": "timeout", "text": "", "images": [], "error": "timeout"})
+                except Exception as e:
+                    completed_count += 1
+                    logger.error(f"抓取异常: {str(e)}")
+                    results.append({"url": "error", "text": "", "images": [], "error": str(e)})
+                
                 if progress_callback:
                     try:
                         progress_callback(completed_count, total_count)
                     except Exception as e:
                         logger.error(f"Error in progress_callback: {e}")
 
+            logger.info(f"抓取完成: 成功 {len([r for r in results if r.get('text')])} / 总计 {total_count}")
             return results, task_id
         finally:
             await asyncio.sleep(0.5)

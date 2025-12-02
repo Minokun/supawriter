@@ -37,6 +37,18 @@ PAGE_ARTICLE_RECREATION = st.Page(
     icon=":material/edit_document:"
 )
 
+PAGE_TWEET_TOPICS = st.Page(
+    "page/tweet_topics.py",
+    title="推文选题",
+    icon=":material/lightbulb:"
+)
+
+PAGE_HOTSPOTS = st.Page(
+    "page/hotspots.py",
+    title="全网热点",
+    icon=":material/trending_up:"
+)
+
 # ********************应用商店************************、
 PAGE_GPTS_AUTOWITER = st.Page(
     "page/auto_write.py",
@@ -46,7 +58,7 @@ PAGE_GPTS_AUTOWITER = st.Page(
 
 # ********************用户信息************************
 PAGE_PROFILE = st.Page(
-    "auth_pages/profile.py",
+    "auth_pages/profile_v2.py",
     title="个人信息",
     icon=":material/person:"
 )
@@ -63,10 +75,22 @@ PAGE_SYSTEM_SETTINGS = st.Page(
     icon=":material/settings:"
 )
 
+PAGE_COMMUNITY_MANAGEMENT = st.Page(
+    "page/community_management.py",
+    title="社区管理",
+    icon=":material/cloud_sync:"
+)
+
 PAGE_DDGS_SEARCH = st.Page(
     "page/ddgs_search.py",
     title="坤塔搜索",
     icon=":material/search:"
+)
+
+PAGE_NEWS = st.Page(
+    "page/news.py",
+    title="新闻资讯",
+    icon=":material/newspaper:"
 )
 
 # Chatbot functionality has been integrated into the home page
@@ -74,10 +98,10 @@ PAGE_DDGS_SEARCH = st.Page(
 
 # ******************菜单配置********************
 PAGES = {
-    "应用": [PAGE_HOME, PAGE_GPTS, PAGE_DDGS_SEARCH],  # Chatbot functionality integrated into home page
-    "内容创作": [PAGE_GPTS_AUTOWITER, PAGE_ARTICLE_RECREATION],
+    "应用": [PAGE_HOME, PAGE_GPTS, PAGE_DDGS_SEARCH, PAGE_NEWS],  # Chatbot functionality integrated into home page
+    "内容创作": [PAGE_GPTS_AUTOWITER, PAGE_ARTICLE_RECREATION, PAGE_TWEET_TOPICS, PAGE_HOTSPOTS],
     "工具": [PAGE_DOCUMENT_UTIL, PAGE_ASR, PAGE_TTS],
-    "用户": [PAGE_PROFILE, PAGE_HISTORY, PAGE_SYSTEM_SETTINGS]
+    "用户": [PAGE_PROFILE, PAGE_HISTORY, PAGE_COMMUNITY_MANAGEMENT, PAGE_SYSTEM_SETTINGS]
 }
 
 # 隐藏页面（不在菜单中显示，但可以通过代码跳转）

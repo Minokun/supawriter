@@ -1,0 +1,20 @@
+[
+  {
+    "username": "user1",
+    "email": "user1@example.com",
+    "password": "SecurePass123!",
+    "display_name": "用户一"
+  },
+  {
+    "username": "user2",
+    "email": "user2@example.com",
+    "password": "SecurePass456!",
+    "display_name": "用户二"
+  },
+  {
+    "username": "user3",
+    "email": "user3@example.com",
+    "password": "SecurePass789!",
+    "display_name": "用户三"
+  }
+]

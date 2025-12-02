@@ -2,6 +2,38 @@ import sys, os
 import base64
 from pathlib import Path
 from datetime import datetime
+import shutil
+
+# 加载环境变量
+from dotenv import load_dotenv
+
+# 优先加载 deployment/.env，然后是根目录的 .env
+# 只在环境变量未设置时加载并打印日志
+if not os.getenv('_ENV_LOADED'):
+    env_files = [
+        os.path.join(os.path.dirname(__file__), 'deployment', '.env'),
+        os.path.join(os.path.dirname(__file__), '.env')
+    ]
+    for env_file in env_files:
+        if os.path.exists(env_file):
+            load_dotenv(env_file, override=True)
+            print(f"✅ 已加载环境变量: {os.path.basename(env_file)}")
+            os.environ['_ENV_LOADED'] = 'true'
+            break
+
+# 检查并创建secrets.toml
+def check_secrets_toml():
+    secrets_file = Path(".streamlit/secrets.toml")
+    template_file = Path(".streamlit/secrets.toml.template")
+    if not secrets_file.is_file():
+        if template_file.is_file():
+            shutil.copy(template_file, secrets_file)
+            print(f"'{secrets_file}' not found. Copied from '{template_file}'.")
+        else:
+            print(f"Warning: '{secrets_file}' not found and template '{template_file}' does not exist.")
+
+# 在应用启动时执行检查
+check_secrets_toml()
 
 # 函数：将图片转换为base64格式
 def get_base64_from_image(image_path):
@@ -23,7 +55,8 @@ HIDDEN_PAGES = getattr(page_settings, 'HIDDEN_PAGES', [])
 import streamlit as st
 import importlib.util
 import extra_streamlit_components as stx
-from utils.auth import is_authenticated, logout, get_cookie_manager, get_user_motto, update_user_motto
+from utils.auth_v2 import is_authenticated, logout, get_user_display_name
+from utils.auth_v2 import AuthService
 
 # Set page configuration at the very beginning
 st.set_page_config(
@@ -164,10 +197,7 @@ def load_module(path):
     spec.loader.exec_module(module)
     return module
 
-login_module = load_module(os.path.join(current_dir, "auth_pages", "login.py"))
-
-# Initialize cookie manager
-cookie_manager = get_cookie_manager()
+login_module = load_module(os.path.join(current_dir, "auth_pages", "login_v2.py"))
 
 # Initialize session state for user if not exists
 if "user" not in st.session_state:
@@ -203,10 +233,10 @@ else:
     <div style="margin-top: 1rem;">
         <h3 style="font-size: 1.2rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-color, #31333F);">关于我们</h3>
         <div style="background-color: var(--background-color, #f8f9fa); padding: 1rem; border-radius: 8px; font-size: 0.9rem; border: 1px solid var(--border-color, rgba(49, 51, 63, 0.1));">
-            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);">©{current_year} Minokun</p>
-            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);">📧 邮箱：952718180@qq.com</p>
-            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);">📍 地址: 四川省成都市</p>
-            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);">📱 微信公众号: 坤塔</p>
+            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);"> Minokun</p>
+            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);"> 邮箱：952718180@qq.com</p>
+            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);"> 地址: 四川省成都市</p>
+            <p style="margin: 0 0 0.5rem 0; color: var(--text-color, #31333F);"> 微信公众号: 坤塔</p>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -216,18 +246,24 @@ else:
     if os.path.exists(wechat_qr_path):
         qr_container = st.sidebar.container()
         with qr_container:
-            st.image(wechat_qr_path, caption="微信公众号二维码", use_container_width=True)
+            st.image(wechat_qr_path, caption="微信公众号二维码", width='stretch')
     
     # 获取用户座右铭
-    user_motto = get_user_motto()
+    user = AuthService.get_current_user()
+    user_motto = user.get('motto', '创作改变世界') if user else '创作改变世界'
     
     # 使用自定义HTML样式显示用户信息
+    # Determine display name using unified helper
+    display_name = get_user_display_name()
+
+    avatar_initial = (display_name[0].upper() if isinstance(display_name, str) and display_name else "U")
+
     st.sidebar.markdown(f"""
     <div class="user-info-container">
         <div class="user-info-header">
-            <div class="user-avatar">{st.session_state.user[0].upper()}</div>
+            <div class="user-avatar">{avatar_initial}</div>
             <div>
-                <p class="user-name">{st.session_state.user}</p>
+                <p class="user-name">{display_name}</p>
                 <p class="user-status" title="座右铭">"{user_motto}"</p>
             </div>
         </div>

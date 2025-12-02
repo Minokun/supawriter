@@ -3,6 +3,7 @@ import openai
 import sys
 import logging
 import datetime
+import re
 from utils.auth_decorator import require_auth
 from utils.auth import get_current_user
 from settings import LLM_MODEL, LLM_PROVIDERS
@@ -53,7 +54,7 @@ def main():
             st.session_state.active_chat_id = None
             st.session_state.messages = []
             st.session_state.chat_title = "新对话"
-        st.rerun()
+        # 注意：在 on_click 回调中不能调用 st.rerun()，Streamlit 会自动重新运行
         
     def convert_conversation_to_markdown():
         """将当前对话转换为Markdown格式"""
@@ -67,7 +68,11 @@ def main():
             if msg["role"] == "user":
                 markdown_content += f"## 👤 用户\n\n{msg['content']}\n\n"
             else:  # assistant
-                markdown_content += f"## 🤖 AI助手\n\n{msg['content']}\n\n"
+                # 如果有 thinking 内容，也包含在导出中
+                if msg.get('thinking'):
+                    markdown_content += f"## 🤖 AI助手\n\n### 💭 思考过程\n\n{msg['thinking']}\n\n### 📝 回复内容\n\n{msg['content']}\n\n"
+                else:
+                    markdown_content += f"## 🤖 AI助手\n\n{msg['content']}\n\n"
                 
         return markdown_content
     
@@ -156,13 +161,12 @@ def main():
                         with col3:
                             st.button(":material/delete_forever:", key=f"delete_{session['id']}", help="删除该对话", on_click=handle_delete_session, args=(session['id'],))
         
-        # 清空对话按钮
-        if st.button("🚮 清空当前对话", type="secondary", use_container_width=True):
-            # 清空消息
+        # 清空对话按钮 - 使用 on_click 回调避免 st.rerun() 警告
+        def clear_current_chat():
             st.session_state.messages = []
-            # 如果有活动聊天ID，不需要保存空对话
-            # 直接重新加载页面
-            st.rerun()
+            # 回调结束后 Streamlit 会自动重新运行
+            
+        st.button("🚮 清空当前对话", type="secondary", use_container_width=True, on_click=clear_current_chat)
             
         # 下载当前对话按钮
         if st.session_state.messages and len(st.session_state.messages) > 0:
@@ -223,7 +227,10 @@ def main():
         model_api_key = LLM_MODEL[model_type]['api_key']
         model_base_url = LLM_MODEL[model_type]['base_url']
         
-        logger.info(f"使用模型: {model_type} - {model_name}")
+        # 只在首次加载时记录模型信息，避免频繁日志
+        if 'model_logged' not in st.session_state:
+            logger.info(f"使用模型: {model_type} - {model_name}")
+            st.session_state.model_logged = True
         client = openai.OpenAI(api_key=model_api_key, base_url=model_base_url)
     except Exception as e:
         st.error(f"模型配置错误: {str(e)}")
@@ -252,6 +259,26 @@ def main():
     # 添加轻量级分隔线
     st.markdown("<hr style='margin: 0.5em 0; opacity: 0.3'>", unsafe_allow_html=True)
 
+    # 修复 chat_input 在长文本时高度无限增长的问题：限制最大高度并启用滚动
+    st.markdown(
+        """
+        <style>
+        /* 限制聊天输入框的最大高度，超出部分滚动显示 */
+        div[data-testid="stChatInput"] textarea,
+        div[data-baseweb="textarea"] textarea {
+            max-height: 140px !important;
+            overflow: auto !important;
+            resize: none !important;
+        }
+        /* 容器也限制高度，防止整体被撑大 */
+        div[data-testid="stChatInput"] > div {
+            max-height: 160px !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # 直接显示聊天消息，不使用固定高度容器
     if not st.session_state.messages:
         # 如果消息为空，显示简洁的欢迎信息
@@ -260,7 +287,13 @@ def main():
         # 显示所有聊天消息
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+                # 如果是助手消息且包含 thinking 内容，使用可折叠显示
+                if message["role"] == "assistant" and message.get("thinking"):
+                    with st.expander("💭 查看思考过程", expanded=False):
+                        st.markdown(message["thinking"])
+                    st.markdown(message["content"])
+                else:
+                    st.markdown(message["content"])
     
     # 添加轻量级分隔线和空间，使输入区域更明显
     st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
@@ -284,10 +317,12 @@ def main():
         else:
             try:
                 with st.chat_message("assistant"):
+                    thinking_placeholder = st.empty()
                     message_placeholder = st.empty()
                     full_response = ""
+                    thinking_content = ""
                     
-                    # 创建消息列表，确保格式正确
+                    # 创建消息列表，确保格式正确（只包含 content，不包含 thinking）
                     messages = []
                     for m in st.session_state.messages:
                         if m["role"] == "assistant":
@@ -296,6 +331,8 @@ def main():
                             messages.append({"role": "user", "content": m["content"]})
                     
                     try:
+                        # 确保在使用前定义变量，避免未赋值引用
+                        stream = None
                         if model_type == 'openai':
                             stream = client.chat.completions.create(
                                 model=model_name,
@@ -303,7 +340,7 @@ def main():
                                 stream=True,
                                 max_completion_tokens=8000,
                             )
-                        elif model_type == 'qwen':
+                        else:
                             stream = client.chat.completions.create(
                                 model=model_name,
                                 messages=messages,
@@ -314,10 +351,47 @@ def main():
                         # 处理流式响应
                         for chunk in stream:
                             if chunk.choices and len(chunk.choices) > 0:
-                                content = chunk.choices[0].delta.content
+                                delta = chunk.choices[0].delta
+                                
+                                # 检查是否有 reasoning_content 字段（deepseek、o1 等模型）
+                                if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                                    thinking_content += delta.reasoning_content
+                                    # 实时显示思考过程
+                                    with thinking_placeholder.container():
+                                        with st.expander("💭 思考过程（实时）", expanded=True):
+                                            st.markdown(thinking_content + "▌")
+                                
+                                # 处理常规内容
+                                content = delta.content
                                 if content is not None:
                                     full_response += content
                                     message_placeholder.markdown(full_response + "▌")
+                        
+                        # 从响应中提取可能的 XML 格式的 thinking 标签
+                        # 支持 <think>、<thinking>、<thought> 等标签
+                        if not thinking_content and full_response:
+                            think_patterns = [
+                                r'<think>(.*?)</think>',
+                                r'<thinking>(.*?)</thinking>',
+                                r'<thought>(.*?)</thought>'
+                            ]
+                            for pattern in think_patterns:
+                                matches = re.findall(pattern, full_response, re.DOTALL)
+                                if matches:
+                                    thinking_content = '\n\n'.join(matches)
+                                    # 从响应中移除 thinking 标签
+                                    full_response = re.sub(pattern, '', full_response, flags=re.DOTALL).strip()
+                                    break
+                        
+                        # 清空占位符并显示最终内容
+                        thinking_placeholder.empty()
+                        message_placeholder.empty()
+                        
+                        # 如果有 thinking 内容，使用可折叠显示
+                        if thinking_content:
+                            with thinking_placeholder.container():
+                                with st.expander("💭 查看思考过程", expanded=False):
+                                    st.markdown(thinking_content)
                         
                         # 显示最终响应
                         message_placeholder.markdown(full_response)
@@ -326,9 +400,12 @@ def main():
                         if full_response:
                             # 为文件名生成一个唯一的时间戳
                             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                            download_content = full_response
+                            if thinking_content:
+                                download_content = f"## 💭 思考过程\n\n{thinking_content}\n\n## 📝 回复内容\n\n{full_response}"
                             st.download_button(
                                 label="📥 保存此条回复",
-                                data=full_response,
+                                data=download_content,
                                 file_name=f"ai_response_{timestamp}.md",
                                 mime="text/markdown",
                                 key=f"download_{timestamp}" # 使用唯一key避免冲突
@@ -336,11 +413,15 @@ def main():
                     except Exception as e:
                         error_msg = f"AI响应错误: {str(e)}"
                         logger.error(error_msg)
+                        thinking_placeholder.empty()
                         message_placeholder.error(error_msg)
                         full_response = error_msg
                         
-                # 添加助手回复到历史记录
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
+                # 添加助手回复到历史记录（包含 thinking 内容）
+                message_data = {"role": "assistant", "content": full_response}
+                if thinking_content:
+                    message_data["thinking"] = thinking_content
+                st.session_state.messages.append(message_data)
                 
                 # --- 延迟创建和保存逻辑 ---
                 # 只有当对话至少有一轮（用户提问+AI回答）时才保存

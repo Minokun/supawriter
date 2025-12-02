@@ -1,48 +1,65 @@
-# Web相关
-beautifulsoup4>=4.11.1
+# ============================================================================
+# 核心依赖 - 项目实际使用
+# ============================================================================
+
+# Web框架和HTTP请求
+streamlit>=1.22.0
+fastapi>=0.95.0
+uvicorn>=0.20.0
 requests>=2.28.1
 aiohttp>=3.8.3
 urllib3>=1.26.12
-pyOpenSSL>=22.0.0
-ddgs>=0.0.1
 
-# AI和LLM相关
+# Web内容解析
+beautifulsoup4>=4.12.3
+markdown>=3.4.3
+readability-lxml>=0.8.1
+lxml>=5.0.0
+
+# AI和LLM
 openai>=1.0.0
-transformers>=4.30.0
 
-# 图像处理
+# 图像处理和向量搜索
 pillow>=9.3.0
+faiss-cpu>=1.7.4
+numpy>=1.23.0
 
 # Web自动化
 playwright>=1.30.0
 
-# Streamlit应用
-streamlit>=1.22.0
+# 搜索引擎
+ddgs>=0.0.1
 
-# 数据处理
-pandas>=1.5.0
-numpy>=1.23.0
+# 数据库
+mysql-connector-python>=8.0.32
+psycopg2-binary>=2.9.0
+asyncpg>=0.27.0
 
-# PDF处理
-PyMuPDF>=1.20.0  # 即fitz库
+# 认证和安全
+Authlib>=1.6.0
+pyOpenSSL>=22.0.0
+
+# 异步支持
+nest-asyncio>=1.5.6
 
 # 音频处理
 pyglet>=2.0.0
 
-# 异步和并发
-nest-asyncio>=1.5.6
+# 工具库
+toml>=0.10.2
+tqdm>=4.66.4
+extra-streamlit-components>=0.1.0
+streamlit-autorefresh>=1.0.1
+jinja2>=3.1.0
+watchdog>=6.0.0
+zai-sdk>=0.0.4
+python-dotenv>=0.19.0
+pandas>=1.5.0
 
-# 其他工具库
-fastapi>=0.95.0
-uvicorn>=0.20.0
-readability-lxml>=0.8.1
-
-# 数据库
-mysql-connector-python>=8.0.32
-
-# 图片分析和文本匹配
-faiss-cpu>=1.7.4
-huggingface_hub>=0.16.0
-
-streamlit_markdown
-Authlib
+# ============================================================================
+# 已移除的依赖 - 代码中未实际使用
+# ============================================================================
+# transformers>=4.30.0  # 未使用
+# PyMuPDF>=1.20.0  # 未使用
+# huggingface_hub>=0.16.0  # 未使用
+# streamlit_markdown  # 未使用

@@ -1,66 +1,76 @@
 import streamlit as st
-from utils.auth import register_user, authenticate_user, is_authenticated, logout
+from utils.auth import is_authenticated, logout, get_user_display_name
 
 def app():
-    # Initialize session state for login page rerun trigger if not exists
-    if "login_trigger_rerun" not in st.session_state:
-        st.session_state.login_trigger_rerun = False
-        
-    if is_authenticated():
-        st.success(f"已登录为: {st.session_state.user}")
-        if st.button("退出登录"):
-            logout()
-            st.session_state.login_trigger_rerun = True
-        return True
-        
-    # Check if we need to rerun
-    if st.session_state.login_trigger_rerun:
-        st.session_state.login_trigger_rerun = False
-        st.rerun()
-    
     st.title("欢迎使用 SupaWriter")
-    
-    tab1, tab2 = st.tabs(["登录", "注册"])
-    
-    with tab1:
-        with st.form("login_form"):
-            username = st.text_input("用户名")
-            password = st.text_input("密码", type="password")
-            remember_me = st.checkbox("记住我", value=True, help="保持登录状态，下次访问无需重新登录")
-            submit = st.form_submit_button("登录")
-            
-            if submit:
-                if not username or not password:
-                    st.error("请输入用户名和密码")
-                else:
-                    success, message = authenticate_user(username, password, remember_me=remember_me)
-                    if success:
-                        st.session_state.user = username
-                        st.success(message)
-                        # Directly rerun for immediate redirect after form submission
-                        st.rerun()
+
+    # If already authenticated (OAuth or legacy), show status and logout
+    if is_authenticated():
+        display_name = get_user_display_name()
+        
+        # 显示用户信息和头像（如果是微信用户）
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            try:
+                if 'wechat_user_info' in st.session_state:
+                    headimgurl = st.session_state.wechat_user_info.get('headimgurl')
+                    if headimgurl:
+                        st.image(headimgurl, width=80)
                     else:
-                        st.error(message)
-    
-    with tab2:
-        with st.form("register_form"):
-            new_username = st.text_input("用户名")
-            new_email = st.text_input("邮箱 (可选)")
-            new_password = st.text_input("密码", type="password")
-            confirm_password = st.text_input("确认密码", type="password")
-            submit = st.form_submit_button("注册")
-            
-            if submit:
-                if not new_username or not new_password:
-                    st.error("请输入用户名和密码")
-                elif new_password != confirm_password:
-                    st.error("两次输入的密码不一致")
+                        st.write("👤")
                 else:
-                    success, message = register_user(new_username, new_password, new_email)
-                    if success:
-                        st.success(message)
-                        st.info("请前往登录页面登录")
-                    else:
-                        st.error(message)
+                    st.write("👤")
+            except Exception:
+                st.write("👤")
+        
+        with col2:
+            st.success(f"已登录为: {display_name}")
+            
+            # 显示用户来源
+            try:
+                if 'wechat_user_info' in st.session_state:
+                    st.caption("🔐 微信账号")
+                elif hasattr(st, "user") and getattr(st.user, "is_logged_in", False):
+                    st.caption("🔐 Google 账号")
+                else:
+                    st.caption("🔐 本地账号")
+            except Exception:
+                pass
+
+        if st.button("退出登录", type="secondary"):
+            logout()
+            st.rerun()
+        return True
+
+    # Not authenticated: show login options
+    st.info("使用第三方账号登录以继续")
     
+    # 创建两列布局
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("🔐 使用 Google 登录", type="primary", use_container_width=True):
+            try:
+                # Use Streamlit OAuth2 login
+                st.login("google")
+            except Exception as e:
+                st.error(f"Google 登录失败: {e}")
+    
+    with col2:
+        # 微信登录按钮
+        try:
+            from utils.wechat_oauth import init_wechat_oauth, wechat_login_flow
+            
+            wechat_oauth = init_wechat_oauth()
+            if wechat_oauth:
+                # 处理微信登录流程
+                wechat_login_flow()
+            else:
+                # 微信未配置，显示禁用状态
+                st.button("🔐 使用微信登录", type="secondary", use_container_width=True, disabled=True)
+                st.caption("⚠️ 微信登录未配置")
+        except Exception as e:
+            st.button("🔐 使用微信登录", type="secondary", use_container_width=True, disabled=True)
+            st.caption(f"❌ 微信登录错误: {e}")
+
     return False

@@ -12,7 +12,9 @@ import requests
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True
 )
 logger = logging.getLogger(__name__)
 
@@ -88,6 +90,15 @@ def openai_ali(prompt=sample_prompt, image_path: str = None, image_url: str = No
 
 def process_image(prompt=sample_prompt, image_path: str = None, image_url: str = None, image_content: bytes = None):
     return openai_ali(prompt, image_path, image_url, image_content)
+
+
+async def process_image_async(prompt=sample_prompt, image_path: str = None, image_url: str = None, image_content: bytes = None):
+    """
+    异步版本的 process_image，使用 asyncio.to_thread 在线程池中执行同步的多模态API调用。
+    这样可以避免阻塞事件循环，实现真正的并发处理。
+    """
+    import asyncio
+    return await asyncio.to_thread(openai_ali, prompt, image_path, image_url, image_content)
     
 # 已移除call_gemma3_api函数，统一使用qwen模型处理图像
 

@@ -75,6 +75,46 @@ def create_thread_safe_callback(task_state: dict, progress_key: str, text_key: s
     
     return safe_progress_callback
 
+def create_spider_progress_callback(task_state: dict, progress_key: str, text_key: str, 
+                                    start_percent: int, end_percent: int,
+                                    embed_start_percent: int, embed_end_percent: int,
+                                    log_prefix: str = "Progress"):
+    """
+    Creates a thread-safe progress callback that handles both spider and image embedding progress.
+    
+    Args:
+        task_state: Dictionary to store task state
+        progress_key: Key for progress percentage in task_state
+        text_key: Key for progress text in task_state
+        start_percent: Starting percentage for spider task
+        end_percent: Ending percentage for spider task
+        embed_start_percent: Starting percentage for image embedding
+        embed_end_percent: Ending percentage for image embedding
+        log_prefix: Prefix for log messages
+        
+    Returns:
+        A thread-safe callback function that handles both progress types
+    """
+    @thread_safe_callback
+    def safe_progress_callback(completed, total):
+        # 负数表示图片 embedding 阶段
+        if completed < 0 and total < 0:
+            batch_num = -completed
+            total_batches = -total
+            # 计算图片 embedding 进度
+            progress_percentage = embed_start_percent + int((batch_num / total_batches) * (embed_end_percent - embed_start_percent))
+            task_state[progress_key] = progress_percentage
+            task_state[text_key] = f"正在处理图片嵌入 ({batch_num}/{total_batches} 批)"
+            logger.info(f"图片嵌入进度: {batch_num}/{total_batches} 批")
+        else:
+            # 正常的爬虫进度
+            progress_percentage = start_percent + int((completed / total) * (end_percent - start_percent))
+            task_state[progress_key] = progress_percentage
+            task_state[text_key] = f"{log_prefix} ({completed}/{total})"
+            logger.info(f"{log_prefix}: {completed}/{total}")
+    
+    return safe_progress_callback
+
 def process_thread_updates():
     """
     Process any pending thread updates from the main Streamlit thread.

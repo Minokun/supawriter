@@ -5,6 +5,47 @@ import logging
 from datetime import datetime
 import streamlit as st
 
+# Helper to sanitize filenames to avoid path traversal and illegal characters
+def sanitize_filename(name: str, replacement: str = '_', max_length: int = 200) -> str:
+    """
+    Sanitize a filename by removing path separators and illegal characters.
+    Keeps unicode characters, but replaces characters invalid on common filesystems.
+    Ensures the final length is within max_length.
+    """
+    if not name:
+        return uuid.uuid4().hex
+
+    # Replace OS-specific path separators
+    name = name.replace(os.sep, replacement)
+    if os.altsep:
+        name = name.replace(os.altsep, replacement)
+
+    # Replace characters generally invalid in filenames and problematic in URLs
+    # Include URL-reserved characters to avoid web server issues (e.g., '%', '#', '&', '+')
+    invalid_chars = '<>:"/\\|?*#%&+\n\r\t'
+    name = ''.join((c if (c not in invalid_chars and ord(c) >= 32) else replacement) for c in name)
+
+    # Normalize repeated replacements
+    while replacement*2 in name:
+        name = name.replace(replacement*2, replacement)
+
+    # Trim leading/trailing spaces and dots
+    name = name.strip().strip('.')
+
+    # Enforce max length while keeping extension if present
+    if len(name) > max_length:
+        base, ext = os.path.splitext(name)
+        # Limit extremely long extensions defensively
+        ext = ext[:10]
+        keep = max(1, max_length - len(ext))
+        name = base[:keep] + ext
+
+    # Fallback if becomes empty
+    if not name:
+        name = uuid.uuid4().hex
+
+    return name
+
 # Path to the history database file
 HISTORY_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'history')
 
@@ -95,9 +136,76 @@ def delete_history_record(username, record_id):
     Delete a history record by id for the user.
     """
     history = load_user_history(username)
+    # Find the record to delete (to derive related file paths)
+    record_to_delete = None
+    for r in history:
+        if r.get("id") == record_id:
+            record_to_delete = r
+            break
+
+    # Build user html dir path
+    user_html_dir = os.path.join(DATA_DIR, 'html', username)
+
+    # Attempt to delete related local files if present
+    if record_to_delete is not None:
+        try:
+            topic = record_to_delete.get('topic', 'article')
+            # Keep filename generation consistent with page/history.py
+            base_name = f"{topic.replace(' ', '_')}_{record_to_delete.get('id')}"
+
+            # HTML file
+            html_filename = sanitize_filename(f"{base_name}.html")
+            html_path = os.path.join(user_html_dir, html_filename)
+            if os.path.exists(html_path):
+                try:
+                    os.remove(html_path)
+                    logging.info(f"Removed history HTML file: {html_path}")
+                except Exception as e:
+                    logging.error(f"Error removing history HTML file {html_path}: {e}")
+
+            # Screenshot file (if any)
+            screenshot_filename = sanitize_filename(f"{base_name}_screenshot.png")
+            screenshot_path = os.path.join(user_html_dir, screenshot_filename)
+            if os.path.exists(screenshot_path):
+                try:
+                    os.remove(screenshot_path)
+                    logging.info(f"Removed history screenshot file: {screenshot_path}")
+                except Exception as e:
+                    logging.error(f"Error removing history screenshot file {screenshot_path}: {e}")
+        except Exception as e:
+            logging.error(f"Error during cleanup of files for record {record_id}: {e}")
+
+    # Persist filtered history list
     new_history = [r for r in history if r.get("id") != record_id]
     save_user_history(username, new_history)
     return True
+
+def update_history_record(username, record_id, new_content):
+    """
+    Update the content of a history record by id.
+    
+    Args:
+        username: The username of the user
+        record_id: The id of the record to update
+        new_content: The new article content
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    from datetime import datetime
+    
+    history = load_user_history(username)
+    
+    for record in history:
+        if record.get("id") == record_id:
+            record["article_content"] = new_content
+            record["edited_at"] = datetime.now().isoformat()
+            save_user_history(username, history)
+            logging.info(f"Updated history record {record_id} for user {username}")
+            return True
+    
+    logging.warning(f"Record {record_id} not found for user {username}")
+    return False
 
 def save_html_to_user_dir(username, html_content, filename=None):
     """
@@ -121,6 +229,9 @@ def save_html_to_user_dir(username, html_content, filename=None):
         filename = f"{uuid.uuid4().hex}.html"
     elif not filename.endswith('.html'):
         filename = f"{filename}.html"
+
+    # Sanitize filename to avoid illegal characters and separators
+    filename = sanitize_filename(filename)
     
     # Full path to save the file
     file_path = os.path.join(user_html_dir, filename)
@@ -163,6 +274,9 @@ def save_image_to_user_dir(username, image_data, filename=None):
         filename = f"{uuid.uuid4().hex}.png"
     elif not filename.endswith(('.png', '.jpg', '.jpeg', '.gif')):
         filename = f"{filename}.png"
+
+    # Sanitize filename
+    filename = sanitize_filename(filename)
     
     # Full path to save the file
     file_path = os.path.join(user_html_dir, filename)
@@ -383,4 +497,68 @@ def delete_chat_session(username, session_id):
             print(f"Error deleting chat session {session_id}: {str(e)}")
     
     return False
+
+
+# ================ Tweet Topics History Functions ================
+
+TWEET_TOPICS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'tweet_topics')
+os.makedirs(TWEET_TOPICS_DIR, exist_ok=True)
+
+def get_user_tweet_topics_file(username):
+    """Get the path to the user's tweet topics history file."""
+    return os.path.join(TWEET_TOPICS_DIR, f"{username}_tweet_topics.json")
+
+def load_tweet_topics_history(username):
+    """Load tweet topics history from the history file."""
+    history_file = get_user_tweet_topics_file(username)
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            return []
+    return []
+
+def save_tweet_topics_history(username, history):
+    """Save tweet topics history to the history file."""
+    history_file = get_user_tweet_topics_file(username)
+    with open(history_file, 'w', encoding='utf-8') as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
+
+def add_tweet_topics_record(username, news_source, news_count, topics_data, model_type, model_name):
+    """
+    Add a new tweet topics record to the user's history.
+    
+    Args:
+        username: The username of the user
+        news_source: The news source used
+        news_count: Number of news items fetched
+        topics_data: The generated topics data (JSON object)
+        model_type: The type of model used
+        model_name: The name of the model used
+    
+    Returns:
+        dict: The newly created record
+    """
+    history = load_tweet_topics_history(username)
+    record_id = max([r.get("id", 0) for r in history], default=0) + 1
+    record = {
+        "id": record_id,
+        "news_source": news_source,
+        "news_count": news_count,
+        "topics_data": topics_data,
+        "model_type": model_type,
+        "model_name": model_name,
+        "timestamp": datetime.now().isoformat()
+    }
+    history.append(record)
+    save_tweet_topics_history(username, history)
+    return record
+
+def delete_tweet_topics_record(username, record_id):
+    """Delete a tweet topics record by id for the user."""
+    history = load_tweet_topics_history(username)
+    new_history = [r for r in history if r.get("id") != record_id]
+    save_tweet_topics_history(username, new_history)
+    return True
 

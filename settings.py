@@ -4,6 +4,11 @@ import os
 import sys
 import streamlit as st
 from openai import OpenAI
+import logging
+
+for name, l in logging.root.manager.loggerDict.items():
+    if "streamlit" in name:
+        l.disabled = True
 
 base_path = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(base_path)
@@ -139,7 +144,7 @@ def get_embedding_config():
         },
         'xinference': {
             'model': current_model,
-            'host': SECRETS['xinference']['base_url'] + '/embeddings',
+            'host': 'http://10.10.10.90:7009/v1' + '/embeddings',
             'api_key': SECRETS['xinference']['api_key'],
             'timeout': current_timeout
         },
@@ -167,7 +172,8 @@ PROCESS_CONFIG = {
         "base_url": SECRETS['dashscope']['base_url']
     },
     "glm": {
-        "model": "glm-4.1v-thinking-flash",
+        # "model": "glm-4.1v-thinking-flash",
+        "model": "glm-4.5v",
         "api_key": SECRETS['glm']['api_key'],
         "base_url": SECRETS['glm']['base_url']
     }
@@ -175,8 +181,22 @@ PROCESS_CONFIG = {
 
 # 文章生成设置
 # 爬取网页数量默认值
-DEFAULT_SPIDER_NUM = 30
+DEFAULT_SPIDER_NUM = 20
 # 是否自动插入相关图片默认值
 DEFAULT_ENABLE_IMAGES = True
 # 图片嵌入方式 ('multimodal' 或 'direct_embedding')
-DEFAULT_IMAGE_EMBEDDING_METHOD = 'multimodal'
+DEFAULT_IMAGE_EMBEDDING_METHOD = 'direct_embedding'
+
+# Serper 搜索引擎 API 设置
+# 从 secrets 中获取 API key
+SERPER_API_KEY = st.secrets.get('SERPER_API_KEY')
+if SERPER_API_KEY and isinstance(SERPER_API_KEY, str):
+    SERPER_API_KEY = SERPER_API_KEY.strip()
+    if SERPER_API_KEY:
+        logging.debug(f"✅ Serper API Key 已配置: {SERPER_API_KEY[:10]}...{SERPER_API_KEY[-4:]}")
+    else:
+        SERPER_API_KEY = None
+        logging.debug("⚠️ Serper API Key 为空字符串")
+else:
+    SERPER_API_KEY = None
+    logging.debug("⚠️ Serper API Key 未配置")
