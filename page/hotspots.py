@@ -9,6 +9,275 @@ import html
 from streamlit_autorefresh import st_autorefresh
 import streamlit.components.v1 as components
 
+# ============== 缓存数据获取函数 ==============
+# 使用 st.cache_data 缓存API数据，TTL=300秒（5分钟）
+# 这样在刷新周期内，点击按钮不会重新请求API
+
+CACHE_TTL = 300  # 5分钟缓存
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _get_thepaper_data():
+    """获取澎湃新闻数据（缓存）"""
+    try:
+        url = "https://cache.thepaper.cn/contentapi/wwwIndex/rightSidebar"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Referer': 'https://www.thepaper.cn/',
+        }
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 200:
+            data = response.json()
+            return {'success': True, 'data': data.get('data', {}).get('hotNews', [])}
+    except Exception as e:
+        pass
+    return {'success': False, 'error': '获取数据失败'}
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _get_36kr_data():
+    """获取36Kr数据（缓存）"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    }
+    try:
+        # 方案1: 今日热榜
+        tophub_url = "https://tophub.today/n/Q1Vd5Ko85R"
+        response = requests.get(tophub_url, headers=headers, timeout=15)
+        if response.status_code == 200 and '安全验证' not in response.text:
+            pattern = r'<td[^>]*>(\d+)\.</td>\s*<td[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>\s*</td>\s*<td[^>]*class="ws"[^>]*>([^<]*)</td>'
+            items = re.findall(pattern, response.text)
+            if items:
+                result = []
+                for rank, item_url, title, hot in items[:20]:
+                    result.append({
+                        'title': html.unescape(title.strip()),
+                        'url': item_url,
+                        'hot': hot.strip()
+                    })
+                return {'success': True, 'data': result, 'source': 'tophub'}
+        
+        # 方案2: 36Kr官网
+        url = "https://36kr.com/newsflashes"
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            links = re.findall(r'href="/newsflashes/(\d+)"[^>]*>([^<]+)</a>', response.text)
+            if links:
+                result = []
+                for item_id, title in links[:20]:
+                    title = html.unescape(title.strip())
+                    if title and len(title) > 5:
+                        result.append({
+                            'title': title,
+                            'url': f"https://36kr.com/newsflashes/{item_id}",
+                            'hot': ''
+                        })
+                return {'success': True, 'data': result, 'source': '36kr'}
+    except Exception:
+        pass
+    return {'success': False, 'error': '获取数据失败'}
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _get_baidu_data():
+    """获取百度热搜数据（缓存）"""
+    try:
+        url = "https://top.baidu.com/board?tab=realtime"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        json_match = re.search(r'<!--s-data:({.*?})-->', response.text)
+        if json_match:
+            data = json.loads(json_match.group(1))
+            cards = data.get('data', {}).get('cards', [])
+            if cards:
+                content = cards[0].get('content', [])
+                result = []
+                for item in content:
+                    result.append({
+                        'title': item.get('word', ''),
+                        'desc': item.get('desc', ''),
+                        'url': item.get('url', '') or f"https://www.baidu.com/s?wd={item.get('word', '')}",
+                        'hot_score': item.get('hotScore', '')
+                    })
+                return {'success': True, 'data': result}
+    except Exception:
+        pass
+    return {'success': False, 'error': '获取数据失败'}
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _get_weibo_data():
+    """获取微博热搜数据（缓存）"""
+    try:
+        url = "https://s.weibo.com/top/summary"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Cookie': 'SUB=_2AkMWJ_fdf8NxqwJRmP8SxWjnaY12yQ_EieKkjrMJJRMxHRl-yT9jqmgbtRB6PO6Nc9vS-pTH2Q7q8lW1D4q4e6P4'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            items = re.findall(r'<a href="(/weibo\?q=[^"]+)"[^>]*>(.*?)</a>.*?<span[^>]*>(.*?)</span>', response.text, re.DOTALL)
+            if not items:
+                items = re.findall(r'<a href="(/weibo\?q=[^"]+)"[^>]*>(.*?)</a>', response.text)
+                items = [(x[0], x[1], "") for x in items]
+            
+            hot_list = []
+            seen_titles = set()
+            for link, title, heat in items:
+                title = html.unescape(title).strip()
+                heat = heat.strip()
+                if title in ['首页', '发现', '游戏', '注册', '登录', '帮助', '剧集影响力榜', '综艺影响力榜', '更多']:
+                    continue
+                if title not in seen_titles:
+                    seen_titles.add(title)
+                    hot_list.append({
+                        'title': title,
+                        'url': f"https://s.weibo.com{link}",
+                        'heat': heat
+                    })
+            return {'success': True, 'data': hot_list[:30]}
+    except Exception:
+        pass
+    return {'success': False, 'error': '获取数据失败'}
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _get_douyin_data():
+    """获取抖音热搜数据（缓存）"""
+    try:
+        url = "https://www.douyin.com/aweme/v1/web/hot/search/list/"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://www.douyin.com/billboard/',
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            word_list = data.get('data', {}).get('word_list', [])
+            if word_list:
+                result = []
+                for item in word_list:
+                    result.append({
+                        'title': item.get('word', ''),
+                        'hot_value': item.get('hot_value', 0)
+                    })
+                return {'success': True, 'data': result}
+    except Exception:
+        pass
+    return {'success': False, 'error': '获取数据失败'}
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _get_tophub_data(tophub_id: str):
+    """通用今日热榜数据获取（缓存）"""
+    try:
+        url = f"https://tophub.today/n/{tophub_id}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        }
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 200 and '安全验证' not in response.text:
+            pattern = r'<td[^>]*>(\d+)\.</td>\s*<td[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>\s*</td>\s*<td[^>]*class="ws"[^>]*>([^<]*)</td>'
+            items = re.findall(pattern, response.text)
+            if items:
+                result = []
+                for rank, item_url, title, hot in items[:25]:
+                    result.append({
+                        'title': html.unescape(title.strip()),
+                        'url': item_url,
+                        'hot': hot.strip()
+                    })
+                return {'success': True, 'data': result}
+    except Exception:
+        pass
+    return {'success': False, 'error': '获取数据失败'}
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _get_bilibili_data():
+    """获取B站热门数据（缓存）"""
+    try:
+        url = "https://api.bilibili.com/x/web-interface/popular?ps=50&pn=1"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://www.bilibili.com/'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('code') == 0 and data.get('data', {}).get('list'):
+                hot_list = data['data']['list']
+                result = []
+                for item in hot_list[:30]:
+                    stat = item.get('stat', {})
+                    view = stat.get('view', 0)
+                    view_str = f"{view/10000:.1f}万" if view >= 10000 else str(view)
+                    result.append({
+                        'title': item.get('title', ''),
+                        'owner': item.get('owner', {}).get('name', ''),
+                        'tname': item.get('tname', ''),
+                        'view_str': view_str,
+                        'bvid': item.get('bvid', '')
+                    })
+                return {'success': True, 'data': result, 'type': 'popular'}
+        
+        # 备用：搜索热词
+        url2 = "https://api.bilibili.com/x/web-interface/search/square?limit=50"
+        response2 = requests.get(url2, headers=headers, timeout=10)
+        if response2.status_code == 200:
+            data2 = response2.json()
+            if data2.get('code') == 0 and data2.get('data', {}).get('trending', {}).get('list'):
+                hot_list = data2['data']['trending']['list']
+                result = []
+                for item in hot_list[:30]:
+                    keyword = item.get('keyword', item.get('show_name', ''))
+                    icon = item.get('icon', '')
+                    tag = ""
+                    if icon:
+                        if 'hot' in icon.lower():
+                            tag = "🔥 "
+                        elif 'new' in icon.lower():
+                            tag = "🆕 "
+                    result.append({
+                        'keyword': f"{tag}{keyword}",
+                        'url': f"https://search.bilibili.com/all?keyword={keyword}"
+                    })
+                return {'success': True, 'data': result, 'type': 'search'}
+    except Exception:
+        pass
+    return {'success': False, 'error': '获取数据失败'}
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _get_zhihu_data():
+    """获取知乎热榜数据（缓存）"""
+    # 先尝试今日热榜
+    tophub_result = _get_tophub_data("mproPpoq6O")
+    if tophub_result['success']:
+        return tophub_result
+    
+    # 备用：知乎API
+    try:
+        url = "https://www.zhihu.com/api/v3/feed/topstory/hot-lists/total?limit=50"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://www.zhihu.com/hot'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            hot_list = data.get('data', [])
+            if hot_list:
+                result = []
+                for item in hot_list[:25]:
+                    target = item.get('target', {})
+                    result.append({
+                        'title': target.get('title', ''),
+                        'hot': item.get('detail_text', ''),
+                        'url': f"https://www.zhihu.com/question/{target.get('id', '')}" if target.get('id') else "#"
+                    })
+                return {'success': True, 'data': result, 'source': 'api'}
+    except Exception:
+        pass
+    return {'success': False, 'error': '获取数据失败'}
+
+# ============== 主程序 ==============
+
 @require_auth
 def main():
     # 检查是否需要跳转到超级写手页面（由撰写按钮的 on_click 回调设置）
@@ -233,28 +502,16 @@ def fetch_thepaper_hot():
     """获取澎湃新闻热点"""
     st.markdown("### 澎湃新闻 - 热点要闻")
     
-    try:
-        url = "https://cache.thepaper.cn/contentapi/wwwIndex/rightSidebar"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Referer': 'https://www.thepaper.cn/',
-        }
-        response = requests.get(url, headers=headers, timeout=15)
-        
-        if response.status_code == 200:
-            data = response.json()
-            hot_news = data.get('data', {}).get('hotNews', [])
-            
-            if hot_news:
-                for idx, news in enumerate(hot_news[:20], 1):
-                    display_thepaper_card(idx, news)
-            else:
-                st.warning("暂无澎湃热点数据")
+    result = _get_thepaper_data()
+    if result['success']:
+        hot_news = result['data']
+        if hot_news:
+            for idx, news in enumerate(hot_news[:20], 1):
+                display_thepaper_card(idx, news)
         else:
-            st.error(f"获取澎湃热点失败，状态码：{response.status_code}")
-    except Exception as e:
-        st.error(f"获取澎湃热点失败：{str(e)[:100]}")
+            st.warning("暂无澎湃热点数据")
+    else:
+        st.error("获取澎湃热点失败")
 
 
 def display_thepaper_card(rank, news):
@@ -319,622 +576,204 @@ def fetch_36kr_news():
     """获取36Kr快讯 (通过今日热榜API)"""
     st.markdown("### 36Kr - 24小时快讯")
     
-    try:
-        # 方案1: 使用今日热榜获取36Kr数据（更稳定）
-        tophub_url = "https://tophub.today/n/Q1Vd5Ko85R"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
-        
-        response = requests.get(tophub_url, headers=headers, timeout=15)
-        
-        if response.status_code == 200 and '安全验证' not in response.text:
-            # 解析今日热榜的HTML格式
-            pattern = r'<td[^>]*>(\d+)\.</td>\s*<td[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>\s*</td>\s*<td[^>]*class="ws"[^>]*>([^<]*)</td>'
-            items = re.findall(pattern, response.text)
-            
-            if items:
-                for idx, (rank, item_url, title, hot) in enumerate(items[:20], 1):
-                    title = html.unescape(title.strip())
-                    hot = hot.strip()
-                    display_hotspot_card(
-                        idx,
-                        title,
-                        f"🔥 {hot}" if hot else "",
-                        item_url,
-                        "36Kr快讯",
-                        source="36Kr"
-                    )
-                return
-        
-        # 方案2: 直接请求36Kr页面
-        url = "https://36kr.com/newsflashes"
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            # 尝试解析 window.initialState
-            state_match = re.search(r'window\.initialState\s*=\s*({.*?});', response.text, re.DOTALL)
-            
-            if state_match:
-                try:
-                    state_json = json.loads(state_match.group(1))
-                    news_list = []
-                    
-                    # 尝试多种可能的数据路径
-                    if 'newsflashCatalogData' in state_json:
-                        data = state_json['newsflashCatalogData']
-                        if isinstance(data, dict) and 'data' in data:
-                            news_list = data['data'].get('itemList', [])
-                    
-                    if not news_list and 'newsflashList' in state_json:
-                        flow = state_json['newsflashList'].get('flow', {})
-                        news_list = flow.get('itemList', [])
-                    
-                    # 尝试其他可能的路径
-                    if not news_list:
-                        for key in state_json:
-                            if 'newsflash' in key.lower() or 'news' in key.lower():
-                                val = state_json[key]
-                                if isinstance(val, dict):
-                                    for subkey in ['itemList', 'list', 'data', 'items']:
-                                        if subkey in val and isinstance(val[subkey], list):
-                                            news_list = val[subkey]
-                                            break
-                                    if not news_list and 'data' in val and isinstance(val['data'], dict):
-                                        news_list = val['data'].get('itemList', [])
-                                if news_list:
-                                    break
-                        
-                    if news_list:
-                        for idx, item in enumerate(news_list[:20], 1):
-                            template = item.get('templateMaterial', {})
-                            title = template.get('widgetTitle', '') or item.get('title', '') or item.get('name', '')
-                            summary = template.get('widgetContent', '') or item.get('summary', '') or item.get('description', '')
-                            item_id = item.get('itemId') or item.get('id')
-                            item_url = f"https://36kr.com/newsflashes/{item_id}" if item_id else "https://36kr.com/newsflashes"
-                            
-                            if title:
-                                display_hotspot_card(
-                                    idx,
-                                    title,
-                                    summary[:100] if summary else "",
-                                    item_url,
-                                    "36Kr快讯",
-                                    source="36Kr"
-                                )
-                        return
-                except Exception:
-                    pass
-            
-            # 备用：正则匹配HTML
-            links = re.findall(r'href="/newsflashes/(\d+)"[^>]*>([^<]+)</a>', response.text)
-            if links:
-                for idx, (item_id, title) in enumerate(links[:20], 1):
-                    title = html.unescape(title.strip())
-                    if title and len(title) > 5:
-                        item_url = f"https://36kr.com/newsflashes/{item_id}"
-                        display_hotspot_card(
-                            idx,
-                            title,
-                            "",
-                            item_url,
-                            "36Kr快讯",
-                            source="36Kr"
-                        )
-                return
-
+    result = _get_36kr_data()
+    if result['success']:
+        for idx, item in enumerate(result['data'], 1):
+            display_hotspot_card(
+                idx,
+                item['title'],
+                f"🔥 {item['hot']}" if item['hot'] else "",
+                item['url'],
+                "36Kr快讯",
+                source="36Kr"
+            )
+    else:
         st.warning("无法解析36Kr数据，请稍后重试")
-            
-    except Exception as e:
-        st.error(f"获取36Kr数据失败: {str(e)}")
 
 def fetch_baidu_hot():
     """获取百度热搜"""
     st.markdown("### 百度实时热搜")
     
-    try:
-        url = "https://top.baidu.com/board?tab=realtime"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        # 尝试解析JSON数据
-        # <!--s-data:{"data":{...}}-->
-        json_match = re.search(r'<!--s-data:({.*?})-->', response.text)
-        
-        if json_match:
-            try:
-                data = json.loads(json_match.group(1))
-                cards = data.get('data', {}).get('cards', [])
-                if cards:
-                    # 通常第一个card是热搜榜
-                    content = cards[0].get('content', [])
-                    for idx, item in enumerate(content, 1):
-                        title = item.get('word', '')
-                        desc = item.get('desc', '')
-                        url = item.get('url', '') or f"https://www.baidu.com/s?wd={title}"
-                        hot_score = item.get('hotScore', '')
-                        
-                        display_hotspot_card(
-                            idx,
-                            title,
-                            desc,
-                            url,
-                            f"热度指数: {hot_score}",
-                            source="Baidu"
-                        )
-                    return
-            except:
-                pass
-
-        # 降级使用正则匹配HTML
-        titles = re.findall(r'<div class="c-single-text-ellipsis">\s*(.*?)\s*</div>', response.text)
-        # 过滤非热搜项
-        valid_titles = [t.strip() for t in titles if t.strip() and "热搜" not in t][:30]
-        
-        if valid_titles:
-            for idx, title in enumerate(valid_titles, 1):
-                title = html.unescape(title)
-                display_hotspot_card(
-                    idx, title, "", f"https://www.baidu.com/s?wd={title}", "百度热搜", source="Baidu"
-                )
-        else:
-            st.warning("未能获取百度热搜数据")
-            
-    except Exception as e:
-        st.error(f"获取百度热搜失败: {str(e)}")
+    result = _get_baidu_data()
+    if result['success']:
+        for idx, item in enumerate(result['data'], 1):
+            display_hotspot_card(
+                idx,
+                item['title'],
+                item['desc'],
+                item['url'],
+                f"热度指数: {item['hot_score']}",
+                source="Baidu"
+            )
+    else:
+        st.warning("未能获取百度热搜数据")
 
 def fetch_weibo_hot():
     """获取微博热搜 (通过HTML解析)"""
     st.markdown("### 微博热搜榜")
     
-    try:
-        # 使用不需要登录的HTML页面
-        url = "https://s.weibo.com/top/summary"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Cookie': 'SUB=_2AkMWJ_fdf8NxqwJRmP8SxWjnaY12yQ_EieKkjrMJJRMxHRl-yT9jqmgbtRB6PO6Nc9vS-pTH2Q7q8lW1D4q4e6P4' # 尝试使用访客Cookie
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            # 解析表格行
-            # <td class="td-01 ranktop">1</td>
-            # <td class="td-02"><a href="/weibo?q=...">标题</a><span>热度</span></td>
-            
-            # 使用findall查找所有行
-            # 每一行包含rank, link, title, heat
-            # 注意：置顶热搜可能没有rank或者rank是icon
-            
-            # 匹配 rank
-            # 匹配内容
-            
-            # 这里简化处理，直接找所有含有 href="/weibo?q=" 的链接
-            # 优化正则：
-            # 1. 允许 span 带属性
-            # 2. 允许 span 内容不仅仅是数字 (虽然通常是数字)
-            # 3. 使用 re.DOTALL (re.S) 确保跨行匹配
-            items = re.findall(r'<a href="(/weibo\?q=[^"]+)"[^>]*>(.*?)</a>.*?<span[^>]*>(.*?)</span>', response.text, re.DOTALL)
-            
-            # 如果上面的没匹配到（比如置顶没有span或者格式不同），尝试宽松匹配
-            if not items:
-                 items = re.findall(r'<a href="(/weibo\?q=[^"]+)"[^>]*>(.*?)</a>', response.text)
-                 # 补全格式
-                 items = [(x[0], x[1], "") for x in items]
-            
-            # 过滤掉"剧集影响力榜"等导航链接 (通常不带热度或者特定关键词)
-            # 真正热搜通常带有热度数字，或者是在特定区域
-            
-            hot_list = []
-            for link, title, heat in items:
-                title = html.unescape(title).strip()
-                heat = heat.strip()
-                
-                # 排除导航项
-                if title in ['首页', '发现', '游戏', '注册', '登录', '帮助', '剧集影响力榜', '综艺影响力榜', '更多']:
-                    continue
-                
-                # 修正链接
-                full_url = f"https://s.weibo.com{link}"
-                hot_list.append({
-                    'title': title,
-                    'url': full_url,
-                    'heat': heat
-                })
-            
-            if hot_list:
-                # 微博置顶项通常在第一个但没有热度，后续有热度
-                # 简单去重
-                seen_titles = set()
-                unique_list = []
-                for item in hot_list:
-                    if item['title'] not in seen_titles:
-                        seen_titles.add(item['title'])
-                        unique_list.append(item)
-                
-                for idx, item in enumerate(unique_list[:30], 1):
-                    heat_display = f"热度: {item['heat']}" if item['heat'] else "置顶/推荐"
-                    display_hotspot_card(
-                        idx,
-                        item['title'],
-                        heat_display,
-                        item['url'],
-                        "微博实时热搜",
-                        source="Weibo"
-                    )
-            else:
-                st.warning("未找到微博热搜数据")
-        else:
-            st.error(f"访问微博受限 (Status: {response.status_code})")
-            
-    except Exception as e:
-        st.error(f"获取微博热搜失败: {str(e)}")
+    result = _get_weibo_data()
+    if result['success'] and result['data']:
+        for idx, item in enumerate(result['data'], 1):
+            heat_display = f"热度: {item['heat']}" if item['heat'] else "置顶/推荐"
+            display_hotspot_card(
+                idx,
+                item['title'],
+                heat_display,
+                item['url'],
+                "微博实时热搜",
+                source="Weibo"
+            )
+    else:
+        st.warning("未找到微博热搜数据")
 
 def fetch_douyin_hot():
     """获取抖音热搜"""
     st.markdown("### 抖音热搜榜")
     
-    try:
-        url = "https://www.douyin.com/aweme/v1/web/hot/search/list/"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': 'https://www.douyin.com/billboard/',
-            # 抖音可能需要Cookie才能返回数据，如果为空可能返回空列表
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            word_list = data.get('data', {}).get('word_list', [])
-            
-            if word_list:
-                for idx, item in enumerate(word_list, 1):
-                    title = item.get('word', '')
-                    hot_value = item.get('hot_value', 0)
-                    # 抖音链接
-                    url = f"https://www.douyin.com/search/{title}"
-                    
-                    display_hotspot_card(
-                        idx,
-                        title,
-                        f"热度: {hot_value/10000:.1f}万",
-                        url,
-                        "抖音热搜",
-                        source="Douyin"
-                    )
-            else:
-                st.warning("未找到抖音热搜数据，可能需要更新Cookie")
-        else:
-            st.error(f"获取抖音数据失败: {response.status_code}")
-            
-    except Exception as e:
-        st.error(f"获取抖音热搜失败: {str(e)}")
+    result = _get_douyin_data()
+    if result['success'] and result['data']:
+        for idx, item in enumerate(result['data'], 1):
+            hot_value = item.get('hot_value', 0)
+            display_hotspot_card(
+                idx,
+                item['title'],
+                f"热度: {hot_value/10000:.1f}万",
+                f"https://www.douyin.com/search/{item['title']}",
+                "抖音热搜",
+                source="Douyin"
+            )
+    else:
+        st.warning("未找到抖音热搜数据，可能需要更新Cookie")
 
 def fetch_xiaohongshu_hot():
     """获取小红书热搜 - 通过今日热榜"""
     st.markdown("### 小红书热搜榜")
     
-    try:
-        # 使用今日热榜获取小红书热搜
-        url = "https://tophub.today/n/L4MdA5ldxD"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
-        
-        response = requests.get(url, headers=headers, timeout=15)
-        
-        if response.status_code == 200 and '安全验证' not in response.text:
-            # 解析HTML: <td>排名</td><td><a href="url">标题</a></td><td class="ws">热度</td>
-            pattern = r'<td[^>]*>(\d+)\.</td>\s*<td[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>\s*</td>\s*<td[^>]*class="ws"[^>]*>([^<]*)</td>'
-            items = re.findall(pattern, response.text)
-            
-            if items:
-                for idx, (rank, item_url, title, hot) in enumerate(items[:20], 1):
-                    title = html.unescape(title.strip())
-                    hot = hot.strip()
-                    display_hotspot_card(
-                        idx,
-                        title,
-                        f"🔥 {hot}" if hot else "",
-                        item_url,
-                        "小红书热搜",
-                        source="Xiaohongshu"
-                    )
-                return
-        
-        _show_platform_search_fallback("小红书", "https://www.xiaohongshu.com/explore")
-            
-    except Exception as e:
+    result = _get_tophub_data("L4MdA5ldxD")
+    if result['success'] and result['data']:
+        for idx, item in enumerate(result['data'][:20], 1):
+            display_hotspot_card(
+                idx,
+                item['title'],
+                f"🔥 {item['hot']}" if item['hot'] else "",
+                item['url'],
+                "小红书热搜",
+                source="Xiaohongshu"
+            )
+    else:
         _show_platform_search_fallback("小红书", "https://www.xiaohongshu.com/explore")
 
 def fetch_kuaishou_hot():
     """获取快手热搜 - 通过今日热榜"""
     st.markdown("### 快手热搜榜")
     
-    try:
-        # 使用今日热榜获取快手热搜
-        url = "https://tophub.today/n/MZd7PrPerO"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
-        
-        response = requests.get(url, headers=headers, timeout=15)
-        
-        if response.status_code == 200 and '安全验证' not in response.text:
-            # 解析HTML: <td>排名</td><td><a href="url">标题</a></td><td class="ws">热度</td>
-            pattern = r'<td[^>]*>(\d+)\.</td>\s*<td[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>\s*</td>\s*<td[^>]*class="ws"[^>]*>([^<]*)</td>'
-            items = re.findall(pattern, response.text)
-            
-            if items:
-                for idx, (rank, item_url, title, hot) in enumerate(items[:20], 1):
-                    title = html.unescape(title.strip())
-                    hot = hot.strip()
-                    # 快手搜索链接
-                    search_url = f"https://www.kuaishou.com/search/video?searchKey={title}"
-                    display_hotspot_card(
-                        idx,
-                        title,
-                        f"🔥 {hot}" if hot else "",
-                        search_url,
-                        "快手热搜",
-                        source="Kuaishou"
-                    )
-                return
-        
-        _show_platform_search_fallback("快手", "https://www.kuaishou.com/")
-            
-    except Exception as e:
+    result = _get_tophub_data("MZd7PrPerO")
+    if result['success'] and result['data']:
+        for idx, item in enumerate(result['data'][:20], 1):
+            search_url = f"https://www.kuaishou.com/search/video?searchKey={item['title']}"
+            display_hotspot_card(
+                idx,
+                item['title'],
+                f"🔥 {item['hot']}" if item['hot'] else "",
+                search_url,
+                "快手热搜",
+                source="Kuaishou"
+            )
+    else:
         _show_platform_search_fallback("快手", "https://www.kuaishou.com/")
 
 def fetch_bilibili_hot():
     """获取B站热门 - 使用官方热门视频API"""
     st.markdown("### B站热门榜")
     
-    try:
-        # B站热门视频API（更稳定）
-        url = "https://api.bilibili.com/x/web-interface/popular?ps=50&pn=1"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': 'https://www.bilibili.com/'
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('code') == 0 and data.get('data', {}).get('list'):
-                hot_list = data['data']['list']
-                for idx, item in enumerate(hot_list[:30], 1):
-                    title = item.get('title', '')
-                    owner = item.get('owner', {}).get('name', '')
-                    stat = item.get('stat', {})
-                    view = stat.get('view', 0)
-                    bvid = item.get('bvid', '')
-                    tname = item.get('tname', '')
-                    
-                    # 格式化播放量
-                    if view >= 10000:
-                        view_str = f"{view/10000:.1f}万"
-                    else:
-                        view_str = str(view)
-                    
-                    item_url = f"https://www.bilibili.com/video/{bvid}" if bvid else "#"
-                    
-                    display_hotspot_card(
-                        idx,
-                        title,
-                        f"UP: {owner} · {tname} · ▶ {view_str}",
-                        item_url,
-                        "B站热门视频",
-                        source="Bilibili"
-                    )
-                return
-        
-        # 备用：热搜API
-        _fetch_bilibili_search_hot()
-            
-    except Exception as e:
-        _fetch_bilibili_search_hot()
-
-def _fetch_bilibili_search_hot():
-    """B站搜索热词"""
-    try:
-        url = "https://api.bilibili.com/x/web-interface/search/square?limit=50"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': 'https://www.bilibili.com/'
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('code') == 0 and data.get('data', {}).get('trending', {}).get('list'):
-                hot_list = data['data']['trending']['list']
-                st.info("� 当前显示B站搜索热词")
-                for idx, item in enumerate(hot_list[:30], 1):
-                    keyword = item.get('keyword', item.get('show_name', ''))
-                    icon = item.get('icon', '')
-                    tag = ""
-                    if icon:
-                        if 'hot' in icon.lower():
-                            tag = "🔥 "
-                        elif 'new' in icon.lower():
-                            tag = "🆕 "
-                    
-                    item_url = f"https://search.bilibili.com/all?keyword={keyword}"
-                    
-                    display_hotspot_card(
-                        idx,
-                        f"{tag}{keyword}",
-                        "",
-                        item_url,
-                        "B站热搜",
-                        source="Bilibili"
-                    )
-                return
-        
+    result = _get_bilibili_data()
+    if result['success'] and result['data']:
+        if result.get('type') == 'popular':
+            for idx, item in enumerate(result['data'], 1):
+                item_url = f"https://www.bilibili.com/video/{item['bvid']}" if item['bvid'] else "#"
+                display_hotspot_card(
+                    idx,
+                    item['title'],
+                    f"UP: {item['owner']} · {item['tname']} · ▶ {item['view_str']}",
+                    item_url,
+                    "B站热门视频",
+                    source="Bilibili"
+                )
+        else:  # search type
+            st.info("📺 当前显示B站搜索热词")
+            for idx, item in enumerate(result['data'], 1):
+                display_hotspot_card(
+                    idx,
+                    item['keyword'],
+                    "",
+                    item['url'],
+                    "B站热搜",
+                    source="Bilibili"
+                )
+    else:
         st.warning("暂无法获取B站数据，请稍后重试")
-    except Exception as e:
-        st.warning(f"获取B站热搜失败: {str(e)[:50]}")
 
 def fetch_zhihu_hot():
     """获取知乎热榜 - 通过今日热榜"""
     st.markdown("### 知乎热榜")
     
-    try:
-        # 使用今日热榜获取知乎热榜
-        url = "https://tophub.today/n/mproPpoq6O"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
-        
-        response = requests.get(url, headers=headers, timeout=15)
-        
-        if response.status_code == 200 and '安全验证' not in response.text:
-            # 解析HTML
-            pattern = r'<td[^>]*>(\d+)\.</td>\s*<td[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>\s*</td>\s*<td[^>]*class="ws"[^>]*>([^<]*)</td>'
-            items = re.findall(pattern, response.text)
-            
-            if items:
-                for idx, (rank, item_url, title, hot) in enumerate(items[:25], 1):
-                    title = html.unescape(title.strip())
-                    hot = hot.strip()
-                    # 格式化热度
-                    hot_display = ""
-                    if hot:
-                        if "万" in hot:
-                            hot_display = f"🔥 {hot}热度"
-                        else:
-                            hot_display = f"🔥 {hot}"
-                    display_hotspot_card(
-                        idx,
-                        title,
-                        hot_display,
-                        item_url,
-                        "知乎热榜",
-                        source="Zhihu"
-                    )
-                return
-        
-        # 备用：直接请求知乎API
-        _fetch_zhihu_api()
-            
-    except Exception as e:
-        _fetch_zhihu_api()
-
-def _fetch_zhihu_api():
-    """知乎热榜API备用方案"""
-    try:
-        url = "https://www.zhihu.com/api/v3/feed/topstory/hot-lists/total?limit=50"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': 'https://www.zhihu.com/hot'
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            hot_list = data.get('data', [])
-            
-            if hot_list:
-                for idx, item in enumerate(hot_list[:25], 1):
-                    target = item.get('target', {})
-                    title = target.get('title', '')
-                    detail_text = item.get('detail_text', '')
-                    question_id = target.get('id', '')
-                    item_url = f"https://www.zhihu.com/question/{question_id}" if question_id else "#"
-                    
-                    display_hotspot_card(
-                        idx,
-                        title,
-                        f"🔥 {detail_text}" if detail_text else "",
-                        item_url,
-                        "知乎热榜",
-                        source="Zhihu"
-                    )
-                return
-        
-        _show_platform_search_fallback("知乎", "https://www.zhihu.com/hot")
-    except Exception as e:
+    result = _get_zhihu_data()
+    if result['success'] and result['data']:
+        for idx, item in enumerate(result['data'], 1):
+            hot = item.get('hot', '')
+            hot_display = ""
+            if hot:
+                if "万" in hot:
+                    hot_display = f"🔥 {hot}热度"
+                else:
+                    hot_display = f"🔥 {hot}"
+            display_hotspot_card(
+                idx,
+                item['title'],
+                hot_display,
+                item['url'],
+                "知乎热榜",
+                source="Zhihu"
+            )
+    else:
         _show_platform_search_fallback("知乎", "https://www.zhihu.com/hot")
 
 def fetch_toutiao_hot():
     """获取今日头条热榜 - 通过今日热榜"""
     st.markdown("### 今日头条热榜")
     
-    try:
-        # 使用今日热榜获取头条热榜
-        url = "https://tophub.today/n/x9ozB4KoXb"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
-        
-        response = requests.get(url, headers=headers, timeout=15)
-        
-        if response.status_code == 200 and '安全验证' not in response.text:
-            pattern = r'<td[^>]*>(\d+)\.</td>\s*<td[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>\s*</td>\s*<td[^>]*class="ws"[^>]*>([^<]*)</td>'
-            items = re.findall(pattern, response.text)
-            
-            if items:
-                for idx, (rank, item_url, title, hot) in enumerate(items[:25], 1):
-                    title = html.unescape(title.strip())
-                    hot = hot.strip()
-                    display_hotspot_card(
-                        idx,
-                        title,
-                        f"🔥 {hot}" if hot else "",
-                        item_url,
-                        "今日头条热榜",
-                        source="Toutiao"
-                    )
-                return
-        
-        _show_platform_search_fallback("今日头条", "https://www.toutiao.com/")
-            
-    except Exception as e:
+    result = _get_tophub_data("x9ozB4KoXb")
+    if result['success'] and result['data']:
+        for idx, item in enumerate(result['data'], 1):
+            display_hotspot_card(
+                idx,
+                item['title'],
+                f"🔥 {item['hot']}" if item['hot'] else "",
+                item['url'],
+                "今日头条热榜",
+                source="Toutiao"
+            )
+    else:
         _show_platform_search_fallback("今日头条", "https://www.toutiao.com/")
 
 def fetch_360_hot():
     """获取360热搜 - 通过今日热榜"""
     st.markdown("### 360热搜榜")
     
-    try:
-        # 使用今日热榜获取360热搜
-        url = "https://tophub.today/n/KMZd7x6erO"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
-        
-        response = requests.get(url, headers=headers, timeout=15)
-        
-        if response.status_code == 200 and '安全验证' not in response.text:
-            pattern = r'<td[^>]*>(\d+)\.</td>\s*<td[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>\s*</td>\s*<td[^>]*class="ws"[^>]*>([^<]*)</td>'
-            items = re.findall(pattern, response.text)
-            
-            if items:
-                for idx, (rank, item_url, title, hot) in enumerate(items[:25], 1):
-                    title = html.unescape(title.strip())
-                    hot = hot.strip()
-                    # 360搜索链接
-                    search_url = f"https://www.so.com/s?q={title}"
-                    display_hotspot_card(
-                        idx,
-                        title,
-                        f"🔥 {hot}" if hot else "",
-                        search_url,
-                        "360热搜榜",
-                        source="360"
-                    )
-                return
-        
-        _show_platform_search_fallback("360搜索", "https://www.so.com/")
-            
-    except Exception as e:
+    result = _get_tophub_data("KMZd7x6erO")
+    if result['success'] and result['data']:
+        for idx, item in enumerate(result['data'], 1):
+            search_url = f"https://www.so.com/s?q={item['title']}"
+            display_hotspot_card(
+                idx,
+                item['title'],
+                f"🔥 {item['hot']}" if item['hot'] else "",
+                search_url,
+                "360热搜榜",
+                source="360"
+            )
+    else:
         _show_platform_search_fallback("360搜索", "https://www.so.com/")
 
 def _show_platform_search_fallback(platform_name, search_url):
