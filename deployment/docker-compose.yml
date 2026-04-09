@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # PostgreSQL 数据库
   postgres:
@@ -7,80 +5,170 @@ services:
     container_name: supawriter_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: supawriter
-      POSTGRES_USER: supawriter
+      POSTGRES_DB: ${POSTGRES_DB:-supawriter}
+      POSTGRES_USER: ${POSTGRES_USER:-supawriter}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
-      - ./postgres/data:/var/lib/postgresql/data
-      - ./postgres/init:/docker-entrypoint-initdb.d
-      - ./postgres/config/postgresql.conf:/etc/postgresql/postgresql.conf
-      - ./postgres/config/pg_hba.conf:/etc/postgresql/pg_hba.conf
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/bootstrap:/docker-entrypoint-initdb.d
     ports:
-      - "0.0.0.0:5432:5432"  # 明确绑定到所有网络接口
-    command: >
-      postgres 
-      -c config_file=/etc/postgresql/postgresql.conf
-      -c hba_file=/etc/postgresql/pg_hba.conf
-      -c shared_preload_libraries=pg_stat_statements
+      - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U supawriter -d supawriter"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-supawriter}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - supawriter_network
 
-  # Redis 缓存 (可选，提升性能)
+  # Redis 缓存
   redis:
     image: redis:7-alpine
     container_name: supawriter_redis
     restart: unless-stopped
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
-      - ./redis/data:/data
+      - redis_data:/data
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - supawriter_network
+
+  # TrendRadar API (热点数据源)
+  trendradar:
+    image: ${DOCKERHUB_USERNAME:-minokun}/supawriter-trendradar:${DOCKERHUB_TAG:-latest}
+    build:
+      context: ../../trendradar
+      dockerfile: ../supawriter/deployment/Dockerfile.trendradar
+    container_name: supawriter_trendradar
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+    ports:
+      - "${TRENDRADAR_PORT:-8765}:8765"
+    networks:
+      - supawriter_network
+
+  # FastAPI 后端服务
+  backend:
+    image: ${DOCKERHUB_USERNAME:-minokun}/supawriter-backend:${DOCKERHUB_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile.backend
+    container_name: supawriter_backend
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-supawriter}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-supawriter}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - WECHAT_APPID=${WECHAT_APPID}
+      - WECHAT_SECRET=${WECHAT_SECRET}
+      - CREATOR_URL=${CREATOR_URL:-http://localhost:3001}
+      - COMMUNITY_URL=${COMMUNITY_URL:-http://localhost:3001}
+      - TRENDRADAR_API_URL=http://trendradar:8765
+    volumes:
+      - ../uploads:/app/uploads
+      - ../data:/app/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - supawriter_network
+
+  # Next.js 前端服务（创作工具）
+  frontend:
+    image: ${DOCKERHUB_USERNAME:-minokun}/supawriter-frontend:${DOCKERHUB_TAG:-latest}
+    build:
+      context: ../frontend
+      dockerfile: ../deployment/Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/backend}
+        INTERNAL_API_URL: ${INTERNAL_API_URL:-http://backend:8000}
+    container_name: supawriter_frontend
+    restart: unless-stopped
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-/api/backend}
+      - INTERNAL_API_URL=${INTERNAL_API_URL:-http://backend:8000}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3001}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+    ports:
+      - "3001:3000"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 30s
     networks:
       - supawriter_network
 
-  # pgAdmin (数据库管理界面，可选)
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: supawriter_pgadmin
+  # ARQ Worker 服务（热点同步 + 文章生成 + 定时任务）
+  worker:
+    image: ${DOCKERHUB_USERNAME:-minokun}/supawriter-worker:${DOCKERHUB_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile.backend
+    container_name: supawriter_worker
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@supawriter.com
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
-      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-supawriter}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-supawriter}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - NEWSNOW_API_URL=${NEWSNOW_API_URL:-https://newsnow.busiyi.world/api/s}
+      - SYNC_INTERVAL_MINUTES=${SYNC_INTERVAL_MINUTES:-10}
+      - TRENDRADAR_API_URL=http://trendradar:8765
     volumes:
-      - ./pgadmin:/var/lib/pgadmin
-    ports:
-      - "0.0.0.0:8080:80"  # 明确绑定到所有网络接口
+      - ../data:/app/data
+      - ../uploads:/app/uploads
+    command: python -m arq backend.api.workers.worker_settings.WorkerSettings
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - supawriter_network
 
-  # Nginx (反向代理，可选)
+  # Nginx 反向代理
   nginx:
     image: nginx:alpine
     container_name: supawriter_nginx
     restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ../data/html:/var/www/html:ro
     ports:
       - "80:80"
       - "443:443"
-    volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d
-      - ./nginx/ssl:/etc/nginx/ssl
-      - ./data/html:/var/www/html
     depends_on:
-      - postgres
+      - backend
+      - frontend
+      - worker
+      - trendradar
     networks:
       - supawriter_network
 
@@ -91,4 +179,3 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-  pgadmin_data:

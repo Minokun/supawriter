@@ -44,8 +44,8 @@ class Embedding:
             else:
                 # Convert image URLs to Base64-encoded image data (data URL)
                 def _url_to_data_image(url: str) -> Dict[str, str]:
-                    # 图片下载超时设为5秒，快速失败避免阻塞
-                    timeout = 5
+                    # 图片下载超时设为10秒（从5秒提升，避免CDN慢响应导致大量失败）
+                    timeout = 10
                     # Build realistic headers to avoid 403 from CDNs
                     parsed = urlparse(url)
                     
@@ -54,8 +54,16 @@ class Embedding:
                         """根据 URL 返回合适的 Referer"""
                         domain = parsed_url.netloc.lower()
                         
+                        # 头条/字节跳动 CDN 图片（toutiaoimg.com, byteimg.com, toutiao.com）
+                        if 'toutiaoimg.com' in domain or 'toutiao.com' in domain or 'byteimg.com' in domain:
+                            return 'https://www.toutiao.com/'
+                        
+                        # 抖音/头条号
+                        elif 'douyinpic.com' in domain or 'douyin.com' in domain:
+                            return 'https://www.douyin.com/'
+                        
                         # CSDN 图片需要特定的 Referer
-                        if 'csdnimg.cn' in domain or 'csdn.net' in domain:
+                        elif 'csdnimg.cn' in domain or 'csdn.net' in domain:
                             return 'https://blog.csdn.net/'
                         
                         # 知乎图片
@@ -77,6 +85,14 @@ class Embedding:
                         # 阿里云 OSS/CDN
                         elif 'alicdn.com' in domain or 'aliyuncs.com' in domain:
                             return 'https://developer.aliyun.com/'
+                        
+                        # 微博图片
+                        elif 'sinaimg.cn' in domain or 'weibo.cn' in domain or 'weibo.com' in domain:
+                            return 'https://weibo.com/'
+                        
+                        # 百度图片
+                        elif 'bdimg.com' in domain or 'bdstatic.com' in domain or 'bcebos.com' in domain:
+                            return 'https://www.baidu.com/'
                         
                         # 51CTO
                         elif '51cto.com' in domain:
@@ -109,18 +125,29 @@ class Embedding:
                         'Sec-Fetch-Site': 'cross-site',
                     }
                     
-                    # 快速下载，只尝试一次，失败就跳过
-                    try:
-                        resp = requests.get(url, timeout=timeout, headers=headers, verify=False)
-                        resp.raise_for_status()
-                        mime = resp.headers.get('Content-Type', 'image/jpeg')
-                        if not mime or not mime.startswith('image/'):
-                            mime = 'image/jpeg'
-                        b64 = base64.b64encode(resp.content).decode('utf-8')
-                        return {"image": f"data:{mime};base64,{b64}"}
-                    except Exception as e:
-                        logger.debug(f"图片下载失败: {url} - {e}")
-                        return None
+                    # 尝试下载，失败后用不同 Referer 重试一次
+                    for attempt in range(2):
+                        try:
+                            resp = requests.get(url, timeout=timeout, headers=headers, verify=False, allow_redirects=True)
+                            resp.raise_for_status()
+                            mime = resp.headers.get('Content-Type', 'image/jpeg')
+                            if not mime or not mime.startswith('image/'):
+                                mime = 'image/jpeg'
+                            if len(resp.content) < 100:
+                                logger.debug(f"图片内容过小({len(resp.content)}B), 跳过: {url[:80]}")
+                                return None
+                            b64 = base64.b64encode(resp.content).decode('utf-8')
+                            # 添加 data URL 前缀，格式: data:image/jpeg;base64,{base64_string}
+                            data_url = f"data:{mime};base64,{b64}"
+                            return {"image": data_url}
+                        except Exception as e:
+                            if attempt == 0:
+                                # 第一次失败，换用 Google 作为 Referer 重试
+                                headers['Referer'] = 'https://www.google.com/'
+                                logger.debug(f"图片下载失败(尝试1), 换Referer重试: {url[:80]} - {e}")
+                            else:
+                                logger.debug(f"图片下载失败(尝试2), 放弃: {url[:80]} - {e}")
+                    return None
 
                 # 并发下载图片转base64，大幅提升速度
                 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -152,9 +179,19 @@ class Embedding:
         if embedding_type not in embedding_config:
             logger.error(f"未在EMBEDDING_CONFIG中找到embedding类型: {embedding_type}")
             return []
-        url = embedding_config[embedding_type]['host']
+
+        # 兼容 'host' 和 'base_url' 两种配置格式
+        config = embedding_config[embedding_type]
+        if 'host' in config:
+            url = config['host']
+        elif 'base_url' in config:
+            url = config['base_url']
+        else:
+            logger.error(f"Embedding config for {embedding_type} missing both 'host' and 'base_url'")
+            return []
+
         headers = {
-            'Authorization': f'Bearer {embedding_config[embedding_type]["api_key"]}',
+            'Authorization': f'Bearer {config.get("api_key", "")}',
             'Content-Type': 'application/json'
         }
 
@@ -163,38 +200,74 @@ class Embedding:
         if embedding_type == "xinference":
             # OpenAI-compatible providers usually require only model + input
             request_data = {
-                'model': embedding_config[embedding_type]['model'],
+                'model': config.get('model', ''),
                 'input': data,
-                'task': "retrieval" 
+                'task': "retrieval"
             }
         elif embedding_type == "jina":
             # Jina embeddings may accept an optional task for text retrieval
             request_data = {
-                'model': embedding_config[embedding_type]['model'],
+                'model': config.get('model', ''),
                 # 保持与原实现一致，仅对jina提供task参数
                 'task': "retrieval.passage",
+                'input': data
+            }
+        elif embedding_type == "gitee":
+            # Gitee AI 使用 Jina 兼容格式
+            request_data = {
+                'model': config.get('model', ''),
                 'input': data
             }
         else:
             # Fallback: do not send unsupported fields like 'task'
             request_data = {
-                'model': embedding_config[embedding_type]['model'],
+                'model': config.get('model', ''),
                 'input': data,
                 'encoding_format': "float"
             }
             
         input_count = len(data)
         # 对于图片 embedding，使用更长的超时时间（基础超时 * 输入数量，最少60秒）
-        base_timeout = embedding_config[embedding_type]['timeout']
+        base_timeout = config.get('timeout', 30)  # 默认30秒超时
         if is_image_url:
             actual_timeout = max(60, base_timeout * input_count)
         else:
-            actual_timeout = base_timeout
-        response = requests.post(url, headers=headers, json=request_data, timeout=actual_timeout)
-        logger.info(
-            f"已发送请求到 {url}，提供商: {embedding_type}，模型: {embedding_config[embedding_type]['model']}，"
-            f"输入数量: {input_count}，状态码: {response.status_code}，成功: {response.ok}"
-        )
+            actual_timeout = max(30, base_timeout)  # 文本embedding最少30秒超时
+        
+        # 添加重试机制
+        max_retries = 3
+        retry_delay = 2
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"尝试第 {attempt + 1}/{max_retries} 次调用 embedding API: {url}")
+                response = requests.post(url, headers=headers, json=request_data, timeout=actual_timeout)
+                logger.info(
+                    f"已发送请求到 {url}，提供商: {embedding_type}，模型: {config.get('model', 'unknown')}，"
+                    f"输入数量: {input_count}，状态码: {response.status_code}，成功: {response.ok}"
+                )
+                if not response.ok:
+                    try:
+                        error_body = response.text[:500]
+                        logger.warning(f"Embedding API 返回错误 ({response.status_code}): {error_body}")
+                    except Exception:
+                        pass
+                break  # 成功则跳出重试循环
+            except (requests.exceptions.Timeout, requests.exceptions.ReadTimeout) as e:
+                last_error = e
+                logger.warning(f"Embedding API 超时 (尝试 {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    logger.info(f"等待 {retry_delay} 秒后重试...")
+                    import time
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # 指数退避
+                else:
+                    logger.error(f"Embedding API 调用失败，已达到最大重试次数")
+                    raise last_error
+            except Exception as e:
+                logger.error(f"Embedding API 调用出错: {e}")
+                raise
         
         response_json = response.json()
         logger.debug(f"API响应状态码: {response.status_code}")

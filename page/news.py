@@ -12,8 +12,9 @@ def main():
     # 自定义CSS样式 - 科技感设计
     st.markdown("""
     <style>
+    /* 响应式布局适配 */
     .news-header {
-        text-align: center;
+        text-align: left;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
         color: white;
         padding: 2.5rem;
@@ -22,6 +23,13 @@ def main():
         box-shadow: 0 8px 32px rgba(102, 126, 234, 0.4);
         animation: gradient 3s ease infinite;
         background-size: 200% 200%;
+    }
+    
+    /* 大屏幕适配 */
+    @media (min-width: 1400px) {
+        .news-header {
+            text-align: center;
+        }
     }
     
     @keyframes gradient {
@@ -197,10 +205,11 @@ def main():
     """, unsafe_allow_html=True)
     
     # 创建分类标签页
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "📰 澎湃科技", 
         "⭐ 开源项目", 
-        "🔥 实时新闻"
+        "🔥 实时新闻",
+        "📡 新浪直播"
     ])
     
     # 澎湃科技
@@ -217,6 +226,11 @@ def main():
     with tab3:
         st.markdown("### 实时AI新闻")
         fetch_chinaz_news(news_type=1, title="实时新闻")
+    
+    # 新浪直播
+    with tab4:
+        st.markdown("### 新浪直播 - 科技频道")
+        fetch_sina_live_news()
 
 
 def fetch_thepaper_tech():
@@ -404,6 +418,80 @@ def fetch_chinaz_news(news_type, title):
             st.error(f"获取数据失败，状态码：{response.status_code}")
     except Exception as e:
         st.error(f"获取{title}失败：{str(e)}")
+
+
+def fetch_sina_live_news():
+    """获取新浪直播新闻"""
+    try:
+        url = "http://zhibo.sina.com.cn/api/zhibo/feed?page_size=20&zhibo_id=152&tag_id=0&dpc=1&pagesize=20"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://zhibo.sina.com.cn/',
+            'Accept': 'application/json, text/plain, */*',
+        }
+        response = requests.get(url, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            feed_list = data.get('result', {}).get('data', {}).get('feed', {}).get('list', [])
+            
+            if feed_list:
+                for item in feed_list:
+                    display_sina_card(item)
+            else:
+                st.info("暂无新浪直播数据")
+        else:
+            st.error(f"获取新浪直播新闻失败，状态码：{response.status_code}")
+    except Exception as e:
+        st.error(f"获取新浪直播新闻失败：{str(e)[:100]}")
+
+
+def display_sina_card(item):
+    """显示新浪直播新闻列表项"""
+    title = html.escape(item.get('rich_text', '无标题'))
+    doc_url = item.get('docurl', '')
+    create_time = item.get('create_time', '')
+    media_info = item.get('media_info', [])
+    
+    # 获取图片（如果有）
+    img_html = ''
+    if media_info and len(media_info) > 0:
+        img_url = media_info[0].get('url', '')
+        if img_url:
+            img_html = f'<img src="{html.escape(img_url)}" class="news-image" referrerpolicy="no-referrer" onerror="this.style.display=\'none\'">'    
+    
+    # 根据是否有图片选择样式
+    if img_html:
+        card_html = f'''
+        <div class="news-item">
+            {img_html}
+            <div class="news-content">
+                <div style="margin-bottom: 0.5rem;">
+                    <span style="background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); color:white; padding:3px 10px; border-radius:6px; font-size:0.75rem; font-weight:600; display:inline-block;">新浪直播</span>
+                </div>
+                <div class="news-title">{title}</div>
+                <div class="news-meta" style="margin-top: 0.5rem;">
+                    <span>⏰ {html.escape(create_time)}</span>
+                </div>
+                <a href="{html.escape(doc_url)}" target="_blank" class="news-button">📖 阅读全文</a>
+            </div>
+        </div>
+        '''
+    else:
+        card_html = f'''
+        <div class="news-item-simple">
+            <div style="display: flex; align-items: center; gap: 0.8rem; margin-bottom: 0.5rem;">
+                <span class="category-badge">新浪直播</span>
+                <span style="color: #95a5a6; font-size: 0.75rem;">⏰ {html.escape(create_time)}</span>
+            </div>
+            <div class="news-title">{title}</div>
+            <div style="margin-top: 0.8rem;">
+                <a href="{html.escape(doc_url)}" target="_blank" class="news-button">📖 阅读全文</a>
+            </div>
+        </div>
+        '''
+    
+    st.markdown(card_html, unsafe_allow_html=True)
 
 
 def display_chinaz_card(news, news_type, idx=0):

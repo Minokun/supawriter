@@ -1,0 +1,75 @@
+# FastAPI a 后端 Dockerfile
+
+# ---- Builder Stage ----
+FROM python:3.12-slim-bookworm AS builder
+
+WORKDIR /app
+
+# 使用稳定的 Python 包镜像源，避免构建阶段下载超时
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    && pip config set global.timeout 120
+
+# 创建虚拟环境
+RUN python -m venv /opt/venv
+
+# 激活虚拟环境并更新 pip
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --upgrade pip
+
+# 仅复制依赖文件以利用 Docker 缓存
+COPY backend/requirements_api.txt /app/backend/
+COPY requirements.txt /app/
+
+# 安装 Python 依赖到虚拟环境
+RUN pip install -r /app/backend/requirements_api.txt
+RUN pip install -r /app/requirements.txt
+
+# 安装 Playwright 浏览器及系统依赖（chromium 支持 ARM64，firefox 不支持）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
+      libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 \
+      libpango-1.0-0 libcairo2 libasound2 libnspr4 libnss3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && playwright install chromium
+
+# ---- Runner Stage ----
+FROM python:3.12-slim-bookworm AS runner
+
+WORKDIR /app
+
+# 创建非 root 用户
+RUN addgroup --system --gid 1001 appgroup \
+    && adduser --system --uid 1001 appuser --ingroup appgroup
+
+# 复制虚拟环境
+COPY --from=builder /opt/venv /opt/venv
+
+# 复制应用代码
+COPY backend /app/backend
+COPY deployment/scripts /app/deployment/scripts
+COPY utils /app/utils
+COPY settings.py /app/
+COPY .streamlit /app/.streamlit
+
+# 确保 appuser 拥有 app 目录的所有权
+RUN chown -R appuser:appgroup /app
+
+# 创建并授权必要的目录
+RUN mkdir -p /app/uploads /app/data \
+    && chown -R appuser:appgroup /app/uploads /app/data
+
+# 切换到非 root 用户
+USER appuser
+
+# 激活虚拟环境
+ENV PATH="/opt/venv/bin:$PATH"
+
+# 暴露端口
+EXPOSE 8000
+
+# 健康检查 (使用 Python 内置模块)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import http.client; conn = http.client.HTTPConnection('localhost', 8000); conn.request('GET', '/health'); response = conn.getresponse(); exit(0) if response.status == 200 else exit(1)"
+
+# 启动命令
+CMD ["uvicorn", "backend.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

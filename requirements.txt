@@ -38,6 +38,9 @@ asyncpg>=0.27.0
 # 认证和安全
 Authlib>=1.6.0
 pyOpenSSL>=22.0.0
+passlib[bcrypt]>=1.7.4
+cryptography>=41.0.0
+PyJWT>=2.8.0
 
 # 异步支持
 nest-asyncio>=1.5.6

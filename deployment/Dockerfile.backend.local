@@ -1,0 +1,32 @@
+# FastAPI 后端 Dockerfile（开发环境）
+FROM python:3.12-slim-bookworm
+
+WORKDIR /app
+
+# 设置国内镜像源
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+
+# 复制依赖文件
+COPY requirements.txt .
+COPY backend/requirements_api.txt ./backend/requirements_api.txt
+
+# 安装 Python 依赖
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements_api.txt
+
+# 安装 Playwright 系统依赖 + 浏览器（chromium 支持 ARM64，firefox 不支持）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
+      libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 \
+      libpango-1.0-0 libcairo2 libasound2 libnspr4 libnss3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && playwright install chromium
+
+# 复制应用代码
+COPY . .
+
+# 暴露端口
+EXPOSE 8000
+
+# 启动命令
+CMD ["uvicorn", "backend.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

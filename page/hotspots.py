@@ -301,7 +301,7 @@ def main():
     st.markdown("""
     <style>
     .hotspot-header {
-        text-align: center;
+        text-align: left;
         background: linear-gradient(135deg, #ff9a9e 0%, #fad0c4 99%, #fad0c4 100%);
         color: #2c3e50;
         padding: 2.5rem;
@@ -309,6 +309,13 @@ def main():
         margin-bottom: 2rem;
         box-shadow: 0 8px 32px rgba(255, 154, 158, 0.3);
         position: relative;
+    }
+    
+    /* 大屏幕适配 */
+    @media (min-width: 1400px) {
+        .hotspot-header {
+            text-align: center;
+        }
     }
     
     .refresh-timer {

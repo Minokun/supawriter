@@ -22,13 +22,20 @@ def main():
     st.markdown("""
     <style>
     .main-header {
-        text-align: center;
+        text-align: left;
         background: linear-gradient(90deg, #4776E6 0%, #8E54E9 100%);
         color: white;
         padding: 1.5rem;
         border-radius: 15px;
         margin-bottom: 1.5rem;
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    
+    /* 大屏幕适配 */
+    @media (min-width: 1400px) {
+        .main-header {
+            text-align: center;
+        }
     }
     
     .search-tab.active {

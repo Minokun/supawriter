@@ -31,7 +31,7 @@ def main():
     st.markdown("""
     <style>
     .topic-header {
-        text-align: center;
+        text-align: left;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
         color: white;
         padding: 2.5rem;
@@ -40,6 +40,13 @@ def main():
         box-shadow: 0 8px 32px rgba(102, 126, 234, 0.4);
         animation: gradient 3s ease infinite;
         background-size: 200% 200%;
+    }
+    
+    /* 大屏幕适配 */
+    @media (min-width: 1400px) {
+        .topic-header {
+            text-align: center;
+        }
     }
     
     @keyframes gradient {
@@ -232,12 +239,13 @@ def main():
 
 请基于以上新闻内容，生成 {topic_count} 个优质的公众号推文选题。"""
                     
-                    # 调用大模型
+                    # 调用大模型（使用更高的max_tokens避免选题JSON被截断）
                     response = chat(
                         prompt=prompt,
                         system_prompt=pt.TWEET_TOPIC_GENERATOR,
                         model_type=model_type,
-                        model_name=model_name
+                        model_name=model_name,
+                        max_tokens=16384  # 推文选题包含多个详细的topic，需要足够的tokens
                     )
                     
                     # 解析JSON响应
@@ -435,28 +443,174 @@ def format_news_for_prompt(news_data):
 
 def parse_llm_response(response):
     """解析大模型返回的JSON响应"""
-    try:
-        # 尝试直接解析JSON
-        data = json.loads(response)
-        return data
-    except json.JSONDecodeError:
-        # 如果直接解析失败，尝试提取JSON部分
-        try:
-            # 查找JSON代码块
-            json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
-            if json_match:
-                data = json.loads(json_match.group(1))
-                return data
-            
-            # 查找大括号包围的JSON
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                data = json.loads(json_match.group(0))
-                return data
-        except:
-            pass
+    logger.debug(f"开始解析LLM响应，响应长度: {len(response)}")
+    logger.debug(f"响应前200字符: {response[:200]}")
     
-    logger.error(f"无法解析LLM响应: {response[:500]}")
+    def try_fix_truncated_json(json_str):
+        """尝试修复被截断的JSON"""
+        fixed = json_str.strip()
+        
+        # 策略：智能补全括号，考虑嵌套结构
+        # 跟踪当前的嵌套层次，按正确的顺序补全
+        
+        def smart_complete(text):
+            """智能补全括号，追踪嵌套结构"""
+            stack = []  # 栈：记录未闭合的括号类型
+            in_string = False
+            escape_next = False
+            
+            for i, char in enumerate(text):
+                if escape_next:
+                    escape_next = False
+                    continue
+                
+                if char == '\\\\':
+                    escape_next = True
+                    continue
+                
+                if char == '"':
+                    in_string = not in_string
+                    continue
+                
+                if in_string:
+                    continue
+                
+                if char == '{':
+                    stack.append('}')
+                elif char == '[':
+                    stack.append(']')
+                elif char == '}':
+                    if stack and stack[-1] == '}':
+                        stack.pop()
+                elif char == ']':
+                    if stack and stack[-1] == ']':
+                        stack.pop()
+            
+            # 栈中剩余的就是需要补全的
+            return text + ''.join(reversed(stack))
+        
+        # 先尝试智能补全
+        test_json = smart_complete(fixed)
+        try:
+            json.loads(test_json)
+            logger.debug("智能补全成功修复了截断的JSON")
+            return test_json
+        except json.JSONDecodeError as e:
+            logger.debug(f"智能补全失败: {e}")
+            # 如果智能补全失败，尝试找到安全的截断点
+            pass
+        
+        # 查找安全的截断点：从后往前找值结束的位置
+        import re
+        # 匹配：闭合的引号、闭合的数组/对象（可能带逗号）
+        value_end_pattern = r'(\"[^\"]*\"|\]|\})'
+        matches = list(re.finditer(value_end_pattern, fixed))
+        
+        # 从后往前尝试每个截断点（扩大搜索范围到30个）
+        for match in reversed(matches[-30:]):  # 扩大到30个
+            pos = match.end()
+            # 截取到这个位置，并移除末尾的逗号和空白
+            test_fixed = fixed[:pos].rstrip().rstrip(',').rstrip()
+            
+            try:
+                test_json = smart_complete(test_fixed)
+                json.loads(test_json)
+                logger.info(f"在位置 {pos} 成功修复截断的JSON")
+                return test_json
+            except json.JSONDecodeError:
+                continue
+        
+        logger.warning("所有JSON修复尝试均失败")
+        # 所有尝试都失败，返回最初的智能补全结果
+        return smart_complete(fixed)
+    
+    def extract_and_parse(text):
+        """从文本中提取并解析JSON"""
+        # 尝试直接解析
+        try:
+            result = json.loads(text)
+            logger.debug("JSON直接解析成功")
+            return result
+        except json.JSONDecodeError as e:
+            logger.debug(f"直接JSON解析失败: {e}")
+            pass
+        
+        # 1. 查找完整的JSON代码块（有 closing ```）- 支持多种格式
+        # 支持 ```json、```JSON、``` 等格式
+        json_match = re.search(r'```(?:json|JSON)?\s*(.*?)\s*```', text, re.DOTALL | re.IGNORECASE)
+        if json_match:
+            json_str = json_match.group(1).strip()
+            logger.debug(f"找到完整的markdown代码块，长度: {len(json_str)}")
+            try:
+                result = json.loads(json_str)
+                logger.debug("成功解析markdown代码块中的JSON")
+                return result
+            except json.JSONDecodeError as e:
+                logger.debug(f"markdown代码块JSON解析失败: {e}，尝试修复...")
+                # 尝试修复截断的JSON
+                try:
+                    fixed = try_fix_truncated_json(json_str)
+                    result = json.loads(fixed)
+                    logger.info("成功修复并解析markdown代码块中的截断JSON")
+                    return result
+                except Exception as e2:
+                    logger.debug(f"修复失败: {str(e2)}")
+                    pass
+        
+        # 2. 查找被截断的JSON代码块（有 ```json 但没有 closing ```）
+        json_match = re.search(r'```(?:json|JSON)?\s*(\{.*)', text, re.DOTALL | re.IGNORECASE)
+        if json_match:
+            json_str = json_match.group(1).strip()
+            logger.debug(f"找到被截断的markdown代码块，长度: {len(json_str)}")
+            try:
+                result = json.loads(json_str)
+                logger.debug("成功解析被截断markdown代码块中的JSON")
+                return result
+            except json.JSONDecodeError as e:
+                logger.debug(f"被截断markdown代码块JSON解析失败: {e}，尝试修复...")
+                # 尝试修复截断的JSON
+                try:
+                    fixed = try_fix_truncated_json(json_str)
+                    result = json.loads(fixed)
+                    logger.info("成功修复并解析被截断markdown代码块中的JSON")
+                    return result
+                except Exception as e2:
+                    logger.debug(f"修复失败: {str(e2)}")
+                    pass
+        
+        # 3. 查找以 { 开头的JSON（可能不完整）
+        json_match = re.search(r'\{.*', text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0).strip()
+            logger.debug(f"找到裸JSON，长度: {len(json_str)}")
+            try:
+                result = json.loads(json_str)
+                logger.debug("成功解析裸JSON")
+                return result
+            except json.JSONDecodeError as e:
+                logger.debug(f"裸JSON解析失败: {e}，尝试修复...")
+                # 尝试修复截断的JSON
+                try:
+                    fixed = try_fix_truncated_json(json_str)
+                    result = json.loads(fixed)
+                    logger.info("成功修复并解析裸JSON")
+                    return result
+                except Exception as e2:
+                    logger.debug(f"修复失败: {str(e2)}")
+                    pass
+        
+        logger.warning("所有JSON提取和解析方法均失败")
+        return None
+    
+    result = extract_and_parse(response)
+    if result:
+        logger.info(f"成功解析推文选题JSON，包含 {len(result.get('topics', []))} 个选题")
+        return result
+    
+    logger.error(f"无法解析LLM响应")
+    logger.error(f"响应长度: {len(response)}")
+    logger.error(f"响应前500字符: {response[:500]}")
+    logger.error(f"响应后200字符: {response[-200:]}")
     return None
 
 

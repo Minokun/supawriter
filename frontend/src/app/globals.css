@@ -1,0 +1,429 @@
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@300;400;500;600;700&display=swap');
+@import url('https://cdn.jsdelivr.net/npm/katex@0.16.20/dist/katex.min.css');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-primary: #DC2626;
+  --color-secondary: #F87171;
+  --color-cta: #CA8A04;
+  --color-bg: #FEF2F2;
+  --color-surface: #FFFFFF;
+  --color-text-primary: #450A0A;
+  --color-text-secondary: #7F1D1D;
+  --color-text-tertiary: #9F1239;
+  --color-border: #FECACA;
+  
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 24px;
+  --spacing-2xl: 32px;
+  --spacing-3xl: 40px;
+  
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 20px;
+  
+  --shadow-light: 0 1px 2px rgba(220, 38, 38, 0.04);
+  --shadow-standard: 0 4px 12px rgba(220, 38, 38, 0.08);
+  --shadow-strong: 0 8px 24px rgba(220, 38, 38, 0.12);
+  
+  --transition-fast: 0.15s ease-in-out;
+  --transition-base: 0.2s ease-in-out;
+  --transition-slow: 0.3s ease-in-out;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  font-family: 'Nunito', sans-serif;
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Fredoka', sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Novel / Tiptap Editor Base Styles */
+.novel-editor-container .ProseMirror {
+  outline: none;
+  min-height: 100px;
+  padding: 24px;
+  line-height: 1.6;
+}
+
+.novel-editor-container .ProseMirror > * + * {
+  margin-top: 0.75em;
+}
+
+/* Tiptap Placeholder */
+.novel-editor-container .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #adb5bd;
+  pointer-events: none;
+  height: 0;
+}
+
+/* List styles for ProseMirror */
+.novel-editor-container .ProseMirror ul,
+.novel-editor-container .ProseMirror ol {
+  padding: 0 1rem;
+  margin: 1.25rem 1rem 1.25rem 0.4rem;
+}
+
+.novel-editor-container .ProseMirror ul li {
+  list-style-type: disc;
+}
+
+.novel-editor-container .ProseMirror ol li {
+  list-style-type: decimal;
+}
+
+/* Mermaid Styles */
+.mermaid-container {
+  display: flex;
+  justify-content: center;
+  margin: 2rem 0;
+  padding: 1.5rem;
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-light);
+  overflow-x: auto;
+}
+
+.mermaid-loading {
+  height: 200px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f9fafb;
+  border-radius: 12px;
+  color: #9ca3af;
+  font-size: 0.875rem;
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .5; }
+}
+
+/* Custom Markdown Styles mapped to ProseMirror */
+
+/* WeChat Style */
+.style-wechat .ProseMirror h1 {
+  font-size: 22px;
+  font-weight: bold;
+  margin-top: 30px;
+  margin-bottom: 15px;
+  text-align: center;
+  color: #333;
+}
+
+.style-wechat .ProseMirror h2 {
+  font-size: 18px;
+  font-weight: bold;
+  margin-top: 30px;
+  margin-bottom: 15px;
+  padding-left: 10px;
+  border-left: 4px solid #07c160;
+  line-height: 1.4;
+  color: #333;
+}
+
+.style-wechat .ProseMirror h3 {
+  font-size: 16px;
+  font-weight: bold;
+  margin-top: 20px;
+  margin-bottom: 10px;
+  padding-left: 8px;
+  border-left: 3px solid #07c160;
+  color: #333;
+}
+
+.style-wechat .ProseMirror blockquote {
+  padding: 15px;
+  margin: 20px 0;
+  border-left: 4px solid #07c160;
+  background-color: #f7f7f7;
+  color: #888;
+  border-radius: 4px;
+}
+
+.style-wechat .ProseMirror a {
+  color: #07c160;
+  text-decoration: none;
+  border-bottom: 1px dashed #07c160;
+}
+
+/* Modern Style */
+.style-modern .ProseMirror h1 {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: #111827;
+}
+
+.style-modern .ProseMirror h2 {
+  font-size: 22px;
+  border-bottom: 2px solid #e5e7eb;
+  padding-bottom: 8px;
+  color: #1f2937;
+}
+
+.style-modern .ProseMirror blockquote {
+  border-left: 4px solid #6366f1;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border-radius: 0 8px 8px 0;
+  padding: 16px 20px;
+}
+
+.style-modern .ProseMirror a {
+  color: #6366f1;
+  border-bottom: 1px solid transparent;
+}
+.style-modern .ProseMirror a:hover {
+  border-color: #6366f1;
+}
+
+/* GitHub Style */
+.style-github .ProseMirror h1,
+.style-github .ProseMirror h2 {
+  padding-bottom: 8px;
+  border-bottom: 1px solid #d0d7de;
+}
+
+.style-github .ProseMirror blockquote {
+  color: #57606a;
+  border-left: 4px solid #d0d7de;
+  padding: 0 1em;
+}
+
+.style-github .ProseMirror a {
+  color: #0969da;
+  text-decoration: none;
+}
+.style-github .ProseMirror a:hover {
+  text-decoration: underline;
+}
+
+/* Zhihu Style - Clean, Blue Accents */
+.style-zhihu .ProseMirror {
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", "Source Han Sans SC", "Noto Sans CJK SC", WenQuanYi Micro Hei, sans-serif;
+  color: #121212;
+  line-height: 1.7;
+}
+
+.style-zhihu .ProseMirror h1 {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 24px 0 16px;
+}
+
+.style-zhihu .ProseMirror h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 20px 0 12px;
+}
+
+.style-zhihu .ProseMirror blockquote {
+  color: #8590a6;
+  border-left: 3px solid #ebebeb;
+  padding-left: 1em;
+  margin: 1.2em 0;
+}
+
+.style-zhihu .ProseMirror a {
+  color: #0066ff;
+  text-decoration: none;
+}
+
+/* Futuristic Style - Dark Mode, Neon Accents */
+.style-futuristic .ProseMirror {
+  background-color: #0f172a;
+  color: #e2e8f0;
+  padding: 40px !important;
+  border-radius: 12px;
+}
+
+.style-futuristic .ProseMirror h1 {
+  color: #38bdf8;
+  text-shadow: 0 0 15px rgba(56, 189, 248, 0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  border-left: 5px solid #38bdf8;
+  padding-left: 15px;
+}
+
+.style-futuristic .ProseMirror h2 {
+  color: #818cf8;
+  border-bottom: 1px dashed #475569;
+}
+
+.style-futuristic .ProseMirror blockquote {
+  background: rgba(30, 41, 59, 0.7);
+  border-left: 4px solid #f472b6;
+  color: #cbd5e1;
+  font-style: italic;
+  box-shadow: inset 0 0 20px rgba(244, 114, 182, 0.1);
+}
+
+.style-futuristic .ProseMirror a {
+  color: #2dd4bf;
+  text-decoration: underline decoration-dotted;
+}
+
+/* Elegant Style - Serif, High Contrast, Luxury feel */
+.style-elegant .ProseMirror {
+  font-family: "Georgia", "Times New Roman", serif;
+  color: #2c3e50;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.style-elegant .ProseMirror h1 {
+  font-family: "Playfair Display", serif;
+  font-size: 32px;
+  text-align: center;
+  color: #1a1a1a;
+  border-bottom: 1px solid #d4af37;
+  padding-bottom: 20px;
+  margin-bottom: 40px;
+}
+
+.style-elegant .ProseMirror h2 {
+  font-family: "Playfair Display", serif;
+  font-size: 24px;
+  color: #1a1a1a;
+  text-align: center;
+  margin-top: 50px;
+}
+
+.style-elegant .ProseMirror h2::after {
+  content: "✦";
+  display: block;
+  font-size: 14px;
+  color: #d4af37;
+  margin-top: 5px;
+}
+
+.style-elegant .ProseMirror blockquote {
+  border: none;
+  background: #fdfcf0;
+  padding: 30px;
+  position: relative;
+  font-style: italic;
+  text-align: center;
+  color: #555;
+}
+
+.style-elegant .ProseMirror blockquote::before {
+  content: "“";
+  font-size: 60px;
+  color: #d4af37;
+  position: absolute;
+  top: -10px;
+  left: 20px;
+  opacity: 0.3;
+}
+
+.style-elegant .ProseMirror a {
+  color: #c0392b;
+  border-bottom: 1px solid #c0392b;
+}
+
+/* ===== 前端交互动画 Keyframes ===== */
+
+/* 下拉菜单展开 */
+@keyframes dropdown-enter {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* 错误抖动 */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-4px); }
+  40%, 80% { transform: translateX(4px); }
+}
+
+/* 点跳动（加载状态） */
+@keyframes dot-bounce {
+  0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
+  40% { transform: scale(1.2); opacity: 1; }
+}
+
+/* 勾选动画 */
+@keyframes checkmark {
+  0% { stroke-dashoffset: 100; }
+  100% { stroke-dashoffset: 0; }
+}
+
+/* 脉冲呼吸 */
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* 波纹效果 */
+@keyframes ripple {
+  from { transform: scale(0); opacity: 1; }
+  to { transform: scale(4); opacity: 0; }
+}
+
+/* 弹跳进入 */
+@keyframes bounce-in {
+  0% { transform: scale(0.8); opacity: 0; }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* 扫光效果（骨架屏） */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* ===== 动画工具类 ===== */
+.animate-dropdown-enter { animation: dropdown-enter 200ms ease-out; }
+.animate-shake { animation: shake 300ms ease-in-out; }
+.animate-dot-bounce { animation: dot-bounce 1.4s infinite ease-in-out both; }
+.animate-pulse-subtle { animation: pulse-subtle 2s ease-in-out infinite; }
+.animate-bounce-in { animation: bounce-in 300ms ease-out; }
+
+/* ===== 可访问性：减少动画偏好 ===== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -30,7 +30,7 @@ MIN_HEIGHT = 200  # 最小高度 - 提高到200
 MIN_AREA = 80000  # 最小面积 (宽*高) - 提高到80000
 
 # 文件大小限制
-MIN_FILE_SIZE = 15 * 1024  # 最小文件大小 15KB - 提高阈值
+MIN_FILE_SIZE = 3 * 1024  # 最小文件大小 3KB
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 最大文件大小 20MB
 
 # 宽高比限制 - 更严格
@@ -205,10 +205,14 @@ def is_likely_logo_or_icon_by_url(url: str) -> Tuple[bool, str]:
         if social_domain in domain:
             return True, f"social_icon_domain:{social_domain}"
     
+    # 检查文件扩展名 - SVG files cannot be embedded by most APIs
+    if path.endswith('.svg') or 'format=svg' in url_lower:
+        return True, "svg_extension"
+
     # 提取文件名（不含扩展名）
     filename = path.split('/')[-1].lower() if path else ''
     filename_no_ext = filename.rsplit('.', 1)[0] if '.' in filename else filename
-    
+
     # 检查URL路径和文件名是否包含logo/icon相关关键词
     # 使用更宽松的匹配：只要包含关键词就过滤
     url_to_check = path + '/' + filename_no_ext

@@ -94,6 +94,7 @@ def is_similar_url(a: str, b: str) -> bool:
     return pra.path == prb.path
 
 # 本地导入
+import settings
 from settings import base_path, LLM_MODEL, DEFAULT_SPIDER_NUM, SERPER_API_KEY
 from grab_html_content import get_main_content
 from utils.llm_chat import chat
@@ -332,6 +333,109 @@ class Search:
         self.search_query = ""  # 原始查询词
         self.optimized_query = ""  # 优化后的查询词
 
+    def filter_relevant_results_with_llm(self, search_results: list, user_topic: str, model_type: str = 'deepseek', model_name: str = 'deepseek-chat') -> list:
+        """
+        使用大模型批量判断搜索结果与用户主题的相关性，过滤掉不相关的结果
+        
+        Args:
+            search_results: 搜索结果列表，每个结果包含 title, url, content 等字段
+            user_topic: 用户输入的原始主题/问题
+            model_type: 模型类型
+            model_name: 模型名称
+            
+        Returns:
+            过滤后的相关搜索结果列表
+        """
+        if not search_results:
+            return []
+        
+        logger.info(f"开始LLM相关性审核: 共 {len(search_results)} 条结果")
+        
+        # 构建批量判断的提示词
+        results_info = []
+        for idx, result in enumerate(search_results):
+            result_text = f"[{idx}] 标题: {result.get('title', '')}\n描述: {result.get('content', '')[:200]}"
+            results_info.append(result_text)
+        
+        results_text = "\n\n".join(results_info)
+        
+        prompt = f"""用户主题: {user_topic}
+
+以下是搜索引擎返回的结果，请判断每条结果是否与用户主题**直接相关**。
+
+判断标准:
+1. 如果用户问的是特定版本(如"glm4.7")，则只有明确提到该版本的结果才相关，其他版本(如"glm4.6")不相关
+2. 如果结果的主题与用户问题一致或高度相关，标记为相关
+3. 如果结果只是相似但不是用户问的具体问题，标记为不相关
+4. 如果结果的内容能够直接回答用户的问题，标记为相关
+
+搜索结果:
+{results_text}
+
+请以JSON格式返回判断结果，格式如下:
+{{
+    "relevant_indices": [0, 2, 5, ...],
+    "reason": "简要说明过滤逻辑"
+}}
+
+其中 relevant_indices 是相关结果的索引列表(数字数组)。只返回JSON，不要其他解释。"""
+
+        try:
+            # 调用大模型进行批量判断
+            response = chat(
+                prompt, 
+                system_prompt="你是一个专业的信息相关性判断专家。请严格按照用户的具体需求判断搜索结果的相关性。",
+                model_type=model_type,
+                model_name=model_name,
+                max_tokens=4096
+            )
+            
+            # 清理响应，移除可能的代码块标记
+            cleaned_response = response.strip()
+            if cleaned_response.startswith('```'):
+                # 移除开头的 ```json 或 ```
+                lines = cleaned_response.split('\n')
+                if lines[0].startswith('```'):
+                    lines = lines[1:]
+                # 移除结尾的 ```
+                if lines and lines[-1].strip() == '```':
+                    lines = lines[:-1]
+                cleaned_response = '\n'.join(lines)
+            
+            # 解析返回的JSON
+            result_json = try_load(cleaned_response)
+            
+            if not isinstance(result_json, dict) or 'relevant_indices' not in result_json:
+                logger.warning(f"LLM返回格式异常，跳过过滤: {response[:200]}")
+                return search_results
+            
+            relevant_indices = result_json.get('relevant_indices', [])
+            reason = result_json.get('reason', '未提供原因')
+            
+            # 过滤出相关的结果
+            filtered_results = []
+            for idx in relevant_indices:
+                if 0 <= idx < len(search_results):
+                    filtered_results.append(search_results[idx])
+            
+            filtered_count = len(filtered_results)
+            removed_count = len(search_results) - filtered_count
+            
+            logger.info(f"LLM相关性审核完成: 保留 {filtered_count} 条，过滤 {removed_count} 条")
+            logger.info(f"过滤原因: {reason}")
+            
+            # 如果过滤后结果为空，返回原始结果以避免完全没有数据
+            if not filtered_results:
+                logger.warning("LLM过滤后结果为空，返回原始结果")
+                return search_results
+            
+            return filtered_results
+            
+        except Exception as e:
+            logger.error(f"LLM相关性审核失败: {e}")
+            # 出错时返回原始结果，不影响后续流程
+            return search_results
+
     def deduplicate_urls(self, urls_with_data, key='url'):
         """
         在当前批次内去除重复URL，使用高级URL标准化和相似性检查
@@ -413,11 +517,13 @@ class Search:
             logger.error(f"DDGS 搜索失败: {e}")
         
         # 2. 使用 Serper 搜索引擎（仅当 API Key 有效时）
-        if SERPER_API_KEY:
+        # 动态读取 settings.SERPER_API_KEY，避免静态导入在 backend 上下文中为 None
+        _serper_key = getattr(settings, 'SERPER_API_KEY', None) or SERPER_API_KEY
+        if _serper_key:
             try:
                 logger.info(f"Serper 搜索开始: query='{query}'")
                 serper_results = serper_search(
-                    api_key=SERPER_API_KEY,
+                    api_key=_serper_key,
                     query=query,
                     gl="cn",
                     hl="zh-cn",
@@ -437,9 +543,9 @@ class Search:
         
         # 3. 返回合并后的结果
         logger.info(f"合并搜索结果: DDGS ({ddgs_count}) + Serper ({serper_count}) = 总计 {len(all_results)} 条")
-        return {'results': all_results}
+        return {'results': all_results, 'unfiltered_count': len(all_results)}
 
-    def get_search_result(self, question: str, is_multimodal=False, use_direct_image_embedding=False, theme="", spider_mode=False, progress_callback: Optional[callable] = None, username: str = None, article_id: str = None, model_type: str = 'deepseek', model_name: str = 'deepseek-chat'):
+    def get_search_result(self, question: str, theme="", spider_mode=False, progress_callback: Optional[callable] = None, username: str = None, article_id: str = None, model_type: str = 'deepseek', model_name: str = 'deepseek-chat'):
         # 先优化查询词，提取关键词
         self.search_query = question
         optimizeq = chat(question, system_prompt="""你是搜索引擎查询优化专家。请将用户的问题转换为更适合搜索引擎的查询词。
@@ -466,7 +572,18 @@ class Search:
         
         # 检查是否有搜索结果
         if data and data.get('results'):
-            logger.info(f"开始处理合并后的搜索结果: {len(data['results'])} 条")
+            # 使用LLM进行相关性审核，过滤掉不相关的结果
+            original_count = len(data['results'])
+            filtered_results = self.filter_relevant_results_with_llm(
+                search_results=data['results'],
+                user_topic=question,  # 使用原始问题而非优化后的查询词
+                model_type=model_type,
+                model_name=model_name
+            )
+            
+            # 更新data中的结果为过滤后的结果
+            data['results'] = filtered_results
+            logger.info(f"LLM相关性过滤: {original_count} 条 -> {len(filtered_results)} 条")
             
             # 注释：不在此处直接添加结果，而是在下面进行相关性评分后再添加
             # 避免重复添加导致结果数量翻倍
@@ -564,14 +681,24 @@ class Search:
                 final_url_map = {}
                 
                 # 构建最终去重的URL列表
-                for item in search_result:
-                    url = item['url']
-                    normalized_url = normalize_url(url)
-                    
+                logger.debug(f"[DEBUG] Processing {len(search_result)} search results for URL extraction")
+                for idx, item in enumerate(search_result):
+                    url = item.get('url', '')
+                    logger.debug(f"[DEBUG] Result {idx}: url='{url}', type={type(url)}, truthy={bool(url)}, stripped={bool(url and url.strip())}")
+                    normalized_url = normalize_url(url) if url else ''
+
                     # 如果URL还未被处理且不为空，添加到最终列表
                     if normalized_url not in final_url_map and url and url.strip():
                         final_urls.append(url)
                         final_url_map[normalized_url] = url
+                        logger.debug(f"[DEBUG] Added URL to final_urls: {url}")
+                    else:
+                        if not url:
+                            logger.debug(f"[DEBUG] Skipped result {idx}: URL is empty or None")
+                        elif not url.strip():
+                            logger.debug(f"[DEBUG] Skipped result {idx}: URL is whitespace only")
+                        elif normalized_url in final_url_map:
+                            logger.debug(f"[DEBUG] Skipped result {idx}: URL already in map (normalized: {normalized_url})")
                 
                 # 限制最终抓取数量：DDGS 受 DEFAULT_SPIDER_NUM 限制，Serper 全部保留
                 allowed_fetch = ddgs_selected + serper_selected
@@ -586,7 +713,7 @@ class Search:
                 )
                 
                 # 爬取内容
-                result, task_id = asyncio.run(get_main_content(final_urls, is_multimodal=is_multimodal, use_direct_image_embedding=use_direct_image_embedding, theme=theme, progress_callback=progress_callback, username=username, article_id=article_id))
+                result, task_id = asyncio.run(get_main_content(final_urls, is_multimodal=False, use_direct_image_embedding=True, theme=theme, progress_callback=progress_callback, username=username, article_id=article_id))
                 
                 # 创建字典，存储爬取到的内容和图片
                 html_content_dict = {}
@@ -622,9 +749,10 @@ class Search:
                             image_dict[original_url] = images
                 
                 # 然后更新搜索结果中的每一项
+                logger.info(f"[URL_MAPPING] search_result has {len(search_result)} items, image_dict has {len(image_dict)} items, html_content_dict has {len(html_content_dict)} items")
                 for item in search_result:
                     url = item['url']
-                    
+
                     # 添加HTML内容
                     if url in html_content_dict:
                         item['html_content'] += html_content_dict[url]
@@ -640,14 +768,15 @@ class Search:
                                 logger.debug(f"Found partial match for content: {url} -> {crawled_url}, content length: {len(html_content_dict[crawled_url])}")
                                 matched = True
                                 break
-                    
+
                     # 添加图片
                     if 'images' not in item:
                         item['images'] = []
-                        
+
                     # 直接匹配
                     if url in image_dict:
                         item['images'] = image_dict[url]
+                        logger.info(f"[URL_MAPPING] Direct match for {url[:60]}: {len(image_dict[url])} images")
                     else:
                         # 尝试部分匹配
                         matched = False
@@ -655,11 +784,20 @@ class Search:
                             if url in crawled_url or crawled_url in url or \
                                urlparse(url).netloc == urlparse(crawled_url).netloc:
                                 item['images'] = images
-                                logger.info(f"Found partial match for images: {url} -> {crawled_url}")
+                                logger.info(f"[URL_MAPPING] Partial match for {url[:60]} -> {crawled_url[:60]}: {len(images)} images")
+                                matched = True
+                                break
+                        if not matched:
+                            logger.warning(f"[URL_MAPPING] NO match found for {url[:60]}, available image_dict keys: {list(image_dict.keys())[:3]}")
+                logger.info(f"[URL_MAPPING] After mapping: {sum(1 for item in search_result if item.get('images'))} items have images")
+                # 保存中间结果，以便在后续 embedding 超时时调用方可以使用已映射的结果
+                self._partial_results = list(search_result)
                 # 抓取与映射完成后，收集所有图片（网页+DDGS）并统一批量嵌入
                 try:
-                    # 仅在直接URL嵌入模式下进行"批量URL嵌入"；多模态模式应逐图识别，不进行批量URL嵌入
-                    if username and article_id and (use_direct_image_embedding and not is_multimodal):
+                    # 统一使用批量URL嵌入模式
+                    if username and article_id:
+                        _embed_start = time.monotonic()
+                        _embed_budget = 120  # 图片嵌入最多允许120秒，避免阻塞整个搜索流程
                         faiss_index = create_faiss_index(load_from_disk=True, index_dir='data/faiss', username=username, article_id=article_id)
                         
                         # 1. 收集网页抓取的图片（带URL预筛选）
@@ -728,6 +866,13 @@ class Search:
                             logger.info(f"开始对所有图片执行统一批量嵌入：共 {total} 张，批大小 {chunk_size}")
                             
                             for i in range(0, total, chunk_size):
+                                # 检查嵌入预算是否用完
+                                _elapsed = time.monotonic() - _embed_start
+                                if _elapsed > _embed_budget:
+                                    logger.warning(f"图片嵌入已耗时 {_elapsed:.0f}s，超过预算 {_embed_budget}s，"
+                                                   f"已处理 {i}/{total} 张，剩余跳过（不影响文章生成）")
+                                    skipped += total - i
+                                    break
                                 chunk = unique_image_data[i:i+chunk_size]
                                 batch_num = i // chunk_size + 1
                                 # 更新图片 embedding 进度
@@ -790,14 +935,56 @@ class Search:
                             except Exception as e:
                                 logger.warning(f"保存FAISS索引失败: {e}")
                             
-                            logger.info(f"图片批量嵌入完成：批量新增 {batch_added}，回退新增 {fallback_added}，跳过/失败 {skipped}，总计处理 {total}")
+                            logger.info(f"图片批量嵌入完成：批量新增 {batch_added}，回退新增 {fallback_added}，跳过/失败 {skipped}，总计处理 {total}，耗时 {time.monotonic()-_embed_start:.1f}s")
                 except Exception as e:
                     logger.warning(f"图片批量嵌入阶段出错: {e}（这是正常现象，不影响文章生成）")
-            # 返回整合后的结果
+            # 收集图片统计
+            web_images_count = sum(len(item.get('images', [])) for item in search_result if item.get('source') != 'ddgs')
+            total_images_count = sum(len(item.get('images', [])) for item in search_result)
+            
+            # 返回整合后的结果（包含统计信息）
             logger.info(f"最终返回搜索结果: {len(search_result)} 条")
+            
+            # 构建详细统计信息
+            # 注意：final_count/ddgs_count/serper_count 是最终结果数
+            # total_before_llm_filter 是初始搜索结果数，用于对比过滤效果
+            search_stats = {
+                'original_query': question,
+                'optimized_query': self.optimized_query,
+                # 最终选中的结果数（各来源）
+                'ddgs_count': ddgs_selected,
+                'serper_count': serper_selected,
+                'final_count': len(selected_results),
+                # 过滤流程统计（展示从原始到最终的变化）
+                'total_before_llm_filter': original_count,
+                'total_after_llm_filter': len(filtered_results),
+                'total_after_dedup': len(scored_results),
+                # 图片统计
+                'web_images_count': web_images_count,
+                'total_images_count': total_images_count,
+            }
+            
+            # 为了向后兼容，将统计信息存储在实例属性中
+            self.last_search_stats = search_stats
+            
             return search_result
         # 如果没有可爬取的URL，也直接返回（仍可由调用方决定是否触发DDGS）
         logger.info(f"最终返回搜索结果: {len(search_result)} 条（无可爬取URL）")
+        
+        # 即使没有结果，也提供统计信息
+        self.last_search_stats = {
+            'original_query': question,
+            'optimized_query': getattr(self, 'optimized_query', question),
+            'ddgs_count': 0,
+            'serper_count': 0,
+            'total_before_llm_filter': 0,
+            'total_after_llm_filter': 0,
+            'total_after_dedup': 0,
+            'final_count': 0,
+            'web_images_count': 0,
+            'total_images_count': 0,
+        }
+        
         return search_result
 
     def auto_writer(self, prompt, outline_summary=''):
@@ -817,8 +1004,8 @@ class Search:
                 # 根据抓取的每一篇文章生成大纲
                 # 使用线程池并发处理结果
                 outlines = llm_task(search_result, prompt, prompt_template.ARTICLE_OUTLINE_GEN)
-                # 融合多份大纲
-                outline_summary = chat(f'<topic>{prompt}</topic> <content>{outlines}</content>', prompt_template.ARTICLE_OUTLINE_SUMMARY)
+                # 融合多份大纲（使用更高的max_tokens以避免JSON被截断）
+                outline_summary = chat(f'<topic>{prompt}</topic> <content>{outlines}</content>', prompt_template.ARTICLE_OUTLINE_SUMMARY, max_tokens=16384)
             
             # 解析大纲JSON
             outline_summary_json = parse_outline_json(outline_summary, prompt)
@@ -883,80 +1070,152 @@ def try_load(s: str):
     """
     安全加载JSON字符串：
     - 首选 json.loads
-    - 失败后执行常见清洗：单引号->双引号、移除尾随逗号、移除控制字符
-    - 尝试修复 content_outline 末尾缺失的 ] 或整体缺失的 }
+    - 失败后执行常见清洗：移除尾随逗号、移除控制字符
+    - 尝试智能补全被截断的JSON
     - 回退到 ast.literal_eval 以处理类JSON
     - 仍失败则抛出带上下文的信息化异常，交由上层处理。
     """
+    import re as _re
+    
+    def smart_complete_json(text):
+        """智能补全括号，追踪嵌套结构"""
+        stack = []
+        in_string = False
+        escape_next = False
+        
+        for char in text:
+            if escape_next:
+                escape_next = False
+                continue
+            if char == '\\':
+                escape_next = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if char == '{':
+                stack.append('}')
+            elif char == '[':
+                stack.append(']')
+            elif char == '}':
+                if stack and stack[-1] == '}':
+                    stack.pop()
+            elif char == ']':
+                if stack and stack[-1] == ']':
+                    stack.pop()
+        
+        return text + ''.join(reversed(stack))
+    
+    def try_fix_truncated(text):
+        """尝试修复被截断的JSON"""
+        # 先尝试智能补全
+        completed = smart_complete_json(text)
+        try:
+            result = json.loads(completed)
+            logger.debug("智能补全成功修复了截断的JSON")
+            return result
+        except json.JSONDecodeError:
+            pass
+        
+        # 查找安全的截断点 - 尝试从后往前找完整的结构
+        value_end_pattern = r'(\"[^\"]*\"|\]|\})'
+        matches = list(_re.finditer(value_end_pattern, text))
+        
+        # 扩大搜索范围，尝试最后30个匹配点
+        for match in reversed(matches[-30:]):
+            pos = match.end()
+            test_fixed = text[:pos].rstrip().rstrip(',').rstrip()
+            try:
+                completed = smart_complete_json(test_fixed)
+                result = json.loads(completed)
+                logger.debug(f"在位置{pos}成功修复截断的JSON")
+                return result
+            except json.JSONDecodeError:
+                continue
+        
+        # 尝试提取部分有效信息并构建最小可用JSON
+        try:
+            # 至少尝试提取title和summary
+            title_match = _re.search(r'"title"\s*:\s*"([^"]*)"', text)
+            summary_match = _re.search(r'"summary"\s*:\s*"([^"]*)"', text)
+            
+            if title_match:
+                minimal_json = {
+                    "title": title_match.group(1),
+                    "summary": summary_match.group(1) if summary_match else "",
+                    "tags": "",
+                    "core_keywords": [],
+                    "content_outline": []
+                }
+                logger.warning("JSON严重截断，提取了部分信息构建最小可用结构")
+                return minimal_json
+        except Exception as e:
+            logger.debug(f"提取部分JSON信息失败: {e}")
+        
+        return None
+    
     # 第一次直接尝试标准JSON
     try:
-        return json.loads(s)
-    except Exception:
-        pass
+        result = json.loads(s)
+        logger.debug(f"JSON解析成功（第1次尝试 - 标准json.loads）")
+        return result
+    except json.JSONDecodeError as e:
+        logger.debug(f"标准JSON解析失败: {e}")
+    except Exception as e:
+        logger.debug(f"标准JSON解析异常: {e}")
 
-    # 常见清洗与修复
-    import re as _re
-    cleaned = s.replace("'", '"')
-    # 替换中文引号为英文引号（防止JSON解析失败）
-    cleaned = cleaned.replace('"', '"').replace('"', '"')
-    cleaned = _re.sub(r",\s*([}\]])", r"\1", cleaned)  # 移除 ,] 或 ,}
-    cleaned = _re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", cleaned)  # 控制字符
-
-    # 处理中文/字母/数字之间未转义的双引号，如 从"能用"到"好用"，避免破坏JSON字符串
-    # 仅在引号两侧是中日韩字符或字母数字时进行转义，尽量避免影响键名等结构
-    try:
-        cleaned = _re.sub(r'(?<=[\u4e00-\u9fffA-Za-z0-9])\"(?=[\u4e00-\u9fffA-Za-z0-9])', r'\\"', cleaned)
-    except Exception:
-        pass
-
-    # content_outline 尾部修补
-    try:
-        co_key = '"content_outline"'
-        co_pos = cleaned.find(co_key)
-        if co_pos != -1:
-            arr_start = cleaned.find('[', co_pos)
-            if arr_start != -1:
-                # 仅针对 content_outline 片段进行括号配对检查
-                # 在 content_outline 之后、外层对象结束 '}' 之前寻找匹配的 ']'
-                outer_obj_end = cleaned.find('}', arr_start)
-                if outer_obj_end == -1:
-                    outer_obj_end = len(cleaned)
-                segment = cleaned[arr_start:outer_obj_end]
-
-                # 计算方括号是否配对完整
-                depth = 0
-                has_close = False
-                for ch in segment:
-                    if ch == '[':
-                        depth += 1
-                    elif ch == ']':
-                        depth -= 1
-                        if depth == 0:
-                            has_close = True
-                            break
-                # 如果未找到与起始 '[' 配对的 ']'，则在外层对象结束前补一个
-                if not has_close:
-                    cleaned = cleaned[:outer_obj_end] + ']' + cleaned[outer_obj_end:]
-    except Exception:
-        pass
+    # 基础清洗
+    cleaned = s
+    # 移除 ,] 或 ,}
+    cleaned = _re.sub(r",\s*([}\]])", r"\1", cleaned)
+    # 移除控制字符（但保留换行符和tab，因为它们在JSON中是合法的）
+    cleaned = _re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", cleaned)
+    # 移除末尾的逗号
+    cleaned = cleaned.rstrip().rstrip(',').rstrip()
+    
+    # 记录清洗后的变化
+    if cleaned != s:
+        logger.debug(f"JSON清洗后长度变化: {len(s)} -> {len(cleaned)}")
 
     # 第二次尝试标准JSON
     try:
-        return json.loads(cleaned)
-    except Exception:
-        pass
+        result = json.loads(cleaned)
+        logger.debug(f"JSON解析成功（第2次尝试 - 清洗后）")
+        return result
+    except json.JSONDecodeError as e:
+        logger.debug(f"清洗后JSON解析失败: {e}, 位置: {e.pos if hasattr(e, 'pos') else 'N/A'}")
+        # 如果有位置信息，显示错误附近的内容
+        if hasattr(e, 'pos') and e.pos:
+            error_context_start = max(0, e.pos - 50)
+            error_context_end = min(len(cleaned), e.pos + 50)
+            error_context = cleaned[error_context_start:error_context_end]
+            logger.debug(f"错误位置上下文: ...{error_context}...")
+    except Exception as e:
+        logger.debug(f"清洗后JSON解析异常: {e}")
+    
+    # 尝试智能修复截断的JSON
+    logger.debug("尝试智能修复截断的JSON...")
+    result = try_fix_truncated(cleaned)
+    if result:
+        logger.info("JSON解析成功（智能修复后）")
+        return result
 
     # 回退到 Python 字面量
+    logger.debug("尝试使用 ast.literal_eval...")
     try:
         import ast
         obj = ast.literal_eval(cleaned)
         if isinstance(obj, dict):
+            logger.info("JSON解析成功（使用 ast.literal_eval）")
             return obj
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"ast.literal_eval 解析失败: {e}")
 
     # 仍失败则抛出，便于上层回退逻辑处理
-    preview = cleaned if len(cleaned) <= 300 else cleaned[:300] + "..."
+    preview = cleaned if len(cleaned) <= 500 else cleaned[:500] + "..."
+    logger.error(f"所有JSON解析方法均失败，原始长度: {len(s)}, 清洗后长度: {len(cleaned)}")
     raise ValueError(f"Failed to parse outline JSON after cleanup. Preview: {preview}")
 
 def parse_outline_json(outline_summary, prompt):
@@ -974,9 +1233,14 @@ def parse_outline_json(outline_summary, prompt):
     try:
         # 清理JSON字符串，移除可能导致解析错误的内容
         cleaned_json = outline_summary
-        # 移除markdown代码块标记
-        cleaned_json = cleaned_json.replace('```json', '').replace('```', '')
-        # 移除换行符和多余的空格
+        
+        # 移除markdown代码块标记（支持多种格式）
+        import re as _re
+        # 移除 ```json 和 ``` 包裹
+        cleaned_json = _re.sub(r'```\s*json\s*\n?', '', cleaned_json, flags=_re.IGNORECASE)
+        cleaned_json = _re.sub(r'```\s*\n?', '', cleaned_json)
+        
+        # 移除多余的空格和换行符
         cleaned_json = cleaned_json.strip()
         
         # 尝试找到JSON的开始和结束位置
@@ -984,20 +1248,54 @@ def parse_outline_json(outline_summary, prompt):
         end_idx = cleaned_json.rfind('}') + 1
         
         if start_idx < 0 or end_idx <= start_idx:
-            print("警告: 无法找到有效的JSON结构，使用默认大纲")
+            logger.warning("无法找到有效的JSON结构，使用默认大纲")
             return create_default_outline(prompt)
             
         cleaned_json = cleaned_json[start_idx:end_idx]
+        
+        # 记录清理后的JSON用于调试
+        logger.debug(f"清理后的JSON长度: {len(cleaned_json)}, 前200字符: {cleaned_json[:200]}")
+        
         outline_summary_json = try_load(cleaned_json)
 
         # 验证JSON结构是否包含必要的字段
         if not validate_outline_structure(outline_summary_json):
-            print("警告: JSON结构不完整，使用默认大纲")
+            logger.warning("JSON结构不完整，使用默认大纲")
+            # 检查是否至少有标题和摘要，如果有则保留它们
+            if outline_summary_json and isinstance(outline_summary_json, dict):
+                title = outline_summary_json.get('title', prompt)
+                summary = outline_summary_json.get('summary', f"关于{prompt}的文章")
+                logger.info(f"保留已解析的标题和摘要: {title[:30]}...")
+                default_outline = create_default_outline(prompt)
+                default_outline['title'] = title
+                default_outline['summary'] = summary
+                return default_outline
             return create_default_outline(prompt)
+        
+        # 检查content_outline是否被截断（只有部分h2内容）
+        outline_count = len(outline_summary_json.get('content_outline', []))
+        if outline_count > 0:
+            # 检查最后一个outline_block的h2是否完整
+            last_block = outline_summary_json['content_outline'][-1]
+            if 'h2' in last_block and isinstance(last_block['h2'], list):
+                # 检查h2列表中是否有被截断的项（非常短或包含省略号）
+                truncated_h2 = [h2 for h2 in last_block['h2'] if len(h2) < 5 or '...' in h2]
+                if truncated_h2:
+                    logger.warning(f"检测到h2被截断: {truncated_h2}，移除不完整的项")
+                    # 移除被截断的h2
+                    last_block['h2'] = [h2 for h2 in last_block['h2'] if len(h2) >= 5 and '...' not in h2]
+                    # 如果h2为空，移除整个block
+                    if not last_block['h2']:
+                        outline_summary_json['content_outline'].pop()
+                        logger.warning("移除了最后一个不完整的大纲章节")
+        
+        logger.info(f"大纲JSON解析成功: 标题='{outline_summary_json.get('title', '')[:30]}...', 章节数={len(outline_summary_json.get('content_outline', []))}")
         return outline_summary_json
     except Exception as e:
-        print(f"JSON解析错误: {e}")
-        print(f"原始JSON内容: {outline_summary}")
+        logger.error(f"JSON解析错误: {e}")
+        # 只显示前500字符避免日志过长
+        preview = outline_summary[:500] if len(outline_summary) <= 500 else outline_summary[:500] + "..."
+        logger.error(f"原始JSON内容（前500字符）: {preview}")
         return create_default_outline(prompt)
 
 def create_default_outline(prompt):

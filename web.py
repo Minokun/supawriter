@@ -65,6 +65,34 @@ st.set_page_config(
 # 全局样式优化
 st.markdown("""
 <style>
+/* 响应式布局 - 确保在不同分辨率下正确显示 */
+.main .block-container {
+    max-width: 100%;
+    padding-left: 2rem;
+    padding-right: 2rem;
+}
+
+/* 针对大屏幕的响应式适配 */
+@media (min-width: 1400px) {
+    .main .block-container {
+        max-width: 1400px;
+        margin: 0 auto;
+    }
+}
+
+@media (min-width: 1920px) {
+    .main .block-container {
+        max-width: 1600px;
+        margin: 0 auto;
+    }
+}
+
+/* 确保侧边栏 logo 正确显示 */
+[data-testid="stSidebar"] img {
+    max-width: 100%;
+    height: auto;
+}
+
 /* 顶部导航样式优化 */
 section[data-testid="stSidebarNav"] {
     background-color: white;

@@ -3,7 +3,7 @@ import json
 import uuid
 import logging
 from datetime import datetime
-import streamlit as st
+from utils.database import Database
 
 # Helper to sanitize filenames to avoid path traversal and illegal characters
 def sanitize_filename(name: str, replacement: str = '_', max_length: int = 200) -> str:
@@ -84,6 +84,7 @@ def save_user_history(username, history):
 def add_history_record(username, topic, article_content, summary=None, model_type=None, model_name=None, write_type=None, spider_num=None, custom_style=None, is_transformed=False, original_article_id=None, image_task_id=None, image_enabled=False, image_similarity_threshold=None, image_max_count=None, tags=None, article_topic=None):
     """
     Add a new record to the user's history, with configurable parameters.
+    Saves to both local JSON file and PostgreSQL database.
     
     Args:
         username: The username of the user
@@ -104,6 +105,7 @@ def add_history_record(username, topic, article_content, summary=None, model_typ
         tags: Tags from the article outline
         article_topic: Original topic entered by user for article generation
     """
+    # 1. Save to local JSON file (for backward compatibility)
     history = load_user_history(username)
     # 生成唯一ID（避免删除后ID重复）
     record_id = max([r.get("id", 0) for r in history], default=0) + 1
@@ -129,6 +131,61 @@ def add_history_record(username, topic, article_content, summary=None, model_typ
     }
     history.append(record)
     save_user_history(username, history)
+    
+    # 2. Save to PostgreSQL database
+    try:
+        # Convert tags to array format if it's a string
+        tags_array = None
+        if tags:
+            if isinstance(tags, str):
+                # Split by comma or use as single tag
+                tags_array = [t.strip() for t in tags.split(',') if t.strip()]
+            elif isinstance(tags, list):
+                tags_array = tags
+        
+        # Prepare metadata
+        metadata = {
+            "write_type": write_type,
+            "image_enabled": image_enabled,
+            "image_similarity_threshold": float(image_similarity_threshold) if image_similarity_threshold else None,
+            "image_max_count": image_max_count,
+            "is_transformed": is_transformed
+        }
+        
+        with Database.get_cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO articles (
+                    username, topic, article_content, summary, tags, metadata,
+                    model_type, model_name, write_type, spider_num, custom_style,
+                    is_transformed, original_article_id, image_task_id,
+                    image_enabled, image_similarity_threshold, image_max_count,
+                    article_topic
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s
+                )
+                RETURNING id
+            """, (
+                username, topic, article_content, summary, tags_array, json.dumps(metadata),
+                model_type, model_name, write_type, spider_num, custom_style,
+                is_transformed, original_article_id, image_task_id,
+                image_enabled, image_similarity_threshold, image_max_count,
+                article_topic
+            ))
+            
+            db_record = cursor.fetchone()
+            if db_record:
+                logging.info(f"Article saved to database with ID: {db_record['id']}")
+                record['db_id'] = str(db_record['id'])
+            
+    except Exception as e:
+        logging.error(f"Failed to save article to database: {e}")
+        # Don't fail the entire operation if database save fails
+        # The article is still saved to JSON file
+    
     return record
 
 def delete_history_record(username, record_id):
@@ -525,10 +582,10 @@ def save_tweet_topics_history(username, history):
     with open(history_file, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-def add_tweet_topics_record(username, news_source, news_count, topics_data, model_type, model_name):
+def add_tweet_topics_record(username, news_source, news_count, topics_data, model_type, model_name, mode="manual", topic_name=None, news_urls=None):
     """
     Add a new tweet topics record to the user's history.
-    
+
     Args:
         username: The username of the user
         news_source: The news source used
@@ -536,7 +593,10 @@ def add_tweet_topics_record(username, news_source, news_count, topics_data, mode
         topics_data: The generated topics data (JSON object)
         model_type: The type of model used
         model_name: The name of the model used
-    
+        mode: The mode used ('intelligent' or 'manual')
+        topic_name: The topic name for intelligent mode
+        news_urls: List of source news URLs (optional)
+
     Returns:
         dict: The newly created record
     """
@@ -549,6 +609,9 @@ def add_tweet_topics_record(username, news_source, news_count, topics_data, mode
         "topics_data": topics_data,
         "model_type": model_type,
         "model_name": model_name,
+        "mode": mode,
+        "topic_name": topic_name,
+        "news_urls": news_urls or [],
         "timestamp": datetime.now().isoformat()
     }
     history.append(record)
@@ -561,4 +624,3 @@ def delete_tweet_topics_record(username, record_id):
     new_history = [r for r in history if r.get("id") != record_id]
     save_tweet_topics_history(username, new_history)
     return True
-

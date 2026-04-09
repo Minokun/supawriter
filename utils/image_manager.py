@@ -244,6 +244,9 @@ class ImageManager:
             logger.warning("No paragraph embeddings were created, cannot match images to paragraphs")
             return []
         
+        # 用于去重的集合，存储已使用的图片URL
+        used_image_urls = set()
+        
         # 对每个段落，在FAISS索引中搜索相似的图片
         for para_idx, (para_embedding, para_data) in enumerate(zip(paragraph_embeddings, paragraph_data)):
             try:
@@ -254,15 +257,25 @@ class ImageManager:
                     for i, (distance, data) in enumerate(zip(distances, matched_data)):
                         # 检查是否是图片数据
                         if 'image_url' in data and 'description' in data:
+                            image_url = data['image_url']
+                            
+                            # 检查图片是否已被使用，避免重复插入
+                            if image_url in used_image_urls:
+                                logger.info(f"跳过已使用的图片：{image_url[:80]}...")
+                                continue
+                            
                             # 使用距离值作为相似度分数
                             # 注意：在优化后的FAISS索引中，distance已经是1-相似度
                             similarity = distance
                             
                             # 只包含超过相似度阈值的匹配
                             if similarity >= similarity_threshold:
+                                # 标记图片为已使用
+                                used_image_urls.add(image_url)
+                                
                                 # 创建图片信息对象
                                 image_info = {
-                                    'path': data['image_url'],
+                                    'path': image_url,
                                     'description': data['description'],
                                     'is_related': data.get('is_related', True),
                                     'task_id': data.get('task_id', '')

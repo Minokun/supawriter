@@ -13,7 +13,21 @@ from datetime import datetime
 import logging
 from typing import Optional, Dict, List, Any
 from pathlib import Path
-import streamlit as st
+
+try:
+    import streamlit as st
+except ModuleNotFoundError:
+    class _StreamlitFallback:
+        secrets: Dict[str, Any] = {}
+
+        @staticmethod
+        def cache_resource(*args, **kwargs):
+            def decorator(func):
+                return func
+
+            return decorator
+
+    st = _StreamlitFallback()
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +145,17 @@ class Database:
         """获取数据库连接（上下文管理器）"""
         pool_obj = cls.get_connection_pool()
         conn = pool_obj.getconn()
+
+        # 验证连接是否有效，如果无效则重新获取
+        try:
+            # 尝试执行简单查询验证连接
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        except Exception:
+            # 连接已关闭，放回并获取新连接
+            pool_obj.putconn(conn, close=True)
+            conn = pool_obj.getconn()
+
         try:
             yield conn
             conn.commit()
@@ -163,30 +188,32 @@ class User:
         password_hash: Optional[str] = None,
         display_name: Optional[str] = None,
         avatar_url: Optional[str] = None,
+        avatar_source: Optional[str] = None,
         motto: Optional[str] = None
     ) -> Optional[int]:
         """
         创建新用户
-        
+
         Args:
             username: 用户名（唯一）
             email: 邮箱
             password_hash: 密码哈希
             display_name: 显示名称
             avatar_url: 头像URL
+            avatar_source: 头像来源 ('google', 'wechat', 'manual')
             motto: 座右铭
-        
+
         Returns:
             创建的用户ID，失败返回None
         """
         try:
             with Database.get_cursor() as cursor:
                 cursor.execute("""
-                    INSERT INTO users (username, email, password_hash, display_name, avatar_url, motto, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+                    INSERT INTO users (username, email, password_hash, display_name, avatar_url, avatar_source, motto, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
                     RETURNING id
-                """, (username, email, password_hash, display_name, avatar_url, motto or "创作改变世界"))
-                
+                """, (username, email, password_hash, display_name, avatar_url, avatar_source, motto or "创作改变世界"))
+
                 result = cursor.fetchone()
                 return result['id'] if result else None
         except psycopg2.IntegrityError as e:
@@ -268,6 +295,74 @@ class User:
 
 class OAuthAccount:
     """OAuth账号模型类"""
+    _has_extra_data_column: Optional[bool] = None
+
+    @staticmethod
+    def _supports_extra_data_column() -> bool:
+        if OAuthAccount._has_extra_data_column is not None:
+            return OAuthAccount._has_extra_data_column
+
+        try:
+            with Database.get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_name = 'oauth_accounts'
+                          AND column_name = 'extra_data'
+                    ) AS exists
+                """, ())
+                row = cursor.fetchone()
+                OAuthAccount._has_extra_data_column = bool(row and row['exists'])
+        except Exception as e:
+            logger.warning(f"探测 oauth_accounts.extra_data 列失败，默认按存在处理: {e}")
+            OAuthAccount._has_extra_data_column = True
+
+        return OAuthAccount._has_extra_data_column
+
+    @staticmethod
+    def _insert_oauth_account(
+        user_id: int,
+        provider: str,
+        provider_user_id: str,
+        access_token: Optional[str] = None,
+        refresh_token: Optional[str] = None,
+        extra_data: Optional[Dict] = None,
+        include_extra_data: bool = True
+    ) -> Optional[int]:
+        import json
+
+        with Database.get_cursor() as cursor:
+            if include_extra_data:
+                cursor.execute("""
+                    INSERT INTO oauth_accounts
+                    (user_id, provider, provider_user_id, access_token, refresh_token, extra_data, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
+                    RETURNING id
+                """, (
+                    user_id,
+                    provider,
+                    provider_user_id,
+                    access_token,
+                    refresh_token,
+                    json.dumps(extra_data) if extra_data else None,
+                ))
+            else:
+                cursor.execute("""
+                    INSERT INTO oauth_accounts
+                    (user_id, provider, provider_user_id, access_token, refresh_token, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+                    RETURNING id
+                """, (
+                    user_id,
+                    provider,
+                    provider_user_id,
+                    access_token,
+                    refresh_token,
+                ))
+
+            result = cursor.fetchone()
+            return result['id'] if result else None
     
     @staticmethod
     def create_oauth_account(
@@ -293,18 +388,27 @@ class OAuthAccount:
             创建的OAuth账号ID，失败返回None
         """
         try:
-            import json
-            with Database.get_cursor() as cursor:
-                cursor.execute("""
-                    INSERT INTO oauth_accounts 
-                    (user_id, provider, provider_user_id, access_token, refresh_token, extra_data, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())
-                    RETURNING id
-                """, (user_id, provider, provider_user_id, access_token, refresh_token, 
-                      json.dumps(extra_data) if extra_data else None))
-                
-                result = cursor.fetchone()
-                return result['id'] if result else None
+            include_extra_data = bool(extra_data) and OAuthAccount._supports_extra_data_column()
+            return OAuthAccount._insert_oauth_account(
+                user_id=user_id,
+                provider=provider,
+                provider_user_id=provider_user_id,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                extra_data=extra_data,
+                include_extra_data=include_extra_data,
+            )
+        except psycopg2.errors.UndefinedColumn:
+            OAuthAccount._has_extra_data_column = False
+            logger.warning("oauth_accounts.extra_data column missing, retrying insert without extra_data")
+            return OAuthAccount._insert_oauth_account(
+                user_id=user_id,
+                provider=provider,
+                provider_user_id=provider_user_id,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                include_extra_data=False,
+            )
         except psycopg2.IntegrityError as e:
             logger.error(f"OAuth账号已绑定: {e}")
             return None

@@ -1,45 +1,19 @@
-# 虚拟环境
-venv/
-.venv/
-env/
-
-# IDE
-.idea/
-.vscode/
-
-# Python
-__pycache__/
-utils/__pycache__/*.pyc
+# Dependencies
+node_modules/
+**/__pycache__/
 *.pyc
-*.pyo
-*.pyd
-.Python
-
-# UV 包管理器
-# 注意: uv.lock 应该提交到版本控制
-.uv_cache/
-
-# 输出和临时文件
-output/*
-images/*
-data/*
-
-# 配置文件
-.streamlit/secrets.toml
-
-# 系统文件
 .DS_Store
-Thumbs.db
-
-# 备份文件
-*.backup
-*_backup.txt
-requirements_full_backup.txt
-requirements_venv_backup.txt
-
-# 部署配置文件
-deployment/servers.conf
+.streamlit/secrets.toml
+logs/*.log
+.env.local
+.env
 deployment/.env
-
-# 迁移配置文件
+backend/.env
+creator/.env
 deployment/migrate/.env.migration
+images/
+community/node_modules/
+
+# Runtime data
+data/
+.gstack/

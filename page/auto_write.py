@@ -312,8 +312,6 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
                 future = executor.submit(
                     Search(result_num=spider_num).get_search_result, 
                     text_input, 
-                    is_multimodal=is_multimodal,
-                    use_direct_image_embedding=use_direct_image_embedding,
                     theme=article_title, 
                     progress_callback=spider_progress_callback, 
                     username=username, 
@@ -464,7 +462,8 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
         if isinstance(outlines, str) and outlines.count("title") <= 1:
             outline_summary = outlines
         else:
-            outline_summary = chat(f'<topic>{text_input}</topic> <content>{outlines}</content>', pt.ARTICLE_OUTLINE_SUMMARY, model_type=model_type, model_name=model_name)
+            # 使用更高的max_tokens以避免大纲JSON被截断（中文内容需要更多tokens）
+            outline_summary = chat(f'<topic>{text_input}</topic> <content>{outlines}</content>', pt.ARTICLE_OUTLINE_SUMMARY, model_type=model_type, model_name=model_name, max_tokens=16384)
             outline_summary = remove_thinking_tags(outline_summary)  # 清理 thinking 标签
         
         outline_summary_json = parse_outline_json(outline_summary, text_input)
@@ -481,7 +480,7 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
             repeat_num = len(outline_summary_json['content_outline'])
             base_progress = 70
             
-            used_images = set()
+            used_images = set()  # 存储已使用的原始图片URL，防止重复插入
 
             for i, outline_block in enumerate(outline_summary_json['content_outline']):
                 n = i + 1
@@ -548,44 +547,57 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
                                     
                                 if isinstance(data, dict) and 'image_url' in data:
                                     image_url = data['image_url']
+                                    
+                                    # 首先检查原始URL是否已被使用，避免重复处理
+                                    if image_url in used_images:
+                                        log('info', f"跳过已使用的图片：{image_url[:80]}...")
+                                        continue
+                                    
+                                    # 检查相似度是否达到阈值
+                                    if similarity < similarity_threshold:
+                                        continue
+                                    
                                     # 将百度/CDN等受限链接上传到七牛云，获取可公开访问的URL
                                     public_url = ensure_public_image_url(image_url)
                                     
-                                    # 检查图片URL是否已被使用（基于转换后的最终URL）
-                                    if public_url not in used_images:
-                                        log('info', f"找到相似度为{similarity:.4f}的图片：{image_url}")
-                                        
-                                        # 检查相似度是否达到阈值
-                                        if similarity >= similarity_threshold:
-                                            used_images.add(public_url)
+                                    # 验证图片URL是否有效（非空且不是明显的错误URL）
+                                    if not public_url or len(public_url) < 10:
+                                        log('warn', f"图片URL无效，跳过：{image_url[:80]}...")
+                                        used_images.add(image_url)  # 标记为已处理，避免重复尝试
+                                        continue
+                                    
+                                    log('info', f"找到相似度为{similarity:.4f}的图片：{image_url[:80]}...")
+                                    
+                                    # 标记原始URL为已使用
+                                    used_images.add(image_url)
+                                    
+                                    # 根据已插入图片数量决定插入位置
+                                    if images_inserted == 0:
+                                        # 第一张图片放在章节开头
+                                        image_markdown = f"![图片]({public_url})\n\n"
+                                        outline_block_content_final = image_markdown + outline_block_content_final
+                                    else:
+                                        # 后续图片尝试插入到段落之间
+                                        paragraphs = outline_block_content_final.split('\n\n')
+                                        if len(paragraphs) >= 3:
+                                            # 计算插入位置 - 尝试均匀分布
+                                            insert_position = len(paragraphs) // (max_images_per_chapter) * images_inserted
+                                            # 确保位置有效
+                                            insert_position = min(insert_position, len(paragraphs) - 1)
+                                            insert_position = max(insert_position, 1)  # 至少从第二段开始
                                             
-                                            # 根据已插入图片数量决定插入位置
-                                            if images_inserted == 0:
-                                                # 第一张图片放在章节开头
-                                                image_markdown = f"![图片]({public_url})\n\n"
-                                                outline_block_content_final = image_markdown + outline_block_content_final
-                                            else:
-                                                # 后续图片尝试插入到段落之间
-                                                paragraphs = outline_block_content_final.split('\n\n')
-                                                if len(paragraphs) >= 3:
-                                                    # 计算插入位置 - 尝试均匀分布
-                                                    insert_position = len(paragraphs) // (max_images_per_chapter) * images_inserted
-                                                    # 确保位置有效
-                                                    insert_position = min(insert_position, len(paragraphs) - 1)
-                                                    insert_position = max(insert_position, 1)  # 至少从第二段开始
-                                                    
-                                                    # 插入图片
-                                                    image_markdown = f"\n\n![图片]({public_url})"
-                                                    paragraphs[insert_position] = paragraphs[insert_position] + image_markdown
-                                                    outline_block_content_final = '\n\n'.join(paragraphs)
-                                                else:
-                                                    # 如果段落不够，就添加到末尾
-                                                    image_markdown = f"\n\n![图片]({public_url})"
-                                                    outline_block_content_final += image_markdown
-                                            
-                                            log('info', f"为章节 '{chapter_title}' 插入第 {images_inserted+1} 张图片，相似度: {similarity:.4f}")
-                                            images_inserted += 1
-                                            image_inserted = True
+                                            # 插入图片
+                                            image_markdown = f"\n\n![图片]({public_url})"
+                                            paragraphs[insert_position] = paragraphs[insert_position] + image_markdown
+                                            outline_block_content_final = '\n\n'.join(paragraphs)
+                                        else:
+                                            # 如果段落不够，就添加到末尾
+                                            image_markdown = f"\n\n![图片]({public_url})"
+                                            outline_block_content_final += image_markdown
+                                    
+                                    log('info', f"为章节 '{chapter_title}' 插入第 {images_inserted+1} 张图片，相似度: {similarity:.4f}")
+                                    images_inserted += 1
+                                    image_inserted = True
                             
                             # 如果未插入图片，记录警告
                             if not image_inserted:
@@ -604,7 +616,7 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
                 live_article_content = '\n\n'.join(article_chapters)
                 if outline_summary_json.get('summary') and outline_summary_json['summary'].strip():
                     summary_text = outline_summary_json['summary'].strip()
-                    summary_markdown = f"> **文章概要**\n> {summary_text}\n\n"
+                    summary_markdown = f"> {summary_text}\n\n"
                     live_article_content = summary_markdown + live_article_content
                 task_state['live_article'] = live_article_content
 
@@ -619,7 +631,7 @@ def generate_article_background(task_state, text_input, model_type, model_name, 
         # 在文章最前面添加summary（使用markdown引用格式）
         if outline_summary_json.get('summary') and outline_summary_json['summary'].strip():
             summary_text = outline_summary_json['summary'].strip()
-            summary_markdown = f"> **文章概要**\n> {summary_text}\n\n"
+            summary_markdown = f"> {summary_text}\n\n"
             final_article_content = summary_markdown + final_article_content
         if final_article_content.strip():
             if username and username != "anonymous":
@@ -716,7 +728,7 @@ def main():
     # 这里只需要同步 session_state 和全局队列的状态
 
     with st.sidebar:
-        st.title("超级写手配置项：")
+        st.title("超能写手配置项：")
         
         # 显示任务状态
         pending_count = get_pending_count()
@@ -797,7 +809,7 @@ def main():
             st.session_state['_custom_style_value'] = custom_style
 
     st.caption('SuperWriter by WuXiaokun.')
-    st.subheader("超级写手🤖", divider='rainbow')
+    st.subheader("超能写手🤖", divider='rainbow')
     
     # ==================== 处理表单提交 ====================
     # 注意：这段代码必须在 tab 外部，否则表单提交不会被正确处理

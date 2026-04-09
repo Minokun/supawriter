@@ -1,511 +1,619 @@
-# 超级写手 (SupaWriter)
+# SupaWriter 超能写手
 
-**超级写手** 是一个集成了大模型、搜索引擎和多模态技术的智能写作平台，旨在通过自动化手段提升内容创作效率和质量。它不仅是一个文本生成工具，更是一个涵盖资料收集、信息整理、内容创作和多平台发布的全流程创作系统。
+<p align="center">
+  <strong>AI 驱动的智能内容创作平台</strong>
+</p>
 
-## 📋 功能概述
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.12+-blue?logo=python" alt="Python">
+  <img src="https://img.shields.io/badge/FastAPI-0.95+-009688?logo=fastapi" alt="FastAPI">
+  <img src="https://img.shields.io/badge/Next.js-14-black?logo=next.js" alt="Next.js">
+  <img src="https://img.shields.io/badge/PostgreSQL-15+-336791?logo=postgresql" alt="PostgreSQL">
+  <img src="https://img.shields.io/badge/Redis-7+-DC382D?logo=redis" alt="Redis">
+  <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
+</p>
 
-### 核心功能
+---
 
-1. **智能内容创作**
-   - 基于多个搜索引擎自动查询并整合互联网资料
-   - **双引擎搜索**：集成 SearXNG + Serper API，提供更全面的搜索覆盖
-   - 智能分析和提取关键信息，构建文章框架
-   - 根据用户需求生成定制化高质量内容
-   - 支持多种写作风格和内容类型
-   - 自动生成文章概要，提供整体内容预览
+SupaWriter 是一个前后端分离的 AI 内容创作平台，集成大语言模型、搜索引擎和多模态技术，覆盖从资料收集、信息整理到内容创作的全流程。
 
-2. **多模态内容处理**
-   - 智能图像识别和处理，自动为文章匹配相关图片
-   - 图像内容理解和描述，增强文章可视化效果
-   - 用户和文章特定的FAISS索引，确保图片数据隔离和准确匹配
-   - 支持直接使用图片URL，无需本地存储
-   - **防盗链优化**：智能处理 CSDN、知乎、阿里云等主流网站的图片防盗链，确保图片下载成功率
+## � 系统架构
 
-3. **内容创作导航中心**
-   - 集成多种搜索引擎：SearXNG、秘塔AI搜索、Google等
-   - 连接主流内容发布平台：微信公众号、头条号、百家号等
-   - 提供AI视频创作工具链接：即梦、剪映等视频创作平台
-   - 本地Markdown编辑器和内容管理工具
-
-4. **多渠道认证系统**
-   - **Google OAuth2**：基于 Streamlit 原生支持的 Google 账号登录
-   - **微信开放平台**：支持微信扫码登录，适合国内用户
-   - **本地账号**：传统用户名密码登录方式
-   - 用户数据完全隔离，支持多账号切换
-
-5. **用户系统与历史记录**
-   - 多用户支持，数据隔离
-   - 创作历史记录和数据分析
-   - 个性化设置和偏好保存
-   - 统一的HTML预览和下载界面
-
-6. **全网热点追踪**
-   - **多平台热搜聚合**：实时获取36Kr创投、百度热搜、微博热搜、抖音热搜榜单
-   - **一键创作**：直接基于热点话题一键跳转到写作页面，自动填充主题和上下文
-   - **实时更新**：采用混合数据获取策略（API/HTML解析），保障数据实时性和稳定性
-
-## 🔧 技术特点
-
-1. **多引擎搜索系统**
-   - **SearXNG**：隐私保护的元搜索引擎，聚合多个搜索源
-   - **Serper API**：Google 搜索 API，提供高质量的搜索结果
-   - 自动合并和去重搜索结果，提供更全面的信息覆盖
-   - 智能关键词优化，提高搜索相关性
-
-2. **高效并发网页抽取**
-   - 基于Playwright的异步网页内容获取
-   - 可配置的并发爬虫数量（默认20个）
-   - 智能超时处理和错误重试机制
-   - 批次内URL去重，避免重复内容
-
-3. **智能图像处理系统**
-   - 支持多种VL模型：GLM-4.1v和Qwen-VL系列
-   - 图像URL规范化和去重处理
-   - 基于FAISS的图像相似度检索
-   - 支持直接图片URL嵌入或多模态处理
-   - **多网站防盗链支持**：
-     - CSDN、知乎、简书、掘金
-     - 微信公众号、阿里云 OSS/CDN
-     - 51CTO、InfoQ、SegmentFault
-     - 智能 Referer 选择和多策略重试机制
-
-4. **用户和文章特定的数据隔离**
-   - 每篇文章独立的FAISS索引
-   - 基于用户名和文章ID的索引路径结构：`/data/faiss/{username}/{article_id}/`
-   - 自动索引加载和回退机制
-   - 多用户环境下的数据安全隔离
-
-5. **可靠的错误处理**
-   - 搜索结果为空的错误处理和提示
-   - 网络请求超时保护
-   - 详细的日志记录和状态追踪
-   - 任务状态实时更新
-
-## 💯 应用场景
-
-1. **自媒体内容创作**
-   - 快速生成高质量的平台文章
-   - 多平台内容发布和管理
-   - 图文结合的富媒体内容
-
-2. **专业文档撰写**
-   - 研究报告和行业分析
-   - 技术文档和教程
-   - 项目计划和商业提案
-
-3. **教育内容开发**
-   - 课程材料和教案
-   - 学习指南和参考资料
-   - 知识点总结和扩展阅读
-
-4. **个人知识管理**
-   - 信息收集和整理
-   - 知识总结和归纳
-   - 个人笔记和学习记录
-
-## 💯 工作流程
-
-```mermaid
-flowchart TD
-    A[用户输入文章主题] --> B[配置生成参数]
-    B --> C[执行文章生成任务]
-    C --> D[搜索引擎查询相关资料]
-    D --> E{搜索结果是否为空?}
-    E -- 是 --> F[报错并终止任务]
-    E -- 否 --> G[并发爬取网页内容]
-    G --> H[分析内容生成大纲]
-    H --> I[根据大纲生成文章章节]
-    
-    subgraph 图片处理流程
-        J[图片搜索与识别] --> K[创建用户和文章特定FAISS索引]
-        K --> L[图片内容理解与匹配]
-        L --> M[将图片嵌入到文章中]
-    end
-    
-    I --> N{是否启用图片?}
-    N -- 是 --> J
-    N -- 否 --> O[生成最终文章]
-    M --> O
-    
-    O --> P[添加文章概要]
-    P --> Q[保存到历史记录]
-    Q --> R[提供预览和编辑功能]
-    R --> S[导出Markdown或HTML]
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Nginx (80/443)                       │
+│                        反向代理 + SSL                        │
+├──────────────┬──────────────────┬───────────────────────────┤
+│              │                  │                           │
+│   Next.js    │   FastAPI API    │   Streamlit 创作工具       │
+│   前端网站    │   后端服务        │   AI 写作 (独立部署)       │
+│   :3000      │   :8000          │   :8501                   │
+│              │                  │                           │
+│  React 18    │  SQLAlchemy 2.0  │  多引擎搜索               │
+│  TailwindCSS │  Async ORM      │  图像处理                  │
+│  NextAuth    │  Redis 缓存/限流  │  文章生成                  │
+│  Tiptap 编辑 │  Prometheus 监控  │  热点追踪                  │
+│              │                  │                           │
+├──────────────┴──────────────────┴───────────────────────────┤
+│                                                             │
+│   PostgreSQL 15+          Redis 7+          外部 AI 服务     │
+│   主数据存储 :5432         缓存/限流 :6379    OpenAI / GLM    │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## 📊 系统架构
+| 组件 | 技术栈 | 端口 | 说明 |
+|------|--------|------|------|
+| **后端 API** | FastAPI + SQLAlchemy 2.0 Async | 8000 | RESTful API、认证、业务逻辑 |
+| **前端网站** | Next.js 14 + TailwindCSS | 3000 | 社区网站、文章管理、AI 助手 |
+| **创作工具** | Streamlit | 8501 | AI 写作、热点追踪（可独立部署） |
+| **数据库** | PostgreSQL 15+ | 5432 | 主数据存储 |
+| **缓存** | Redis 7+ | 6379 | 缓存 + 分布式限流（可选） |
+| **反向代理** | Nginx | 80/443 | 统一入口、SSL、负载均衡 |
 
-```mermaid
-graph TD
-    A[用户界面] --> B[Streamlit Web应用]
-    
-    subgraph 核心组件
-        B --> C[文章生成引擎]
-        B --> D[搜索引擎接口]
-        B --> E[图像处理系统]
-        B --> F[历史记录管理]
-        B --> G[用户认证系统]
-    end
-    
-    subgraph 外部服务
-        D --> H[SearXNG]
-        D --> I[Serper API]
-        E --> J[GLM-4.1v]
-        E --> K[Qwen-VL]
-        C --> L[大语言模型API]
-    end
-    
-    subgraph 数据存储
-        M[FAISS索引] --> E
-        N[用户配置] --> B
-        O[历史记录] --> F
-        P[HTML输出] --> B
-    end
+---
+
+## ✨ 核心功能
+
+### 前端网站（Next.js）
+
+- **AI 写作工作台** — Tiptap 富文本编辑器 + AI 辅助写作
+- **AI 助手** — 对话式 AI 聊天
+- **文章管理** — 创建、编辑、发布文章
+- **灵感发现** — 热点话题、推文选题
+- **推文选题** — 智能模式 + 手动模式，AI 筛选新闻生成选题
+- **新闻聚合** — 多源新闻浏览
+- **用户中心** — 个人设置、API Key 管理
+
+### 后端 API（FastAPI）
+
+- **分层架构** — Route → Service → Repository → ORM
+- **异步 ORM** — SQLAlchemy 2.0 DeclarativeBase + asyncpg
+- **多渠道认证** — JWT + Google OAuth2 + 微信扫码登录
+- **Redis 缓存** — 装饰器式缓存，自动降级
+- **分布式限流** — Redis ZSET 滑动窗口算法
+- **审计日志** — 全链路请求追踪
+- **配额管理** — 用户级别的 API/文章配额
+- **性能监控** — Prometheus 指标 + Grafana 仪表板
+
+### 创作工具（Streamlit）
+
+- **智能文章生成** — 搜索引擎 + LLM 自动生成高质量文章
+- **双引擎搜索** — SearXNG + Serper API 聚合搜索
+- **多模态处理** — GLM-4.1v / Qwen-VL 图像理解与匹配
+- **全网热点追踪** — 36Kr、百度、微博、抖音热搜聚合
+- **公众号预览** — 一键转换为微信公众号格式
+- **防盗链优化** — 支持 CSDN、知乎等 9 大网站图片下载
+
+---
+
+## 🔨 系统要求
+
+| 依赖 | 版本 | 必须 | 说明 |
+|------|------|------|------|
+| **Python** | 3.12+ | ✅ | 后端运行时 |
+| **Node.js** | 18+ | ✅ | 前端运行时 |
+| **PostgreSQL** | 14+ | ✅ | 主数据库 |
+| **Redis** | 6+ | ❌ | 缓存/限流（不装则自动降级） |
+| **uv** | 最新 | 推荐 | Python 包管理（比 pip 快 10-100x） |
+| **Docker** | 20+ | ❌ | 容器化部署时需要 |
+
+---
+
+## 🚀 快速开始
+
+### 方式一：使用 manage.sh 一键启动（推荐）
+
+```bash
+# 1. 克隆项目
+git clone https://github.com/your-org/supawriter.git
+cd supawriter
+
+# 2. 一键安装依赖 + 配置环境
+./manage.sh install
+
+# 3. 启动全部服务（后端 + 前端）
+./manage.sh start
+
+# 4. 查看服务状态
+./manage.sh status
 ```
 
-## 🔨️ 系统要求
+启动后访问：
+- 前端网站：http://localhost:3000
+- API 文档：http://localhost:8000/docs
+- 健康检查：http://localhost:8000/health
 
-- Python 3.8+
-- 支持异步操作的现代浏览器
-- 互联网连接
-- 大语言模型API密钥（支持多种提供商）
-- 视觉语言模型API密钥（用于图像处理）
+### 方式二：手动启动
 
-## ⚙️ 配置说明
+#### 1. 安装依赖
 
-### 主要配置文件
+```bash
+# 后端（推荐使用 uv）
+uv sync
+# 或使用 pip
+pip install -e .
 
-- **`.streamlit/secrets.toml`**: 配置必要的API密钥和访问凭证
-  ```toml
-  # ========== 认证配置 ==========
-  # Google OAuth2 配置（Streamlit 原生支持）
-  # 申请地址: https://console.cloud.google.com/apis/credentials
-  # 文档: https://docs.streamlit.io/develop/tutorials/sso
-  [auth.google]
-  client_id = "your_google_client_id.apps.googleusercontent.com"
-  client_secret = "your_google_client_secret"
-  
-  # 微信开放平台 OAuth2 配置（可选）
-  # 申请地址: https://open.weixin.qq.com/
-  # 文档: https://developers.weixin.qq.com/doc/oplatform/Website_App/WeChat_Login/Wechat_Login.html
-  [wechat]
-  app_id = "your_wechat_app_id"           # 微信开放平台应用的 AppID
-  app_secret = "your_wechat_app_secret"   # 微信开放平台应用的 AppSecret
-  redirect_uri = "http://localhost:8501"  # 授权回调地址，需要在微信开放平台配置
-  
-  # ========== AI 模型配置 ==========
-  # 大语言模型配置
-  [openai]
-  model = "gpt-4-turbo"
-  base_url = "https://api.openai.com/v1"
-  api_key = "your_openai_api_key"
-  
-  # 视觉语言模型配置
-  [glm]
-  model = "glm-4-vision"
-  base_url = "https://open.bigmodel.cn/api/paas/v4"
-  api_key = "your_glm_api_key"
-  
-  # Serper 搜索引擎 API（可选，提供额外的搜索结果）
-  SERPER_API_KEY = "your_serper_api_key"
-  ```
+# 前端
+cd frontend && npm install && cd ..
+```
 
-- **`settings.py`**: 系统全局设置
-  ```python
-  # 文章生成配置
-  DEFAULT_SPIDER_NUM = 20  # 爬取网页数量默认值
-  DEFAULT_ENABLE_IMAGES = True  # 是否自动插入相关图片
-  DEFAULT_IMAGE_EMBEDDING_METHOD = 'multimodal'  # 图片嵌入方式: 'multimodal' 或 'direct_embedding'
-  
-  # 视觉语言模型配置
-  PROCESS_IMAGE_TYPE = "glm"  # 使用的图像处理模型类型: "glm" 或 "qwen"
-  
-  # 嵌入服务配置
-  EMBEDDING_TYPE = 'gitee'  # 可选: "gitee", "xinference", "jina"
-  EMBEDDING_D = 2048  # 嵌入向量维度
-  EMBEDDING_MODEL = 'jina-embeddings-v4'  # 嵌入模型名称
-  
-  # Serper 搜索引擎 API
-  SERPER_API_KEY = st.secrets.get('SERPER_API_KEY')  # 从 secrets 读取
-  ```
+#### 2. 配置环境变量
 
-### 支持的模型和服务
+```bash
+# 后端配置（根目录）
+cp .env.example .env
+vim .env
+```
 
-- **大语言模型**: OpenAI, 文心一言, 通义千问, Xinference, Jina
-- **视觉语言模型**: GLM-4.1v, Qwen-VL系列
-- **搜索引擎**: SearXNG (聚合多源), Serper API (Google搜索), 秘塔AI搜索
-- **嵌入服务**: Gitee, Xinference, Jina
-- **图片CDN支持**: CSDN, 知乎, 简书, 掘金, 微信公众号, 阿里云OSS, 51CTO, InfoQ, SegmentFault
+**必须配置的变量**：
 
-## 🖼️ 图片防盗链技术
+```bash
+# 数据库连接（二选一）
+DATABASE_URL=postgresql://supawriter:your_password@localhost:5432/supawriter
+# 或分开配置
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=supawriter
+POSTGRES_USER=supawriter
+POSTGRES_PASSWORD=your_password
 
-系统实现了智能的图片防盗链处理机制，确保从各大网站抓取图片时的成功率。
+# 安全密钥
+SECRET_KEY=your-secret-key-change-in-production
+SESSION_SECRET_KEY=your-session-secret-key
+```
 
-### 支持的网站及策略
+```bash
+# 生成随机密钥示例（建议每台机器单独生成）
+openssl rand -base64 32
+```
 
-| 网站类型 | 域名特征 | Referer 设置 |
-|---------|---------|-------------|
-| CSDN | csdnimg.cn, csdn.net | https://blog.csdn.net/ |
-| 知乎 | zhihu.com, zhimg.com | https://www.zhihu.com/ |
-| 简书 | jianshu.com, jianshu.io | https://www.jianshu.com/ |
-| 掘金 | juejin.cn, juejin.im | https://juejin.cn/ |
-| 微信公众号 | mmbiz.qpic.cn | https://mp.weixin.qq.com/ |
-| 阿里云 OSS | alicdn.com, aliyuncs.com | https://developer.aliyun.com/ |
-| 51CTO | 51cto.com | https://www.51cto.com/ |
-| InfoQ | infoq.cn, infoq.com | https://www.infoq.cn/ |
-| SegmentFault | segmentfault.com | https://segmentfault.com/ |
+```bash
+# 前端配置
+cp frontend/.env.example frontend/.env.local
+vim frontend/.env.local
+```
 
-### 技术实现
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_SECRET=your-nextauth-secret
+```
 
-1. **智能 Referer 选择**：根据图片 URL 域名自动选择合适的 Referer
-2. **浏览器 Headers 模拟**：完整模拟 Chrome 浏览器的请求头
-3. **多策略重试**（embedding_utils.py）：
-   - 策略1: 标准 HTTPS 请求
-   - 策略2: 禁用 SSL 验证
-   - 策略3: 使用图片域名作为 Referer
-4. **SSL 验证控制**：针对证书问题自动禁用验证
+#### 3. 初始化数据库
 
-### 应用场景
+```bash
+# 确保 PostgreSQL 已运行
+./manage.sh db upgrade
+```
 
-- **图片嵌入向量生成**：`utils/embedding_utils.py`
-- **本地图片下载**：`utils/image_utils.py`
-- **七牛云上传**：`utils/qiniu_utils.py`
+#### 4. 启动服务
 
-## 💻 使用指南
+```bash
+# 终端 1 - 后端
+uv run uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend
 
-### 快速开始
+# 终端 2 - 前端
+cd frontend && npm run dev
+```
 
-1. **安装依赖**
-   ```bash
-   pip install -r requirements.txt
-   # 或使用 uv（更快）
-   uv pip install -r requirements.txt
-   ```
+### 方式三：Docker 容器化部署
 
-2. **配置API密钥**
-   - 复制 `.streamlit/secrets.toml.example` 为 `.streamlit/secrets.toml`
-   - 根据配置说明添加必要的API密钥
-   - **可选**：配置 Serper API Key 以获得更多搜索结果
-
-3. **配置认证系统（可选）**
-   
-   项目支持三种登录方式，可根据需求配置：
-   
-   **a) Google OAuth2 登录（推荐）**
-   ```
-   1. 访问 Google Cloud Console: https://console.cloud.google.com/
-   2. 创建新项目或选择现有项目
-   3. 启用 "Google+ API"
-   4. 创建 OAuth 2.0 客户端 ID（应用类型：Web 应用）
-   5. 添加授权重定向 URI: http://localhost:8501
-   6. 将 Client ID 和 Client Secret 填入 secrets.toml 的 [auth.google] 部分
-   ```
-   
-   **b) 微信开放平台登录**
-   ```
-   1. 访问微信开放平台: https://open.weixin.qq.com/
-   2. 注册开发者账号并创建网站应用
-   3. 填写应用信息，通过审核后获得 AppID 和 AppSecret
-   4. 在"网站信息"中配置授权回调域（如: localhost 或你的域名）
-   5. 将 AppID、AppSecret 和回调 URL 填入 secrets.toml 的 [wechat] 部分
-   
-   注意：
-   - redirect_uri 必须与微信开放平台配置的回调域一致
-   - 本地开发可使用 http://localhost:8501
-   - 生产环境需要使用 https 和已备案的域名
-   ```
-   
-   **c) 本地账号登录**
-   - 无需额外配置，首次使用时注册即可
-
-4. **启动应用**
-   ```bash
-   streamlit run web.py
-   ```
-
-### 文章生成流程
-
-1. 登录应用或使用匿名模式
-2. 输入文章主题或关键词
-3. 选择生成参数（模型、并发数量、是否启用图片等）
-4. 点击生成按钮，等待文章生成
-5. 在预览界面查看和编辑生成的文章
-6. 导出为Markdown或HTML格式
-
-## 📚 完整文档导航
-
-项目提供了完整的文档体系，涵盖快速入门、功能指南、架构设计、开发文档和故障排除等各个方面。
-
-### 🚀 快速开始
-
-| 文档 | 说明 | 链接 |
-|------|------|------|
-| **默认账号信息** | 数据库默认管理员账号和密码，首次登录必读 | [查看文档](docs/guides/default-account.md) |
-| **认证系统快速入门** | 新版认证系统的快速使用指南，5分钟上手 | [查看文档](docs/guides/quickstart-auth-v2.md) |
-| **UV 包管理器** | 使用 UV 快速安装依赖，比 pip 快 10-100 倍 | [查看文档](docs/guides/uv-quickstart.md) |
-| **数据库配置** | PostgreSQL 数据库配置和连接指南 | [查看文档](docs/guides/database-config.md) |
-
-### 📖 功能指南
-
-#### 认证相关
-
-| 文档 | 说明 | 链接 |
-|------|------|------|
-| **认证系统完整指南** | 多渠道认证系统（Google/微信/本地账号）详细说明 | [查看文档](docs/guides/authentication-v2.md) |
-| **微信登录实现** | 微信开放平台登录集成的技术实现细节 | [查看文档](docs/guides/wechat-login.md) |
-| **微信登录配置** | 配置微信开放平台和授权回调的完整步骤 | [查看文档](docs/guides/wechat-login-setup.md) |
-| **注册策略说明** | 用户注册和账号管理策略，了解系统设计思路 | [查看文档](docs/guides/registration-policy.md) |
-
-#### 数据库相关
-
-| 文档 | 说明 | 链接 |
-|------|------|------|
-| **数据库配置指南** | PostgreSQL 完整配置说明，包括本地和远程部署 | [查看文档](docs/guides/database-config.md) |
-| **默认账号信息** | 数据库初始化的默认管理员账号和安全建议 | [查看文档](docs/guides/default-account.md) |
-
-### 🏗️ 架构文档
-
-| 文档 | 说明 | 链接 |
-|------|------|------|
-| **Streamlit 架构分析** | 深入分析 Streamlit 的并发性能和架构特点 | [查看文档](docs/architecture/streamlit-architecture-analysis.md) |
-| **前端网站方案** | 混合架构方案设计，NextJS + Streamlit 方案探讨 | [查看文档](docs/architecture/frontend-proposal.md) |
-
-### 🔧 开发文档
-
-| 文档 | 说明 | 链接 |
-|------|------|------|
-| **认证系统架构** | 认证系统的技术架构和实现细节 | [查看文档](docs/development/authentication.md) |
-| **实现总结** | 主要功能的实现总结和技术要点 | [查看文档](docs/development/implementation-summary.md) |
-
-### 🆘 故障排除
-
-| 文档 | 说明 | 链接 |
-|------|------|------|
-| **数据库连接问题修复** | 常见数据库连接错误的诊断和解决方案 | [查看文档](docs/troubleshooting/database-connection-fix.md) |
-
-### 📝 变更日志
-
-| 文档 | 说明 | 链接 |
-|------|------|------|
-| **注册功能移除日志** | V2 版本中注册功能的变更记录和原因说明 | [查看文档](docs/CHANGELOG_REGISTRATION_REMOVED.md) |
-
-### 📁 文档索引
-
-完整的文档目录和组织结构说明，请访问：[**文档中心**](docs/README.md)
-
-## 👨‍💻 开发团队
-
-超级写手由一个致力于AI辅助创作的团队开发，我们的目标是让内容创作变得更加高效、智能和有趣。
-
-## 📦 最近更新
-
-### v2.2 (2025-11)
-
-- ✅ **全网热点追踪**：新增"全网热点"页面，聚合36Kr、百度、微博、抖音四大热搜源
-- ✅ **创作工作流打通**：
-  - 推文选题 -> 一键生成文章
-  - 热门话题 -> 一键生成文章
-  - 自动传递主题、风格和上下文信息
-- ✅ **数据获取优化**：
-  - 实现了针对微博、36Kr的增强型HTML解析策略，解决API权限问题
-  - 增加了抖音热搜API接入
-
-### v2.1 (2025-10)
-
-- ✅ **多渠道认证系统**：新增微信开放平台登录支持
-  - 支持 Google OAuth2 登录
-  - 支持微信扫码登录（适合国内用户）
-  - 支持传统本地账号登录
-  - 用户数据完全隔离，多账号自由切换
-- ✅ **用户体验优化**：登录页面支持显示微信头像和用户信息
-
-### v2.0 (2025-10)
-
-- ✅ **双引擎搜索**：集成 SearXNG + Serper API，提供更全面的搜索结果
-- ✅ **图片防盗链优化**：支持 9 大主流网站的图片下载（CSDN、知乎、阿里云等）
-- ✅ **智能 Referer 策略**：根据不同网站自动选择最佳 Referer
-- ✅ **多策略重试机制**：确保图片下载成功率
-- ✅ **包管理优化**：支持使用 uv 快速安装依赖
-
-## 🗄️ 数据库部署与迁移
-
-### PostgreSQL 服务器部署
-
-项目提供了完整的 PostgreSQL 数据库部署方案，支持将数据存储到远程服务器。
-
-**服务器信息**：
-- 服务器地址：`122.51.24.120`
-- 数据库端口：`5432`
-- 数据库名：`supawriter`
-
-**快速部署**：
 ```bash
 # 1. 配置环境变量
 cd deployment
 cp .env.example .env
-vim .env  # 修改数据库密码
+vim .env  # 设置数据库密码、密钥等
 
-# 2. 一键部署到服务器
-cd scripts
-./quick-deploy.sh
+# 2. 生产环境一键部署（返回仓库根目录执行）
+cd ..
+./deployment/docker-start.sh
+
+# 3. 开发环境（支持热重载）
+cd deployment
+docker-compose -f docker-compose.dev.yml up --build
 ```
 
-详细部署说明请参考：[deployment/README.md](deployment/README.md)
+Docker 部署包含：PostgreSQL、Redis、FastAPI 后端、Next.js 前端、Streamlit 创作工具、Nginx 反向代理。
 
-### 数据迁移到 PostgreSQL
+---
 
-将本地 JSON 数据迁移到服务器的 PostgreSQL 数据库：
+## ⚙️ 配置说明
 
-**快速迁移**：
+### 环境变量文件
+
+| 文件 | 用途 | 说明 |
+|------|------|------|
+| `.env` | 后端主配置 | Pydantic Settings 自动加载 |
+| `frontend/.env.local` | 前端配置 | Next.js 自动加载 |
+| `.env.example` | 环境变量模板 | 包含所有可配置项及说明 |
+| `deployment/.env.example` | Docker 部署模板 | 部署环境变量占位符 |
+| `.streamlit/secrets.toml` | Streamlit 配置 | AI 模型密钥、OAuth 配置 |
+
+### 后端关键配置（.env）
+
 ```bash
-# 1. 配置迁移环境
+# ===== 应用 =====
+DEBUG=true                              # 调试模式
+ENVIRONMENT=development                 # 环境标识
+
+# ===== 数据库 =====
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=supawriter
+POSTGRES_USER=supawriter
+POSTGRES_PASSWORD=your_password
+POSTGRES_POOL_SIZE=5                    # 连接池大小
+POSTGRES_MAX_OVERFLOW=10                # 最大溢出连接
+
+# ===== Redis（可选）=====
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+# ===== 限流 =====
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_REQUESTS_PER_MINUTE=60
+RATE_LIMIT_USE_REDIS=true               # 使用 Redis 限流
+
+# ===== 缓存 =====
+CACHE_ENABLED=true
+CACHE_DEFAULT_TTL=300                   # 默认 5 分钟
+
+# ===== 监控 =====
+MONITORING_ENABLED=true
+MONITORING_PROMETHEUS_ENABLED=true
+
+# ===== OAuth =====
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+```
+
+> 完整配置项请参考 [.env.example](.env.example)
+
+### 认证系统
+
+支持三种认证方式：
+
+| 方式 | 配置位置 | 说明 |
+|------|---------|------|
+| **邮箱登录** | `.env` | JWT Token 认证 |
+| **Google OAuth2** | `.env` + `frontend/.env.local` | 需要 Google Cloud 凭据 |
+| **微信扫码** | `.env` | 需要微信开放平台凭据 |
+
+---
+
+## �️ 服务管理
+
+`manage.sh` 是统一的服务管理脚本，支持以下命令：
+
+### 服务控制
+
+```bash
+./manage.sh start                  # 启动全部（后端 + 前端）
+./manage.sh start backend          # 仅启动后端
+./manage.sh start frontend         # 仅启动前端
+./manage.sh stop                   # 停止全部
+./manage.sh stop backend           # 停止后端
+./manage.sh restart                # 重启全部
+./manage.sh restart backend        # 重启后端
+./manage.sh status                 # 查看状态（含 PostgreSQL/Redis）
+```
+
+### 数据库管理
+
+```bash
+./manage.sh db upgrade             # 执行数据库迁移
+./manage.sh db downgrade           # 回滚迁移
+./manage.sh db history             # 查看迁移历史
+./manage.sh db current             # 查看当前版本
+```
+
+### 运维工具
+
+```bash
+./manage.sh health                 # API 健康检查
+./manage.sh logs backend 100       # 查看后端最近 100 行日志
+./manage.sh logs frontend          # 查看前端日志
+./manage.sh test all               # 运行全部测试
+./manage.sh test core              # 运行核心模块测试
+./manage.sh test repos             # 运行 Repository 测试
+./manage.sh install                # 安装依赖 + 配置环境
+./manage.sh clean                  # 清理缓存和临时文件
+./manage.sh check                  # 检查基础设施依赖
+```
+
+---
+
+## 📁 项目结构
+
+```
+supawriter/
+├── backend/                        # 后端服务
+│   ├── api/
+│   │   ├── main.py                 # FastAPI 应用入口
+│   │   ├── core/                   # 核心模块
+│   │   │   ├── config.py           #   Pydantic Settings 配置
+│   │   │   ├── dependencies.py     #   依赖注入
+│   │   │   ├── security.py         #   JWT / 密码加密
+│   │   │   ├── redis_manager.py    #   Redis 连接管理
+│   │   │   ├── cache.py            #   缓存装饰器
+│   │   │   └── monitoring.py       #   Prometheus 指标
+│   │   ├── db/                     # 数据库层
+│   │   │   ├── base.py             #   ORM Base + 引擎
+│   │   │   ├── session.py          #   Session 管理
+│   │   │   ├── models/             #   ORM 模型
+│   │   │   └── migrations/         #   Alembic 迁移
+│   │   ├── repositories/           # 数据访问层
+│   │   ├── services/               # 业务逻辑层
+│   │   ├── middleware/             # 中间件（限流/审计/配额）
+│   │   ├── routes/                 # API 路由
+│   │   └── models/                 # Pydantic 模型
+│   └── tests/                      # 后端测试
+├── frontend/                       # Next.js 前端
+│   ├── src/app/                    # App Router 页面
+│   │   ├── writer/                 #   AI 写作工作台
+│   │   ├── ai-assistant/           #   AI 助手
+│   │   ├── community/              #   社区
+│   │   ├── news/                   #   新闻
+│   │   ├── history/                #   历史记录
+│   │   ├── settings/               #   用户设置
+│   │   └── auth/                   #   认证页面
+│   ├── src/components/             # React 组件
+│   └── .env.local                  # 前端环境变量
+├── page/                           # Streamlit 创作工具页面
+├── utils/                          # Streamlit 工具函数
+├── deployment/                     # 部署配置
+│   ├── docker-compose.yml          #   生产环境编排
+│   ├── docker-compose.dev.yml      #   开发环境编排
+│   ├── Dockerfile.backend          #   后端镜像
+│   ├── Dockerfile.frontend         #   前端镜像
+│   ├── Dockerfile.streamlit        #   Streamlit 镜像
+│   ├── nginx/                      #   Nginx 配置
+│   └── migrate/                    #   数据迁移工具
+├── docs/                           # 项目文档
+├── monitoring/                     # 监控配置
+│   └── grafana-dashboard.json      #   Grafana 仪表板
+├── manage.sh                       # 服务管理脚本
+├── start-local.sh                  # 混合部署启动脚本
+├── pyproject.toml                  # Python 项目配置
+├── .env                            # 本地后端环境变量（不提交）
+└── .env.example                    # 环境变量模板
+```
+
+---
+
+## �️ 部署方案
+
+### 方案对比
+
+| 方案 | 适用场景 | 复杂度 | 说明 |
+|------|---------|--------|------|
+| **manage.sh** | 本地开发 / 单机部署 | ⭐ | 最简单，直接运行 |
+| **混合部署** | 本地开发 | ⭐⭐ | Docker 跑基础设施，本地跑应用 |
+| **Docker 全容器** | 生产环境 | ⭐⭐⭐ | 一键部署所有服务 |
+
+### 本地开发（推荐）
+
+```bash
+# 1. 启动基础设施（PostgreSQL + Redis）
+# 方式 A：本地安装
+brew install postgresql redis
+brew services start postgresql
+brew services start redis
+
+# 方式 B：Docker 启动基础设施
+./start-local.sh
+
+# 2. 启动应用
+./manage.sh install    # 首次运行
+./manage.sh start      # 启动后端 + 前端
+```
+
+### 生产部署（Docker）
+
+```bash
+cd deployment
+
+# 1. 配置环境变量
+cp .env.example .env
+vim .env
+
+# 必须修改的配置：
+# - POSTGRES_PASSWORD（数据库密码）
+# - JWT_SECRET_KEY（JWT 密钥）
+# - NEXTAUTH_SECRET（NextAuth 密钥）
+# - ENCRYPTION_KEY（加密密钥）
+
+# 2. 构建并启动
+cd ..
+./deployment/docker-start.sh
+
+# 3. 查看日志
+cd deployment
+docker-compose logs -f backend
+docker-compose logs -f frontend
+
+# 4. 停止服务
+docker-compose down
+```
+
+### 数据库迁移
+
+```bash
+# Alembic 迁移
+./manage.sh db upgrade             # 升级到最新
+./manage.sh db downgrade -1        # 回滚一步
+./manage.sh db history             # 查看历史
+
+# 从旧版 JSON 数据迁移到 PostgreSQL
 cd deployment/migrate
 cp .env.migration.example .env.migration
-vim .env.migration  # 设置数据库密码
-
-# 2. 运行迁移脚本（交互式）
 ./quick_migrate.sh
-
-# 或直接运行 Python 脚本
-python deployment/migrate/migrate_to_pgsql.py --host 122.51.24.120 --password YOUR_PASSWORD
 ```
 
-**迁移的数据类型**：
-- **文章数据**：用户创作的所有文章内容、配置和元数据
-- **聊天历史**：AI 对话会话记录
-- **用户配置**：个性化设置和偏好
+---
 
-**安全特性**：
-- 支持数据增量迁移，避免重复
-- 自动处理数据冲突
-- 详细的迁移日志和状态反馈
-- 支持单用户或全量迁移
+## 🎨 前端交互动画
 
-详细迁移说明请参考：[deployment/migrate/README.md](deployment/migrate/README.md)
+本项目采用温暖友好的动画风格，提升用户体验。
 
-## 📦 未来规划
+### 动画规范
 
-1. 支持更多搜索引擎和API源
-2. 增强视频内容的抓取和处理能力
-3. 支持更多内容平台的直接发布
-4. 提供更多自定义写作风格和模板
-5. 开发API接口，支持第三方集成
-6. 增加协作功能，支持团队创作
-7. 优化AI模型的响应速度和质量
-8. 完善 PostgreSQL 数据层，支持云端数据同步
+| 类型 | 时长 | 缓动 | 说明 |
+|------|------|------|------|
+| 微交互（hover） | 150-200ms | ease-out | 按钮、卡片悬停 |
+| 面板展开 | 200ms | ease-out | 下拉菜单、模态框 |
+| 页面切换 | 300ms | ease-out | 路由切换 |
 
-## 📓 贡献指南
+### 已实现动画
 
-欢迎对超级写手项目进行贡献！以下是参与开发的步骤：
+- **Button**: hover 发光效果 + active 按压缩放
+- **Card**: hover 缩放 + 阴影 + 边框颜色变化
+- **Modal**: 淡入缩放 + 关闭按钮旋转
+- **Navigation**: 下拉菜单淡入 + 依次滑入子项
+- **用户头像**: 点击弹跳 + hover 缩放
+- **Toast**: 从右侧滑入淡入
+- **Input**: 错误抖动动画
+- **Skeleton**: 扫光波纹效果
+- **LoadingDots**: 点跳动加载动画
+- **Writer 页面**: 视图切换淡入过渡
+- **页面进度条**: 路由切换顶部进度条
 
-1. Fork本仓库
-2. 创建功能分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add some amazing feature'`)
-4. 推送分支 (`git push origin feature/amazing-feature`)
+### 测试
+
+访问 `/animations-test` 页面查看所有动画效果。
+
+### 可访问性
+
+所有动画尊重 `prefers-reduced-motion` 设置，自动禁用动画。
+
+## 📡 API 端点
+
+### 主要路由
+
+| 路径 | 说明 |
+|------|------|
+| `GET /health` | 健康检查 |
+| `GET /health/database` | 数据库健康检查 |
+| `GET /health/full` | 完整健康检查 |
+| `GET /docs` | Swagger API 文档 |
+| `GET /metrics` | Prometheus 指标 |
+| `POST /api/v1/auth/login` | 用户登录 |
+| `POST /api/v1/auth/register` | 用户注册（仅官网） |
+| `GET /api/v1/articles` | 文章列表 |
+| `POST /api/v1/articles` | 创建文章 |
+| `GET /api/v1/chat/sessions` | 聊天会话 |
+| `GET /api/v1/hotspots` | 热点话题 |
+| `GET /api/v1/news` | 新闻聚合 |
+| `GET /api/v1/tweet-topics/history` | 推文选题历史 |
+| `POST /api/v1/tweet-topics/generate` | 手动模式生成选题 |
+| `POST /api/v1/tweet-topics/generate-intelligent` | 智能模式生成选题 |
+| `GET /api/v1/tweet-topics/user-topics` | 获取用户主题 |
+| `POST /api/v1/tweet-topics/user-topics` | 创建用户主题 |
+| `DELETE /api/v1/tweet-topics/user-topics/{id}` | 删除用户主题 |
+| `WS /api/v1/ws` | WebSocket 连接 |
+
+> 完整 API 文档启动后访问：http://localhost:8000/docs
+> 详细 API 文档请参考：[API 文档](docs/API.md)
+
+---
+
+## 🧪 测试
+
+```bash
+# 全部测试
+./manage.sh test all
+
+# 按模块测试
+./manage.sh test core              # 核心模块（配置、缓存）
+./manage.sh test models            # ORM 模型
+./manage.sh test repos             # Repository 层
+./manage.sh test services          # Service 层
+./manage.sh test middleware        # 中间件（限流、审计）
+
+# 直接使用 pytest
+uv run pytest backend/tests/ -v --tb=short
+```
+
+---
+
+## 📈 监控
+
+启用 Prometheus 监控后，可通过以下方式查看：
+
+- **Prometheus 指标**：http://localhost:8000/metrics
+- **Grafana 仪表板**：导入 `monitoring/grafana-dashboard.json`
+
+监控指标包括：
+- API 请求速率、响应时间、错误率
+- 数据库查询延迟、慢查询、连接池状态
+- 缓存命中率
+- 限流触发次数
+- 配额使用情况
+
+---
+
+## � 文档导航
+
+| 文档 | 说明 |
+|------|------|
+| [系统架构文档](docs/SYSTEM_ARCHITECTURE.md) | 完整技术架构（开发者必读） |
+| [API 文档](docs/API.md) | 完整后端 API 接口文档 |
+| [环境变量模板](.env.example) | 所有可配置项及说明 |
+| [部署指南](deployment/README.md) | Docker 部署详细说明 |
+| [数据库配置](docs/guides/database-config.md) | PostgreSQL 配置指南 |
+| [认证系统](docs/guides/authentication-v2.md) | 多渠道认证详细说明 |
+| [默认账号](docs/guides/default-account.md) | 初始管理员账号信息 |
+| [UV 包管理](docs/guides/uv-quickstart.md) | uv 快速入门 |
+| [文档中心](docs/README.md) | 完整文档索引 |
+
+---
+
+## � 版本历史
+
+### v3.0 (2026-02) — 当前版本
+
+- ✅ **前后端分离架构** — FastAPI + Next.js + Streamlit 三端分离
+- ✅ **SQLAlchemy 2.0 异步 ORM** — DeclarativeBase + asyncpg
+- ✅ **Redis 缓存 + 分布式限流** — ZSET 滑动窗口算法
+- ✅ **Prometheus 性能监控** — 请求/DB/缓存全链路指标
+- ✅ **Pydantic Settings 配置中心** — 环境变量外部化
+- ✅ **Docker 容器化部署** — 一键生产部署
+- ✅ **manage.sh 服务管理** — 统一的服务生命周期管理
+
+### v2.2 (2025-11)
+
+- ✅ **全网热点追踪** — 36Kr、百度、微博、抖音热搜聚合
+- ✅ **创作工作流打通** — 热点话题一键生成文章
+
+### v2.1 (2025-10)
+
+- ✅ **多渠道认证** — Google OAuth2 + 微信扫码 + 本地账号
+
+### v2.0 (2025-10)
+
+- ✅ **双引擎搜索** — SearXNG + Serper API
+- ✅ **图片防盗链** — 支持 9 大主流网站
+
+---
+
+##  贡献指南
+
+1. Fork 本仓库
+2. 创建功能分支：`git checkout -b feature/amazing-feature`
+3. 提交更改：`git commit -m 'Add some amazing feature'`
+4. 推送分支：`git push origin feature/amazing-feature`
 5. 创建 Pull Request
+
+### 开发规范
+
+- 后端遵循 **Route → Service → Repository** 分层架构
+- 新增 API 需同时添加测试
+- 使用 `ruff` 格式化代码，行宽 120
+- 提交信息使用中文或英文均可
 
 ## 📃 许可证
 
-本项目采用MIT许可证，详见LICENSE文件。
+本项目采用 MIT 许可证，详见 [LICENSE](LICENSE) 文件。
 
 ---

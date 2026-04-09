@@ -1,0 +1,141 @@
+# Docker Compose for Local Development
+# This file is intended for local development with hot-reloading.
+# Use 'docker-compose -f deployment/docker-compose.dev.yml up' to run.
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: supawriter_postgres_dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-supawriter}
+      POSTGRES_USER: ${POSTGRES_USER:-supawriter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432" # Use a different port to avoid conflicts with production
+    networks:
+      - supawriter_dev_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: supawriter_redis_dev
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6380}:6379" # Use a different port
+    networks:
+      - supawriter_dev_network
+
+  # TrendRadar API (热点数据源 - 开发模式)
+  trendradar:
+    image: ${DOCKERHUB_USERNAME:-minokun}/supawriter-trendradar-dev:${DOCKERHUB_TAG:-latest}
+    build:
+      context: ../trendradar
+      dockerfile: ../deployment/Dockerfile.trendradar.local
+    container_name: supawriter_trendradar_dev
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      # Mount source code for hot-reloading
+      - ../trendradar:/app
+      - /app/.venv  # Exclude venv from being overwritten
+    ports:
+      - "${TRENDRADAR_PORT:-8766}:8765" # Different port to avoid conflict with production
+    networks:
+      - supawriter_dev_network
+
+  backend:
+    image: ${DOCKERHUB_USERNAME:-minokun}/supawriter-backend-dev:${DOCKERHUB_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile.backend.local
+    container_name: supawriter_backend_dev
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-supawriter}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-supawriter}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - TRENDRADAR_API_URL=http://trendradar:8765
+    volumes:
+      # Mount source code for hot-reloading
+      - ../backend:/app/backend
+      - ../utils:/app/utils
+      - ../settings.py:/app/settings.py
+      - ../requirements.txt:/app/requirements.txt
+      - ../backend/requirements_api.txt:/app/backend/requirements_api.txt
+    ports:
+      - "8001:8000" # Use a different port
+    depends_on:
+      - postgres
+      - redis
+    command: ["uvicorn", "backend.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"] # Enable reload
+    networks:
+      - supawriter_dev_network
+
+  # ARQ Worker (开发模式)
+  worker:
+    image: ${DOCKERHUB_USERNAME:-minokun}/supawriter-worker-dev:${DOCKERHUB_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile.backend.local
+    container_name: supawriter_worker_dev
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-supawriter}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-supawriter}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - TRENDRADAR_API_URL=http://trendradar:8765
+      - NEWSNOW_API_URL=${NEWSNOW_API_URL:-https://newsnow.busiyi.world/api/s}
+      - SYNC_INTERVAL_MINUTES=${SYNC_INTERVAL_MINUTES:-10}
+    volumes:
+      # Mount source code for hot-reloading
+      - ../backend:/app/backend
+      - ../utils:/app/utils
+      - ../settings.py:/app/settings.py
+      - ../requirements.txt:/app/requirements.txt
+      - ../backend/requirements_api.txt:/app/backend/requirements_api.txt
+    depends_on:
+      - postgres
+      - redis
+    command: ["python", "-m", "arq", "backend.api.workers.worker_settings.WorkerSettings"]
+    networks:
+      - supawriter_dev_network
+
+  frontend:
+    image: ${DOCKERHUB_USERNAME:-minokun}/supawriter-frontend-dev:${DOCKERHUB_TAG:-latest}
+    build:
+      context: ../frontend
+      dockerfile: ../deployment/Dockerfile.frontend.local
+    container_name: supawriter_frontend_dev
+    restart: unless-stopped
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8001}
+      - INTERNAL_API_URL=${INTERNAL_API_URL:-http://backend:8000}
+    volumes:
+      # Mount source code for hot-reloading
+      - ../frontend:/app
+      - /app/node_modules # Exclude node_modules from being overwritten
+      - /app/.next # Keep Next build artifacts inside the container to avoid stale host cache
+    ports:
+      - "3001:3000" # Use a different port
+    depends_on:
+      - backend
+    command: ["npm", "run", "dev"] # Use dev script
+    networks:
+      - supawriter_dev_network
+
+networks:
+  supawriter_dev_network:
+    driver: bridge
+
+volumes:
+  postgres_dev_data:

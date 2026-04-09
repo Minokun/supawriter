@@ -18,12 +18,19 @@ classifiers = [
 
 dependencies = [
     # Web框架和HTTP请求
-    "streamlit>=1.51.0",  # v2 components API required
+    "streamlit>=1.51.0", # v2 components API required
     "fastapi>=0.95.0",
-    "uvicorn>=0.20.0",
+    "uvicorn[standard]>=0.20.0",
+    "python-multipart>=0.0.6",
     "requests>=2.28.1",
     "aiohttp>=3.8.3",
     "urllib3>=1.26.12",
+    # 认证相关
+    "python-jose[cryptography]>=3.3.0",
+    "pyjwt>=2.8.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
     # Web内容解析
     "beautifulsoup4>=4.12.3",
     "readability-lxml>=0.8.1",
@@ -41,9 +48,18 @@ dependencies = [
     # 数据库
     "mysql-connector-python>=8.0.32",
     "psycopg2-binary>=2.9.9",
+    "redis>=4.5.0",
+    "sqlalchemy>=2.0.35",
+    "asyncpg>=0.29.0",
+    "alembic>=1.13.0",
+    "prometheus-client>=0.20.0",
+    # 异步任务队列
+    "arq>=0.25.0",
     # 认证和安全
     "Authlib>=1.6.0",
     "pyOpenSSL>=22.0.0",
+    "passlib[bcrypt]>=1.7.4",
+    "cryptography>=41.0.0",
     # 异步支持
     "nest-asyncio>=1.5.6",
     # 音频处理
@@ -57,6 +73,10 @@ dependencies = [
     "zai-sdk>=0.0.4.2",
     "streamlit-autorefresh>=1.0.1",
     "markdown>=3.10",
+    "itsdangerous>=2.2.0",
+    "starlette>=0.49.3",
+    "email-validator>=2.3.0",
+    "browser-use>=0.11.9",
 ]
 
 [project.optional-dependencies]
@@ -78,7 +98,11 @@ packages = ["page", "utils", "auth_pages", "scripts"]
 [tool.uv]
 # uv 配置
 managed = true
-dev-dependencies = []
+dev-dependencies = [
+    "aiosqlite>=0.22.1",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+]
 
 [tool.uv.sources]
 

@@ -1,0 +1,129 @@
+
+> supawriter-frontend@1.0.0 dev
+> next dev -H 127.0.0.1 -p 3000
+
+  ▲ Next.js 14.2.35
+  - Local:        http://127.0.0.1:3000
+  - Network:      http://127.0.0.1:3000
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 1612ms
+ ○ Compiling / ...
+ ✓ Compiled / in 1342ms (571 modules)
+ GET / 200 in 1423ms
+ ✓ Compiled in 127ms (290 modules)
+ GET / 200 in 19ms
+ GET / 200 in 11ms
+ GET / 200 in 13ms
+ GET / 200 in 23ms
+ ✓ Compiled /src/middleware in 488ms (673 modules)
+ HEAD / 200 in 483ms
+ GET /api/auth/session 200 in 722ms
+ ✓ Compiled /workspace in 403ms (1126 modules)
+ GET /api/auth/session 200 in 290ms
+ GET /workspace 200 in 46ms
+ GET /api/auth/session 200 in 5ms
+ GET /api/auth/session 200 in 5ms
+ HEAD /workspace 200 in 10ms
+ ✓ Compiled /login in 104ms (1132 modules)
+ GET /login 200 in 142ms
+ GET /api/auth/csrf 200 in 21ms
+ POST /api/auth/signout 200 in 6ms
+ ✓ Compiled /auth/signin in 120ms (1138 modules)
+ GET /auth/signin 200 in 149ms
+ GET /api/auth/session 200 in 6ms
+ GET /api/auth/session 200 in 3ms
+ HEAD /auth/signin 200 in 9ms
+ HEAD /workspace 200 in 29ms
+ ○ Compiling /history ...
+ ⨯ ./src/components/writer/ScoreCard.tsx
+Error: 
+  [31mx[0m Unexpected token `div`. Expected jsx identifier
+     ,-[[36;1;4m/Users/wxk/Desktop/workspace/supawriter/frontend/src/components/writer/ScoreCard.tsx[0m:100:1]
+ [2m100[0m |   }
+ [2m101[0m | 
+ [2m102[0m |   return (
+ [2m103[0m |     <div className="border border-border rounded-lg overflow-hidden bg-white shadow-sm">
+     : [31;1m     ^^^[0m
+ [2m104[0m |       {/* Header */}
+ [2m105[0m |       <div
+ [2m106[0m |         className="p-6 cursor-pointer transition-colors hover:bg-bg-secondary"
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/components/writer/ScoreCard.tsx
+./src/components/writer/SplitEditor.tsx
+./src/app/history/page.tsx
+ ⨯ ./src/components/writer/ScoreCard.tsx
+Error: 
+  [31mx[0m Unexpected token `div`. Expected jsx identifier
+     ,-[[36;1;4m/Users/wxk/Desktop/workspace/supawriter/frontend/src/components/writer/ScoreCard.tsx[0m:100:1]
+ [2m100[0m |   }
+ [2m101[0m | 
+ [2m102[0m |   return (
+ [2m103[0m |     <div className="border border-border rounded-lg overflow-hidden bg-white shadow-sm">
+     : [31;1m     ^^^[0m
+ [2m104[0m |       {/* Header */}
+ [2m105[0m |       <div
+ [2m106[0m |         className="p-6 cursor-pointer transition-colors hover:bg-bg-secondary"
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/components/writer/ScoreCard.tsx
+./src/components/writer/SplitEditor.tsx
+./src/app/history/page.tsx
+ ⨯ ./src/components/writer/ScoreCard.tsx
+Error: 
+  [31mx[0m Unexpected token `div`. Expected jsx identifier
+     ,-[[36;1;4m/Users/wxk/Desktop/workspace/supawriter/frontend/src/components/writer/ScoreCard.tsx[0m:100:1]
+ [2m100[0m |   }
+ [2m101[0m | 
+ [2m102[0m |   return (
+ [2m103[0m |     <div className="border border-border rounded-lg overflow-hidden bg-white shadow-sm">
+     : [31;1m     ^^^[0m
+ [2m104[0m |       {/* Header */}
+ [2m105[0m |       <div
+ [2m106[0m |         className="p-6 cursor-pointer transition-colors hover:bg-bg-secondary"
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/components/writer/ScoreCard.tsx
+./src/components/writer/SplitEditor.tsx
+./src/app/history/page.tsx
+ GET /history 500 in 5ms
+ HEAD /history 500 in 7ms
+ GET /history 500 in 4ms
+ GET /history 500 in 14ms
+ HEAD /history 500 in 7ms
+ GET /history 500 in 7ms
+ ⨯ ./src/components/writer/ScoreCard.tsx
+Error: 
+  [31mx[0m Unexpected token `div`. Expected jsx identifier
+     ,-[[36;1;4m/Users/wxk/Desktop/workspace/supawriter/frontend/src/components/writer/ScoreCard.tsx[0m:100:1]
+ [2m100[0m |   }
+ [2m101[0m | 
+ [2m102[0m |   return (
+ [2m103[0m |     <div className="border border-border rounded-lg overflow-hidden bg-white shadow-sm">
+     : [31;1m     ^^^[0m
+ [2m104[0m |       {/* Header */}
+ [2m105[0m |       <div
+ [2m106[0m |         className="p-6 cursor-pointer transition-colors hover:bg-bg-secondary"
+     `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./src/components/writer/ScoreCard.tsx
+./src/components/writer/SplitEditor.tsx
+./src/app/history/page.tsx

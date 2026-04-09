@@ -1,0 +1,49 @@
+# SupaWriter FastAPI Backend Dependencies
+# 超能写手后端 API 依赖包
+
+# 核心框架
+fastapi>=0.95.0
+uvicorn[standard]>=0.20.0
+python-multipart>=0.0.6
+
+# WebSocket 和实时通信
+websockets>=11.0
+
+# JWT 认证
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# OAuth（已安装，但保留用于版本检查）
+authlib>=1.6.0
+
+# 配置管理
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+itsdangerous>=2.2.0
+email-validator>=2.2.0
+
+# 数据库
+alembic>=1.13.0
+sqlalchemy>=2.0.35
+psycopg2-binary>=2.9.0
+asyncpg>=0.28.0
+
+# HTML 解析（SEO 用）
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# 工具
+python-dotenv>=1.0.0
+prometheus-client>=0.21.0
+
+# Redis 缓存
+redis[hiredis]>=5.0.0
+
+# 加密工具
+cryptography>=41.0.0
+
+# 测试工具
+pytest-asyncio>=0.23.0
+
+# Async worker queue
+arq>=0.25.0

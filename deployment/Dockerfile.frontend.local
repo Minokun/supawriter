@@ -1,0 +1,23 @@
+# Next.js 前端 Dockerfile（开发模式，使用国内镜像源）
+FROM node:20-alpine
+
+WORKDIR /app
+
+# 设置国内镜像源
+RUN npm config set registry https://registry.npmmirror.com
+
+# 复制依赖文件
+COPY package*.json ./
+
+# 安装依赖
+RUN npm ci --legacy-peer-deps
+
+# 复制应用代码
+COPY . .
+ENV NODE_ENV=development
+
+# 暴露端口
+EXPOSE 3000
+
+# 启动命令
+CMD ["npm", "run", "dev"]

@@ -1,0 +1,56 @@
+INFO:     Will watch for changes in these directories: ['/Users/wxk/Desktop/workspace/supawriter/backend']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [19083] using WatchFiles
+2026-02-18 16:37:12,271 - backend.api.db.base - INFO - ✓ Database engine created successfully
+2026-02-18 16:37:12,281 - backend.api.db.base - INFO - ✓ Async database engine created successfully
+2026-02-18 16:37:12,386 - backend.api.main - INFO - ✓ Audit log middleware enabled
+2026-02-18 16:37:12,386 - backend.api.main - INFO - ⚠ Rate limiter: using memory fallback (Redis connects at startup)
+2026-02-18 16:37:12,386 - backend.api.main - INFO - ✓ Rate limit middleware enabled
+2026-02-18 16:37:12,453 - backend.api.core.system_config - INFO - SystemConfig loaded: 37 settings
+2026-02-18 16:37:12,596 - faiss.loader - INFO - Loading faiss.
+2026-02-18 16:37:12,603 - faiss.loader - INFO - Successfully loaded faiss.
+2026-02-18 16:37:12,733 - backend.api.main - INFO - ✓ Prometheus metrics endpoint enabled at /metrics
+INFO:     Started server process [19086]
+INFO:     Waiting for application startup.
+2026-02-18 16:37:12,733 - backend.api.main - INFO - Starting SupaWriter API v2.0.0...
+2026-02-18 16:37:12,733 - backend.api.main - INFO - Environment: development
+2026-02-18 16:37:12,734 - backend.api.core.database - INFO - Database connection pool initialized
+2026-02-18 16:37:12,734 - backend.api.main - INFO - ✓ Database connection initialized
+2026-02-18 16:37:12,735 - backend.api.core.redis_manager - INFO - ✓ Redis connection established
+2026-02-18 16:37:12,735 - backend.api.main - INFO - ✓ Redis connection initialized
+2026-02-18 16:37:12,735 - backend.api.main - INFO - ✓ Monitoring enabled
+2026-02-18 16:37:12,741 - backend.api.core.system_config - INFO - SystemConfig loaded: 37 settings
+2026-02-18 16:37:12,741 - backend.api.main - INFO - ✓ SystemConfig preloaded
+INFO:     Application startup complete.
+2026-02-18 16:38:36,503 - backend.api.routes.auth - INFO - User logged in: admin
+INFO:     127.0.0.1:50371 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
+2026-02-18 16:38:36,642 - backend.api.routes.auth - INFO - User logged in: admin
+INFO:     127.0.0.1:50375 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
+2026-02-18 16:38:36,659 - backend.api.core.dependencies - INFO - get_current_user called, credentials: True
+2026-02-18 16:38:36,659 - backend.api.core.dependencies - INFO - Token received (first 20 chars): eyJhbGciOiJIUzI1NiIs...
+2026-02-18 16:38:36,659 - backend.api.core.security - INFO - Verifying token (first 20 chars): eyJhbGciOiJIUzI1NiIs...
+2026-02-18 16:38:36,659 - backend.api.core.security - INFO - Token payload: {'user_id': 1, 'exp': 1773995916, 'iat': 1771403916, 'type': 'access'}
+2026-02-18 16:38:36,659 - backend.api.core.security - INFO - Token verified successfully, user_id: 1
+2026-02-18 16:38:36,659 - backend.api.core.dependencies - INFO - Token verification result: user_id=1
+2026-02-18 16:38:36,659 - backend.api.core.dependencies - INFO - User authenticated: user_id=1
+INFO:     127.0.0.1:50377 - "GET /api/v1/auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50435 - "OPTIONS /api/v1/auth/me HTTP/1.1" 200 OK
+2026-02-18 16:39:23,039 - backend.api.core.dependencies - INFO - get_current_user called, credentials: True
+2026-02-18 16:39:23,039 - backend.api.core.dependencies - INFO - Token received (first 20 chars): eyJhbGciOiJIUzI1NiIs...
+2026-02-18 16:39:23,039 - backend.api.core.security - INFO - Verifying token (first 20 chars): eyJhbGciOiJIUzI1NiIs...
+2026-02-18 16:39:23,039 - backend.api.core.security - INFO - Token payload: {'user_id': 34, 'exp': 1773304240, 'iat': 1770712240, 'type': 'access'}
+2026-02-18 16:39:23,039 - backend.api.core.security - INFO - Token verified successfully, user_id: 34
+2026-02-18 16:39:23,039 - backend.api.core.dependencies - INFO - Token verification result: user_id=34
+2026-02-18 16:39:23,039 - backend.api.core.dependencies - INFO - User authenticated: user_id=34
+INFO:     127.0.0.1:50435 - "GET /api/v1/auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51453 - "OPTIONS /api/v1/auth/login HTTP/1.1" 200 OK
+2026-02-18 16:58:11,400 - backend.api.routes.auth - INFO - User logged in: admin
+INFO:     127.0.0.1:51453 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
+2026-02-18 16:58:11,490 - backend.api.core.dependencies - INFO - get_current_user called, credentials: True
+2026-02-18 16:58:11,490 - backend.api.core.dependencies - INFO - Token received (first 20 chars): eyJhbGciOiJIUzI1NiIs...
+2026-02-18 16:58:11,490 - backend.api.core.security - INFO - Verifying token (first 20 chars): eyJhbGciOiJIUzI1NiIs...
+2026-02-18 16:58:11,490 - backend.api.core.security - INFO - Token payload: {'user_id': 1, 'exp': 1773997091, 'iat': 1771405091, 'type': 'access'}
+2026-02-18 16:58:11,490 - backend.api.core.security - INFO - Token verified successfully, user_id: 1
+2026-02-18 16:58:11,490 - backend.api.core.dependencies - INFO - Token verification result: user_id=1
+2026-02-18 16:58:11,490 - backend.api.core.dependencies - INFO - User authenticated: user_id=1
+INFO:     127.0.0.1:51453 - "GET /api/v1/auth/me HTTP/1.1" 200 OK

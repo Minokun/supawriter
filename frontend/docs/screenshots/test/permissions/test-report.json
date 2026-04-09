@@ -1,0 +1,154 @@
+{
+  "generated_at": "2026-02-27T06:49:47.099Z",
+  "summary": {
+    "total": 16,
+    "pass": 8,
+    "fail": 8,
+    "skip": 0
+  },
+  "results": [
+    {
+      "id": "FREE-001",
+      "name": "登录 Free 用户并验证基础功能",
+      "tier": "free",
+      "result": "FAIL",
+      "details": "登录失败",
+      "screenshot": "docs/screenshots/test/permissions/free-001-login.png",
+      "timestamp": "2026-02-27T06:46:15.384Z"
+    },
+    {
+      "id": "FREE-002",
+      "name": "访问 /batch 应显示升级提示",
+      "tier": "free",
+      "result": "FAIL",
+      "details": "未显示升级提示",
+      "screenshot": "docs/screenshots/test/permissions/free-002-batch.png",
+      "timestamp": "2026-02-27T06:46:25.124Z"
+    },
+    {
+      "id": "FREE-003",
+      "name": "访问 /agent 应显示升级提示",
+      "tier": "free",
+      "result": "FAIL",
+      "details": "未显示升级提示",
+      "screenshot": "docs/screenshots/test/permissions/free-003-agent.png",
+      "timestamp": "2026-02-27T06:46:46.517Z"
+    },
+    {
+      "id": "FREE-004",
+      "name": "使用 SEO 分析应显示升级提示",
+      "tier": "free",
+      "result": "FAIL",
+      "details": "未显示 SEO 升级提示",
+      "screenshot": "docs/screenshots/test/permissions/free-004-seo.png",
+      "timestamp": "2026-02-27T06:47:02.383Z"
+    },
+    {
+      "id": "FREE-005",
+      "name": "验证模型选择限制",
+      "tier": "free",
+      "result": "FAIL",
+      "details": "模型选择器不可见",
+      "screenshot": "docs/screenshots/test/permissions/free-005-model.png",
+      "timestamp": "2026-02-27T06:47:14.786Z"
+    },
+    {
+      "id": "PRO-001",
+      "name": "登录 Pro 用户",
+      "tier": "pro",
+      "result": "FAIL",
+      "details": "page.screenshot: Protocol error (Page.captureScreenshot): Unable to capture screenshot\nCall log:\n\u001b[2m  - taking page screenshot\u001b[22m\n\u001b[2m  - waiting for fonts to load...\u001b[22m\n\u001b[2m  - fonts loaded\u001b[22m\n",
+      "timestamp": "2026-02-27T06:47:27.604Z"
+    },
+    {
+      "id": "PRO-002",
+      "name": "验证 SEO 功能可用",
+      "tier": "pro",
+      "result": "PASS",
+      "details": "SEO 功能可用",
+      "screenshot": "docs/screenshots/test/permissions/pro-002-seo.png",
+      "timestamp": "2026-02-27T06:47:41.479Z"
+    },
+    {
+      "id": "PRO-003",
+      "name": "验证批量生成功能可用",
+      "tier": "pro",
+      "result": "PASS",
+      "details": "批量生成可用",
+      "screenshot": "docs/screenshots/test/permissions/pro-003-batch.png",
+      "timestamp": "2026-02-27T06:47:57.259Z"
+    },
+    {
+      "id": "PRO-004",
+      "name": "访问 /agent Pro 用户可用但有数量限制",
+      "tier": "pro",
+      "result": "PASS",
+      "details": "Pro 用户可访问 Agent",
+      "screenshot": "docs/screenshots/test/permissions/pro-004-agent.png",
+      "timestamp": "2026-02-27T06:48:09.317Z"
+    },
+    {
+      "id": "PRO-005",
+      "name": "验证模型选择 (Pro 可使用中级模型)",
+      "tier": "pro",
+      "result": "FAIL",
+      "details": "模型选择器不可用",
+      "screenshot": "docs/screenshots/test/permissions/pro-005-model.png",
+      "timestamp": "2026-02-27T06:48:21.561Z"
+    },
+    {
+      "id": "ULTRA-001",
+      "name": "登录 Ultra 用户",
+      "tier": "ultra",
+      "result": "FAIL",
+      "details": "登录失败",
+      "screenshot": "docs/screenshots/test/permissions/ultra-001-login.png",
+      "timestamp": "2026-02-27T06:48:36.651Z"
+    },
+    {
+      "id": "ULTRA-002",
+      "name": "验证所有功能可用",
+      "tier": "ultra",
+      "result": "PASS",
+      "details": "Ultra 用户可以访问主页",
+      "screenshot": "docs/screenshots/test/permissions/ultra-002-home.png",
+      "timestamp": "2026-02-27T06:48:45.318Z"
+    },
+    {
+      "id": "ULTRA-003",
+      "name": "验证 SEO 功能可用",
+      "tier": "ultra",
+      "result": "PASS",
+      "details": "SEO 功能可用",
+      "screenshot": "docs/screenshots/test/permissions/ultra-003-seo.png",
+      "timestamp": "2026-02-27T06:48:57.957Z"
+    },
+    {
+      "id": "ULTRA-004",
+      "name": "验证批量生成功能可用",
+      "tier": "ultra",
+      "result": "PASS",
+      "details": "批量生成可用",
+      "screenshot": "docs/screenshots/test/permissions/ultra-004-batch.png",
+      "timestamp": "2026-02-27T06:49:09.968Z"
+    },
+    {
+      "id": "ULTRA-005",
+      "name": "验证写作 Agent 功能可用",
+      "tier": "ultra",
+      "result": "PASS",
+      "details": "写作 Agent 可用",
+      "screenshot": "docs/screenshots/test/permissions/ultra-005-agent.png",
+      "timestamp": "2026-02-27T06:49:22.236Z"
+    },
+    {
+      "id": "ULTRA-006",
+      "name": "验证批量生成无限制",
+      "tier": "ultra",
+      "result": "PASS",
+      "details": "显示 Ultra 高限制",
+      "screenshot": "docs/screenshots/test/permissions/ultra-006-unlimited.png",
+      "timestamp": "2026-02-27T06:49:34.716Z"
+    }
+  ]
+}

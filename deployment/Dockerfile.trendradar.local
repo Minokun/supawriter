@@ -1,0 +1,27 @@
+# TrendRadar API Dockerfile (Development - Chinese mirror sources)
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Set Chinese PyPI mirror
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y gcc g++ curl && rm -rf /var/lib/apt/lists/*
+
+# Copy dependency files
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir fastapi uvicorn[standard]
+
+# Copy application code
+COPY . .
+
+# Expose port
+EXPOSE 8765
+
+# Start command (with --reload for hot-reload)
+CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8765", "--reload"]

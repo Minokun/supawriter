@@ -5,9 +5,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import json
 import logging
 from openai import OpenAI
-from zai import ZhipuAiClient
 from settings import PROCESS_CONFIG, PROCESS_IMAGE_TYPE
-import requests
 
 # 配置日志
 logging.basicConfig(
@@ -18,15 +16,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-if PROCESS_IMAGE_TYPE == "qwen":
-    client = OpenAI(
-        api_key=PROCESS_CONFIG['qwen']['api_key'],
-        base_url=PROCESS_CONFIG['qwen']['base_url'],
-    )
-else:
-    client = ZhipuAiClient(
-        api_key=PROCESS_CONFIG['glm']['api_key']
-    )
+# 统一使用 OpenAI 兼容客户端（包括 qwen、glm 等）
+client = OpenAI(
+    api_key=PROCESS_CONFIG[PROCESS_IMAGE_TYPE]['api_key'],
+    base_url=PROCESS_CONFIG[PROCESS_IMAGE_TYPE]['base_url'],
+)
 
 # 示例提示词，与gemma3_client.py中的类似
 sample_prompt = """

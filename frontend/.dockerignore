@@ -1,0 +1,12 @@
+node_modules
+.next
+out
+.git
+.gitignore
+.env*
+!.env.example
+*.md
+docs/
+.vscode
+.idea
+coverage/

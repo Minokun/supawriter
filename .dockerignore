@@ -1,0 +1,76 @@
+# Version control
+.git
+.gitignore
+
+# Python
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+
+# Node.js
+node_modules
+**/node_modules
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project runtime data
+logs/
+.pids/
+.playwright-mcp/
+playwright-report/
+test-results/
+
+# Environment files (injected via docker-compose)
+.env
+.env.local
+deployment/.env
+backend/.env
+creator/.env
+deployment/migrate/.env.migration
+frontend/.env.local
+frontend/.env.production.local
+
+# Data directories (mounted as volumes)
+data/
+uploads/
+
+# Deployment configs (not needed in app images)
+deployment/
+!deployment/scripts/
+!deployment/scripts/**
+
+# Documentation
+docs/
+*.md
+!backend/requirements_api.txt
+CLAUDE.md
+
+# Frontend build artifacts (built inside container)
+frontend/.next
+frontend/out
+
+# Test files
+tests/
+backend/tests/
+frontend/docs/
+
+# Misc
+images/
+scripts/userscripts/
+community/
+package.json
+package-lock.json
+.claude/
+.gemini/

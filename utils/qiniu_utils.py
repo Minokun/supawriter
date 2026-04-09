@@ -41,6 +41,27 @@ def _get_secrets(key: str, default: Optional[str] = None) -> Optional[str]:
     if env_val is not None:
         return env_val
 
+    # Map Qiniu keys to database setting keys
+    qiniu_key_map = {
+        'QINIU_Domain': 'qiniu.domain',
+        'QINIU_Folder': 'qiniu.folder',
+        'QINIU_Accesskey': 'qiniu.access_key',
+        'QINIU_SecretKey': 'qiniu.secret_key',
+        'QINIU_Region': 'qiniu.region',
+        'QINIU_Bucket': 'qiniu.bucket',
+    }
+
+    # Try to read from database for Qiniu settings
+    if key in qiniu_key_map:
+        try:
+            from backend.api.utils.backend_settings import get_system_setting
+            db_key = qiniu_key_map[key]
+            db_val = get_system_setting(db_key, None)
+            if db_val:
+                return db_val
+        except Exception:
+            pass  # Fall through to other methods
+
     # Access Streamlit secrets only when a ScriptRunContext exists to avoid
     # "missing ScriptRunContext" warnings from worker threads
     if st is not None:
@@ -69,9 +90,11 @@ def _normalize_folder(folder: Optional[str]) -> str:
     return folder
 
 
-# Basic heuristic for protected CDN sources (focus on Baidu/CDN)
+# Basic heuristic for protected CDN sources (focus on Baidu/CDN and other common platforms)
 PROTECTED_HOST_KEYWORDS = [
-    'baidu', 'bdstatic', 'bdimg', 'hiphotos', 'tiebapic', 'wkimg', 'baidupcs', 'cdn'
+    'baidu', 'bdstatic', 'bdimg', 'hiphotos', 'tiebapic', 'wkimg', 'baidupcs', 'cdn',
+    'csdnimg', 'zhimg', 'jianshu', 'juejin', 'mmbiz.qpic', 'alicdn', 'aliyuncs',
+    '51cto', 'infoq', 'segmentfault', 'oss-cn-'
 ]
 
 
@@ -135,7 +158,7 @@ def upload_image_from_url(image_url: str) -> Optional[str]:
         folder = _normalize_folder(_get_secrets('QINIU_Folder'))
         access_key = _get_secrets('QINIU_Accesskey')
         secret_key = _get_secrets('QINIU_SecretKey')
-        bucket = 'source'  # fixed as per user instruction
+        bucket = _get_secrets('QINIU_Bucket') or 'source'  # 从配置读取，默认 'source'
 
         if not all([domain, access_key, secret_key]):
             logger.warning('Qiniu secrets are missing; skip upload.')
@@ -240,20 +263,41 @@ def upload_image_from_url(image_url: str) -> Optional[str]:
         return None
 
 
-def ensure_public_image_url(image_url: str) -> str:
+def ensure_public_image_url(image_url: str, force_rehost: bool = False) -> str:
     """
     Ensure the image URL is publicly embeddable in Markdown.
     If the URL appears to be a Baidu/CDN-protected link, try to re-host on Qiniu.
-    Returns the original URL on failure.
+    Returns the original URL on failure, or empty string if URL is invalid.
+    
+    Args:
+        image_url: The original image URL to process
+        force_rehost: If True, always try to rehost even if not a protected CDN
+    
+    Returns:
+        Public URL string, or empty string if the image cannot be processed
     """
     try:
-        if not image_url:
-            return image_url
-        if is_protected_cdn_url(image_url):
+        if not image_url or not isinstance(image_url, str):
+            return ""
+        
+        # 基本URL格式验证
+        image_url = image_url.strip()
+        if not image_url.startswith(('http://', 'https://')):
+            logger.warning(f"Invalid image URL scheme: {image_url[:50]}...")
+            return ""
+        
+        # 检查是否需要转存
+        if force_rehost or is_protected_cdn_url(image_url):
             new_url = upload_image_from_url(image_url)
             if new_url:
                 logger.info(f"Rehosted protected image to Qiniu: {new_url}")
                 return new_url
+            else:
+                # 上传失败，返回空字符串表示图片不可用
+                logger.warning(f"Failed to rehost protected image: {image_url[:80]}...")
+                return ""
+        
         return image_url
-    except Exception:
-        return image_url
+    except Exception as e:
+        logger.error(f"Error processing image URL: {e}")
+        return ""

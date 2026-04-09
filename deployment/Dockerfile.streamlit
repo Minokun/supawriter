@@ -1,0 +1,68 @@
+# Streamlit 服务 Dockerfile
+
+# ---- Builder Stage ----
+FROM python:3.12-slim AS builder
+
+WORKDIR /app
+
+# 安装构建依赖和 uv
+RUN apt-get update && apt-get install -y gcc g++ curl && rm -rf /var/lib/apt/lists/*
+RUN pip install uv
+
+# 创建虚拟环境
+RUN python -m venv /opt/venv
+
+# 激活虚拟环境并更新 pip
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --upgrade pip
+
+# 仅复制依赖文件以利用 Docker 缓存
+COPY requirements.txt /app/
+
+# 安装 Python 依赖到虚拟环境
+RUN uv pip install -r /app/requirements.txt
+
+# ---- Runner Stage ----
+FROM python:3.12-slim AS runner
+
+WORKDIR /app
+
+# 创建非 root 用户
+RUN addgroup --system --gid 1001 appgroup \
+    && adduser --system --uid 1001 appuser --ingroup appgroup
+
+# 复制虚拟环境
+COPY --from=builder /opt/venv /opt/venv
+
+# 复制应用代码 - 仅复制 Streamlit 需要的文件和目录
+COPY web.py ./
+COPY settings.py ./
+COPY page_settings.py ./
+COPY auth_pages ./auth_pages
+COPY components ./components
+COPY page ./page
+COPY utils ./utils
+COPY .streamlit ./.streamlit
+
+# 确保 appuser 拥有 app 目录的所有权
+RUN chown -R appuser:appgroup /app
+
+# 创建并授权必要的目录
+RUN mkdir -p /app/data /app/uploads \
+    && chown -R appuser:appgroup /app/data /app/uploads
+
+# 切换到非 root 用户
+USER appuser
+
+# 激活虚拟环境
+ENV PATH="/opt/venv/bin:$PATH"
+
+# 暴露端口
+EXPOSE 8501
+
+# 健康检查 (使用 Python 内置模块)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import http.client; conn = http.client.HTTPConnection('localhost', 8501); conn.request('GET', '/_stcore/health'); response = conn.getresponse(); exit(0) if response.status == 200 else exit(1)"
+
+# 启动命令
+CMD ["streamlit", "run", "web.py", "--server.port=8501", "--server.address=0.0.0.0"]

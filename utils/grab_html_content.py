@@ -9,7 +9,6 @@ import logging
 import json
 from bs4 import BeautifulSoup
 from bs4.element import Comment
-from playwright.async_api import async_playwright
 from pathlib import Path
 from io import BytesIO
 from PIL import Image
@@ -22,8 +21,8 @@ import re
 import hashlib
 from typing import List, Dict
 from pathlib import Path
-from utils.openai_vl_process import process_image, process_image_async
 from utils.embedding_utils import add_to_faiss_index, create_faiss_index
+from utils.image_embedding import get_image_embedding_processor
 from utils.image_filter import (
     should_skip_image_url,
     is_likely_icon_by_dimensions,
@@ -33,6 +32,11 @@ from utils.image_filter import (
 )
 import concurrent.futures
 import threading
+
+try:
+    from playwright.async_api import async_playwright
+except ModuleNotFoundError:
+    async_playwright = None
 
 # 配置日志
 logging.basicConfig(
@@ -244,35 +248,46 @@ async def is_valid_image_url_for_model(session: aiohttp.ClientSession, url: str)
         timeout = aiohttp.ClientTimeout(total=8, connect=5)
         async with session.head(u, ssl=False, allow_redirects=True, timeout=timeout) as resp:
             if resp.status != 200:
+                logger.debug(f"[IMAGE_VALIDATION] HEAD failed with status {resp.status}: {url[:80]}")
                 return False
             ctype = resp.headers.get('Content-Type', '').lower()
             # 过滤svg
             if 'image/svg' in ctype:
+                logger.debug(f"[IMAGE_VALIDATION] Filtered SVG: {url[:80]}")
                 return False
             if not ctype.startswith('image/'):
+                logger.debug(f"[IMAGE_VALIDATION] Not an image (Content-Type: {ctype}): {url[:80]}")
                 return False
             cl = resp.headers.get('Content-Length')
             if cl is not None:
                 try:
                     if int(cl) < MIN_MODEL_IMAGE_SIZE:
+                        logger.debug(f"[IMAGE_VALIDATION] Image too small (Content-Length: {cl}): {url[:80]}")
                         return False
                 except Exception:
                     pass
+            logger.debug(f"[IMAGE_VALIDATION] PASS: {url[:80]}")
             return True
-    except Exception:
+    except Exception as e:
         # 有些服务器不支持HEAD，尝试GET前几个字节
+        logger.debug(f"[IMAGE_VALIDATION] HEAD request failed: {e}, trying GET for {url[:80]}")
         try:
             timeout = aiohttp.ClientTimeout(total=8, connect=5)
             async with session.get(u, ssl=False, allow_redirects=True, timeout=timeout) as resp:
                 if resp.status != 200:
+                    logger.debug(f"[IMAGE_VALIDATION] GET failed with status {resp.status}: {url[:80]}")
                     return False
                 ctype = resp.headers.get('Content-Type', '').lower()
                 if 'image/svg' in ctype:
+                    logger.debug(f"[IMAGE_VALIDATION] Filtered SVG via GET: {url[:80]}")
                     return False
                 if not ctype.startswith('image/'):
+                    logger.debug(f"[IMAGE_VALIDATION] Not an image via GET (Content-Type: {ctype}): {url[:80]}")
                     return False
+                logger.debug(f"[IMAGE_VALIDATION] PASS via GET: {url[:80]}")
                 return True
-        except Exception:
+        except Exception as e2:
+            logger.debug(f"[IMAGE_VALIDATION] GET also failed: {e2} for {url[:80]}")
             return False
 
 # 创建一个全局的ThreadPoolExecutor，使用线程锁保护其访问
@@ -343,7 +358,7 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
     # === 新增：URL预筛选 - 在下载前过滤明显的非内容图片 ===
     if should_skip_image_url(normalized_img_src):
         stats['skipped'] = stats.get('skipped', 0) + 1
-        logger.debug(f"URL pre-filter skipped: {normalized_img_src[:80]}...")
+        logger.info(f"[IMAGE_FILTER] Skipped by URL filter: {normalized_img_src[:80]}")
         image_hash_cache[normalized_img_src] = '' if not is_multimodal else None
         return '' if not is_multimodal else None
     
@@ -521,50 +536,70 @@ async def download_image(session: aiohttp.ClientSession, img_src: str, image_has
                 stats['failed'] += 1 if stats else 0
                 return None
         else:
-            try:
-                valid = await is_valid_image_url_for_model(session, normalized_img_src)
-            except Exception:
-                valid = False
+            # 新架构：使用图片 Embedding 替代多模态 Chat 模型
+            # 跳过预校验，直接尝试处理（如果URL无效，embedding会失败并返回None）
+            # 这样可以避免HEAD/GET请求被服务器拒绝，提高成功率
+            valid = True  # 跳过校验，直接处理
+
             if not valid:
-                logger.debug(f"Skip multimodal due to validation failure: {normalized_img_src}")
+                logger.debug(f"Skip image embedding due to validation failure: {normalized_img_src}")
                 if stats is not None:
                     stats['skipped'] = stats.get('skipped', 0) + 1
                 image_hash_cache[normalized_img_src] = None
                 return None
-            logger.debug(f"Fast-path multimodal processing for image URL: {normalized_img_src}")
+
+            logger.info(f"[IMAGE_EMBEDDING] Processing image URL with embedding: {normalized_img_src[:80]}")
             try:
-                # 重要：在调用多模态前打印即将发送的图片和上下文，便于定位400错误
-                logger.info(
-                    "Multimodal sending image_url=%s task_id=%s user=%s article_id=%s",
-                    normalized_img_src, task_id, username, article_id,
+                # 使用图片 Embedding 处理器
+                processor = get_image_embedding_processor()
+
+                # 准备数据
+                data = {
+                    "image_url": normalized_img_src,
+                    "task_id": task_id,
+                    "type": "image"
+                }
+
+                # 获取 FAISS 索引
+                current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
+                before_size = current_faiss_index.get_size()
+
+                # 直接添加图片 URL 到 FAISS 索引（is_image_url=True）
+                # add_to_faiss_index 内部会调用 Embedding().get_embedding([url], is_image_url=True)
+                logger.info(f"[IMAGE_EMBEDDING] Calling add_to_faiss_index for {normalized_img_src[:60]}...")
+                success = add_to_faiss_index(
+                    text=normalized_img_src,
+                    data=data,
+                    faiss_index=current_faiss_index,
+                    auto_save=True,
+                    username=username,
+                    article_id=article_id,
+                    is_image_url=True  # 关键：启用图片 embedding
                 )
-                # 使用异步版本，避免阻塞事件循环，实现真正的并发处理
-                result = await process_image_async(image_url=normalized_img_src)
-                if result and isinstance(result, dict) and "describe" in result:
-                    description = result.get("describe", "")
-                    if description and len(description) > 10:
-                        data = {"image_url": normalized_img_src, "task_id": task_id, "description": description}
-                        try:
-                            current_faiss_index = get_streamlit_faiss_index(username=username, article_id=article_id)
-                            before_size = current_faiss_index.get_size()
-                            add_to_faiss_index(description, data, current_faiss_index, username=username, article_id=article_id, auto_save=True)
-                            after_size = current_faiss_index.get_size()
-                            if after_size > before_size:
-                                logger.debug(f"已添加图片描述到FAISS索引: {normalized_img_src}")
-                        except Exception as e:
-                            logger.error(f"记录图片描述到FAISS索引失败: {str(e)}")
+
+                after_size = current_faiss_index.get_size()
+
+                if success and after_size > before_size:
+                    logger.info(f"[IMAGE_EMBEDDING] ✓ Successfully indexed: {normalized_img_src[:60]}")
+                    # 返回图片 URL 数据（替代原来的描述文本）
+                    result = {
+                        "image_url": normalized_img_src,
+                        "task_id": task_id,
+                        "embedding_method": "jina_clip",
+                        "indexed": True
+                    }
                     image_hash_cache[normalized_img_src] = result
                     stats['success'] += 1 if stats else 0
                     return result
                 else:
-                    logger.debug(f"Multimodal returned empty/invalid for {normalized_img_src}")
+                    logger.warning(f"[IMAGE_EMBEDDING] ✗ Failed to index: {normalized_img_src[:60]}, success={success}, before={before_size}, after={after_size}")
                     image_hash_cache[normalized_img_src] = None
                     stats['failed'] += 1 if stats else 0
                     return None
+
             except Exception as e:
-                # 重要：错误时也打印发送的图片URL和上下文
                 logger.error(
-                    "Multimodal fast-path error: %s | image_url=%s task_id=%s user=%s article_id=%s",
+                    "Image embedding error: %s | image_url=%s task_id=%s user=%s article_id=%s",
                     str(e), normalized_img_src, task_id, username, article_id,
                 )
                 image_hash_cache[normalized_img_src] = None
@@ -1187,7 +1222,9 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
         img_tags = soup.find_all('img')
         img_paths = []
         processed_paths = []  # Initialize processed_paths here to ensure it's always defined
-        
+
+        logger.info(f"[IMAGE_DETECTION_HTML] Found {len(img_tags)} <img> tags in HTML content")
+
         if img_tags:
             # 创建一个字典来存储图片哈希和路径
             image_hash_cache = {}
@@ -1329,6 +1366,8 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
                 seen.add(u)
                 unique_candidates.append(u)
 
+            logger.info(f"[IMAGE_DETECTION] Found {len(img_tags)} img tags, {len(img_src_candidates)} raw candidates, {len(unique_candidates)} unique candidates for download")
+
             # 初始化统计字典（以候选URL数为准）
             stats = {
                 'total': len(unique_candidates),
@@ -1343,35 +1382,46 @@ async def text_from_html(body: str, session: aiohttp.ClientSession, task_id: str
                 task = download_image(session, candidate, image_hash_cache, task_id, is_multimodal, use_direct_image_embedding, theme, stats, base_url, username, article_id)
                 img_tasks.append(task)
             
-            # 等待所有图片下载完成，设置整体超时（30秒）
+            # 等待所有图片下载完成，设置整体超时（60秒，从30秒增加）
+            logger.info(f"[IMAGE_DOWNLOAD] Starting download of {len(unique_candidates)} unique images with 60s timeout...")
             try:
                 img_paths = await asyncio.wait_for(
                     asyncio.gather(*img_tasks, return_exceptions=True),
-                    timeout=30
+                    timeout=60  # 从30秒增加到60秒
                 )
                 # 过滤掉异常结果
-                img_paths = [p for p in img_paths if not isinstance(p, Exception)]
+                successful_paths = [p for p in img_paths if not isinstance(p, Exception)]
+                failed_paths = [p for p in img_paths if isinstance(p, Exception)]
+                logger.info(f"[IMAGE_DOWNLOAD] Download complete: {len(successful_paths)} succeeded, {len(failed_paths)} failed")
+                img_paths = successful_paths
             except asyncio.TimeoutError:
-                logger.warning(f"图片下载超时，已处理部分图片")
+                logger.warning(f"[IMAGE_DOWNLOAD] Image download timed out after 60s - returning empty list. Had {len(unique_candidates)} images to download.")
                 img_paths = []
             
             # 处理直接嵌入模式下的字典结果
             processed_paths = []
-            for path in img_paths:
+            for idx, path in enumerate(img_paths):
+                logger.debug(f"[DEBUG] Processing path {idx}: type={type(path)}, value={str(path)[:100] if path else 'None/Empty'}, truthy={bool(path)}")
                 if path:
                     if isinstance(path, dict) and 'image_url' in path:
                         # 如果是直接嵌入模式下的字典结果，提取URL
+                        logger.debug(f"[DEBUG] Path {idx}: is dict with image_url, adding {path['image_url'][:80]}")
                         processed_paths.append(path['image_url'])
                     else:
                         # 普通字符串路径
+                        logger.debug(f"[DEBUG] Path {idx}: is regular string, adding {str(path)[:80]}")
                         processed_paths.append(path)
+                else:
+                    logger.debug(f"[DEBUG] Path {idx}: Skipping falsy value (None or empty)")
             
             # 输出图片下载统计信息
-            logger.debug(f"图片下载统计: 总计 {stats['total']} 张, 成功 {stats['success']} 张, 失败 {stats['failed']} 张, 使用缓存 {stats['cached']} 张, 跳过 {stats['skipped']} 张, 去重 {stats.get('duplicate', 0)} 张")
-            
+            logger.info(f"[IMAGE_DOWNLOAD_STATS] Total: {stats['total']}, Success: {stats['success']}, Failed: {stats['failed']}, Cached: {stats['cached']}, Skipped: {stats['skipped']}, Duplicates: {stats.get('duplicate', 0)}")
+
             # 输出全局缓存统计信息
             logger.debug(f"全局URL映射缓存大小: {len(GLOBAL_URL_MAPPING)}, 全局内容哈希映射大小: {len(GLOBAL_CONTENT_HASH_MAPPING)}")
-        
+
+        logger.info(f"[IMAGE_RESULT] Returning {len(processed_paths)} processed images from page")
+
         return {
             'text': text_content,
             'images': processed_paths
@@ -1485,11 +1535,21 @@ async def get_main_content(url_list: List[str], task_id: str = None, is_multimod
     :param progress_callback: 进度回调函数，接收 (completed_count, total_count)
     """
     get_executor()
-    
+
+    logger.info(f"[DEBUG] get_main_content called with: is_multimodal={is_multimodal}, use_direct_image_embedding={use_direct_image_embedding}, url_list={len(url_list)} items")
     logger.info(f"开始抓取 {len(url_list)} 个URL的内容...")
+
+    if async_playwright is None:
+        logger.error("Playwright is not installed; skipping page content extraction")
+        if task_id is None:
+            task_id = f"task_{int(asyncio.get_event_loop().time())}"
+        return [
+            {"url": url, "text": "", "images": [], "error": "playwright is not installed"}
+            for url in url_list
+        ], task_id
     
     async with async_playwright() as p:
-        browser = await p.firefox.launch()
+        browser = await p.chromium.launch(args=['--no-sandbox'])
         try:
             if task_id is None:
                 task_id = f"task_{int(asyncio.get_event_loop().time())}"

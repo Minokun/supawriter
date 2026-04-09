@@ -1,0 +1,427 @@
+2026-02-04 11:50:54,032 - faiss.loader - INFO - Loading faiss.
+2026-02-04 11:50:54,040 - faiss.loader - INFO - Successfully loaded faiss.
+11:50:54: Starting worker for 2 functions: generate_article_task, cleanup_faiss_indexes
+2026-02-04 11:50:54,284 - arq.worker - INFO - Starting worker for 2 functions: generate_article_task, cleanup_faiss_indexes
+11:50:54: redis_version=8.4.0 mem_usage=1.66M clients_connected=2 db_keys=7
+2026-02-04 11:50:54,284 - arq.worker - INFO - redis_version=8.4.0 mem_usage=1.66M clients_connected=2 db_keys=7
+2026-02-04 11:50:54,284 - backend.api.workers.worker_settings - INFO - ============================================================
+2026-02-04 11:50:54,284 - backend.api.workers.worker_settings - INFO - Article Generator Worker starting...
+2026-02-04 11:50:54,284 - backend.api.workers.worker_settings - INFO - Redis: localhost:6379
+2026-02-04 11:50:54,284 - backend.api.workers.worker_settings - INFO - Max concurrent jobs: 3
+2026-02-04 11:50:54,284 - backend.api.workers.worker_settings - INFO - Job timeout: 600s
+2026-02-04 11:50:54,284 - backend.api.workers.worker_settings - INFO - ============================================================
+11:51:02:   0.23s → 86e40fae48644439ae2f90a0e9248d28:generate_article_task(model_name='deepseek-chat', model_type='deepseek', spider_num=3, task_id='test-…)
+2026-02-04 11:51:02,297 - arq.worker - INFO -   0.23s → 86e40fae48644439ae2f90a0e9248d28:generate_article_task(model_name='deepseek-chat', model_type='deepseek', spider_num=3, task_id='test-…)
+2026-02-04 11:51:02,298 - backend.api.workers.article_worker - INFO - Starting article generation: task_id=test-qiniu-837235, topic=测试七牛云配置, user_id=1
+2026-02-04 11:51:02,655 - httpx - INFO - HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-02-04 11:51:03,941 - utils.searxng_utils - INFO - 优化后的搜索词: 七牛云 配置 测试
+2026-02-04 11:51:03,941 - utils.searxng_utils - INFO - DDGS 搜索开始: 七牛云 配置 测试, 最大结果数: 3
+2026-02-04 11:51:04,908 - primp - INFO - response: https://en.wikipedia.org/w/api.php?action=opensearch&profile=fuzzy&limit=1&search=%E4%B8%83%E7%89%9B%E4%BA%91%20%E9%85%8D%E7%BD%AE%20%E6%B5%8B%E8%AF%95 200
+2026-02-04 11:51:04,936 - httpx - INFO - HTTP Request: POST https://html.duckduckgo.com/html/ "HTTP/2 202 Accepted"
+2026-02-04 11:51:09,980 - ddgs.ddgs - INFO - Error in engine yahoo: TimeoutException("Request timed out: RuntimeError('error sending request for url (https://search.yahoo.com/search;_ylt=UvDfkV6YrLsAIXUEN9zOdn3x;_ylu=E7PvzguQdVPVX3uHprt1c2MBFySgDewK-GAq9zikt_1xsEc?p=%E4%B8%83%E7%89%9B%E4%BA%91+%E9%85%8D%E7%BD%AE+%E6%B5%8B%E8%AF%95): operation timed out\\n\\nCaused by:\\n    operation timed out')")
+2026-02-04 11:51:11,260 - primp - INFO - response: https://search.brave.com/search?q=%E4%B8%83%E7%89%9B%E4%BA%91+%E9%85%8D%E7%BD%AE+%E6%B5%8B%E8%AF%95&source=web 200
+2026-02-04 11:51:11,952 - primp - INFO - response: https://www.bing.com/search?q=%E4%B8%83%E7%89%9B%E4%BA%91+%E9%85%8D%E7%BD%AE+%E6%B5%8B%E8%AF%95&pq=%E4%B8%83%E7%89%9B%E4%BA%91+%E9%85%8D%E7%BD%AE+%E6%B5%8B%E8%AF%95&cc=en 200
+2026-02-04 11:51:12,016 - utils.searxng_utils - INFO - DDGS 搜索结果: 3 条
+2026-02-04 11:51:12,016 - utils.searxng_utils - INFO - Serper API Key 未配置，跳过 Serper 搜索
+2026-02-04 11:51:12,016 - utils.searxng_utils - INFO - 合并搜索结果: DDGS (3) + Serper (0) = 总计 3 条
+2026-02-04 11:51:12,016 - utils.searxng_utils - INFO - 开始LLM相关性审核: 共 3 条结果
+2026-02-04 11:51:12,219 - httpx - INFO - HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-02-04 11:51:15,327 - utils.searxng_utils - INFO - LLM相关性审核完成: 保留 0 条，过滤 3 条
+2026-02-04 11:51:15,327 - utils.searxng_utils - INFO - 过滤原因: 用户主题为'测试七牛云配置'，搜索结果均未直接涉及配置测试的具体方法或步骤。结果[0]和[1]是关于七牛云的客户端工具，结果[2]是知乎上的内容创作工作流介绍，均与'配置测试'无直接关联。
+2026-02-04 11:51:15,327 - utils.searxng_utils - WARNING - LLM过滤后结果为空，返回原始结果
+2026-02-04 11:51:15,327 - utils.searxng_utils - INFO - LLM相关性过滤: 3 条 -> 3 条
+2026-02-04 11:51:15,328 - utils.searxng_utils - INFO - 相关性评分: 原始 3 条 -> 过滤后 3 条（已去重、过滤低分和特殊文件）
+https://www.zhihu.com/org/qi-niu-yun - 相关度: 0.78 - 七牛云 - 知乎
+https://github.com/willnewii/qiniuClient - 相关度: 0.40 - GitHub - willnewii/qiniuClient: 云存储管理客户端。支持七牛云、腾讯 …
+https://github.com/qiniu/QSunSync - 相关度: 0.39 - GitHub - qiniu/QSunSync: 七牛云文件同步图形化工具－Windows版本
+2026-02-04 11:51:15,328 - utils.searxng_utils - INFO - 相关性排序后选取 DDGS 3 条 (限制=3) + Serper 0 条 (限制=10)，实际添加: 3 条
+2026-02-04 11:51:15,328 - utils.searxng_utils - INFO - Final deduplicated URLs for content grabbing (DDGS 3 + Serper 0 = 3): 3
+2026-02-04 11:51:15,328 - grab_html_content - INFO - [DEBUG] get_main_content called with: is_multimodal=True, use_direct_image_embedding=False, url_list=3 items
+2026-02-04 11:51:15,328 - grab_html_content - INFO - 开始抓取 3 个URL的内容...
+2026-02-04 11:51:21,940 - grab_html_content - INFO - [IMAGE_DETECTION_HTML] Found 5 <img> tags in HTML content
+2026-02-04 11:51:21,940 - grab_html_content - INFO - [IMAGE_DETECTION] Found 5 img tags, 6 raw candidates, 6 unique candidates for download
+2026-02-04 11:51:21,940 - grab_html_content - INFO - [IMAGE_DOWNLOAD] Starting download of 6 unique images with 60s timeout...
+2026-02-04 11:51:21,941 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://pic1.zhimg.com/v2-310cc486a0a93973c29d0e5b01bd544a_l.jpg?source=32738c0c
+2026-02-04 11:51:21,941 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://pic1.zhimg.com/v2-310cc486a0a93973c29d0e5b01bd544a_l...
+2026-02-04 11:51:21,977 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:23,246 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:23,250 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://pic1.zhimg.com/v2-310cc486a0a93973c29d0e5b01bd544a_l
+2026-02-04 11:51:23,250 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://pic1.zhimg.com/v2-efede9b179119f9991a095f80a44a363_1440w.jpg?source=3273
+2026-02-04 11:51:23,250 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 1 items
+2026-02-04 11:51:23,250 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://pic1.zhimg.com/v2-efede9b179119f9991a095f80a44a363_1...
+2026-02-04 11:51:23,294 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:24,110 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:24,111 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://pic1.zhimg.com/v2-efede9b179119f9991a095f80a44a363_1
+2026-02-04 11:51:24,111 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://pic1.zhimg.com/v2-efede9b179119f9991a095f80a44a363_720w.jpg?source=32738
+2026-02-04 11:51:24,111 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 2 items
+2026-02-04 11:51:24,111 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://pic1.zhimg.com/v2-efede9b179119f9991a095f80a44a363_7...
+2026-02-04 11:51:24,340 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:25,174 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:25,176 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://pic1.zhimg.com/v2-efede9b179119f9991a095f80a44a363_7
+2026-02-04 11:51:25,177 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://pic1.zhimg.com/v2-310cc486a0a93973c29d0e5b01bd544a_xl.jpg?source=32738c0
+2026-02-04 11:51:25,177 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 3 items
+2026-02-04 11:51:25,177 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://pic1.zhimg.com/v2-310cc486a0a93973c29d0e5b01bd544a_x...
+2026-02-04 11:51:25,206 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:25,767 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:25,769 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://pic1.zhimg.com/v2-310cc486a0a93973c29d0e5b01bd544a_x
+2026-02-04 11:51:25,769 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://pic1.zhimg.com/v2-310cc486a0a93973c29d0e5b01bd544a_xll.jpg?source=32738c
+2026-02-04 11:51:25,769 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 4 items
+2026-02-04 11:51:25,769 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://pic1.zhimg.com/v2-310cc486a0a93973c29d0e5b01bd544a_x...
+2026-02-04 11:51:25,813 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:26,396 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:26,398 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://pic1.zhimg.com/v2-310cc486a0a93973c29d0e5b01bd544a_x
+2026-02-04 11:51:26,398 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://pica.zhimg.com/80/v2-ccdb7828c12afff31a27e51593d23260_720w.png
+2026-02-04 11:51:26,398 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 5 items
+2026-02-04 11:51:26,398 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://pica.zhimg.com/80/v2-ccdb7828c12afff31a27e51593d2326...
+2026-02-04 11:51:26,455 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:27,046 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:27,048 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://pica.zhimg.com/80/v2-ccdb7828c12afff31a27e51593d2326
+2026-02-04 11:51:27,048 - grab_html_content - INFO - [IMAGE_DOWNLOAD] Download complete: 6 succeeded, 0 failed
+2026-02-04 11:51:27,048 - grab_html_content - INFO - [IMAGE_DOWNLOAD_STATS] Total: 6, Success: 6, Failed: 0, Cached: 0, Skipped: 0, Duplicates: 0
+2026-02-04 11:51:27,048 - grab_html_content - INFO - [IMAGE_RESULT] Returning 6 processed images from page
+2026-02-04 11:51:27,073 - grab_html_content - INFO - 抓取进度: 1/3 - URL: https://www.zhihu.com/org/qi-niu-yun...
+2026-02-04 11:51:32,633 - grab_html_content - INFO - [IMAGE_DETECTION_HTML] Found 5 <img> tags in HTML content
+2026-02-04 11:51:32,634 - grab_html_content - INFO - [IMAGE_DETECTION] Found 5 img tags, 5 raw candidates, 5 unique candidates for download
+2026-02-04 11:51:32,634 - grab_html_content - INFO - [IMAGE_DOWNLOAD] Starting download of 5 unique images with 60s timeout...
+2026-02-04 11:51:32,634 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://avatars.githubusercontent.com/u/1751166?v=4&size=40
+2026-02-04 11:51:32,634 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 6 items
+2026-02-04 11:51:32,634 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://avatars.githubusercontent.com/u/1751166?v=4&size=40...
+2026-02-04 11:51:33,297 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:33,909 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:33,913 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://avatars.githubusercontent.com/u/1751166?v=4&size=40
+2026-02-04 11:51:33,913 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://camo.githubusercontent.com/abec2e399d4880694e44b9a2db1912f187038a6288450
+2026-02-04 11:51:33,913 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 7 items
+2026-02-04 11:51:33,914 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://camo.githubusercontent.com/abec2e399d4880694e44b9a2d...
+2026-02-04 11:51:34,533 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:35,089 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:35,092 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://camo.githubusercontent.com/abec2e399d4880694e44b9a2d
+2026-02-04 11:51:35,092 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://avatars.githubusercontent.com/u/6283343?s=64&v=4
+2026-02-04 11:51:35,092 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 8 items
+2026-02-04 11:51:35,092 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://avatars.githubusercontent.com/u/6283343?s=64&v=4...
+2026-02-04 11:51:35,683 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:36,359 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:36,361 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://avatars.githubusercontent.com/u/6283343?s=64&v=4
+2026-02-04 11:51:36,361 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://avatars.githubusercontent.com/u/1204301?s=64&v=4
+2026-02-04 11:51:36,361 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 9 items
+2026-02-04 11:51:36,361 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://avatars.githubusercontent.com/u/1204301?s=64&v=4...
+2026-02-04 11:51:37,013 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:37,542 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:37,546 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://avatars.githubusercontent.com/u/1204301?s=64&v=4
+2026-02-04 11:51:37,546 - grab_html_content - INFO - [IMAGE_DOWNLOAD] Download complete: 5 succeeded, 0 failed
+2026-02-04 11:51:37,547 - grab_html_content - INFO - [IMAGE_DOWNLOAD_STATS] Total: 5, Success: 4, Failed: 0, Cached: 0, Skipped: 0, Duplicates: 1
+2026-02-04 11:51:37,547 - grab_html_content - INFO - [IMAGE_RESULT] Returning 5 processed images from page
+2026-02-04 11:51:37,570 - grab_html_content - INFO - 抓取进度: 2/3 - URL: https://github.com/qiniu/QSunSync...
+2026-02-04 11:51:38,593 - grab_html_content - INFO - [IMAGE_DETECTION_HTML] Found 11 <img> tags in HTML content
+2026-02-04 11:51:38,595 - grab_html_content - INFO - [IMAGE_DETECTION] Found 11 img tags, 11 raw candidates, 11 unique candidates for download
+2026-02-04 11:51:38,595 - grab_html_content - INFO - [IMAGE_DOWNLOAD] Starting download of 11 unique images with 60s timeout...
+2026-02-04 11:51:38,595 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://avatars.githubusercontent.com/u/652003?v=4&size=40
+2026-02-04 11:51:38,595 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 10 items
+2026-02-04 11:51:38,595 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://avatars.githubusercontent.com/u/652003?v=4&size=40...
+2026-02-04 11:51:39,222 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:39,761 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:39,765 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://avatars.githubusercontent.com/u/652003?v=4&size=40
+2026-02-04 11:51:39,766 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://camo.githubusercontent.com/ec30c0721ae15dfd2e71d3d0e93095525b0e5d836b061
+2026-02-04 11:51:39,766 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 11 items
+2026-02-04 11:51:39,766 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://camo.githubusercontent.com/ec30c0721ae15dfd2e71d3d0e...
+2026-02-04 11:51:42,560 - utils.embedding_utils - ERROR - 所有图片下载都失败，无法获取嵌入向量
+2026-02-04 11:51:42,560 - utils.embedding_utils - ERROR - Failed to get embedding for image URL: https://camo.githubusercontent.com/ec30c0721ae15df... (embedding_vectors is None or empty)
+2026-02-04 11:51:42,560 - grab_html_content - WARNING - [IMAGE_EMBEDDING] ✗ Failed to index: https://camo.githubusercontent.com/ec30c0721ae15dfd2e71d3d0e, success=False, before=11, after=11
+2026-02-04 11:51:42,560 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://camo.githubusercontent.com/ea106869dd5df04fb9224be10ebb3fd25ec6fc913c714
+2026-02-04 11:51:42,560 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 11 items
+2026-02-04 11:51:42,560 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://camo.githubusercontent.com/ea106869dd5df04fb9224be10...
+2026-02-04 11:51:43,251 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:44,019 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:44,022 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://camo.githubusercontent.com/ea106869dd5df04fb9224be10
+2026-02-04 11:51:44,022 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://camo.githubusercontent.com/38fb811bd690d3ea119bf55117ecdb1f65f55d4523ce0
+2026-02-04 11:51:44,022 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 12 items
+2026-02-04 11:51:44,022 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://camo.githubusercontent.com/38fb811bd690d3ea119bf5511...
+2026-02-04 11:51:44,952 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:45,881 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:45,886 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://camo.githubusercontent.com/38fb811bd690d3ea119bf5511
+2026-02-04 11:51:45,886 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://camo.githubusercontent.com/c9cb4463476b16ad1e63a3a36c4f53ae5899ad5299f14
+2026-02-04 11:51:45,886 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 13 items
+2026-02-04 11:51:45,886 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://camo.githubusercontent.com/c9cb4463476b16ad1e63a3a36...
+2026-02-04 11:51:46,740 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:47,728 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:47,733 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://camo.githubusercontent.com/c9cb4463476b16ad1e63a3a36
+2026-02-04 11:51:47,733 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://avatars.githubusercontent.com/u/5327677?s=64&v=4
+2026-02-04 11:51:47,733 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 14 items
+2026-02-04 11:51:47,734 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://avatars.githubusercontent.com/u/5327677?s=64&v=4...
+2026-02-04 11:51:48,344 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:49,065 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:49,067 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://avatars.githubusercontent.com/u/5327677?s=64&v=4
+2026-02-04 11:51:49,067 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://avatars.githubusercontent.com/u/1564444?s=64&v=4
+2026-02-04 11:51:49,067 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 15 items
+2026-02-04 11:51:49,067 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://avatars.githubusercontent.com/u/1564444?s=64&v=4...
+2026-02-04 11:51:49,691 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:50,307 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:50,310 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://avatars.githubusercontent.com/u/1564444?s=64&v=4
+2026-02-04 11:51:50,310 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://avatars.githubusercontent.com/u/12643564?s=64&v=4
+2026-02-04 11:51:50,310 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 16 items
+2026-02-04 11:51:50,310 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://avatars.githubusercontent.com/u/12643564?s=64&v=4...
+2026-02-04 11:51:50,968 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:51,609 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:51,611 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://avatars.githubusercontent.com/u/12643564?s=64&v=4
+2026-02-04 11:51:51,611 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://avatars.githubusercontent.com/u/10434561?s=64&v=4
+2026-02-04 11:51:51,611 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 17 items
+2026-02-04 11:51:51,611 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://avatars.githubusercontent.com/u/10434561?s=64&v=4...
+2026-02-04 11:51:52,235 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:52,840 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:52,842 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://avatars.githubusercontent.com/u/10434561?s=64&v=4
+2026-02-04 11:51:52,843 - grab_html_content - INFO - [IMAGE_EMBEDDING] Processing image URL with embedding: https://avatars.githubusercontent.com/u/19386356?s=64&v=4
+2026-02-04 11:51:52,843 - grab_html_content - INFO - Using cached FAISS index for 1/test-qiniu-837235 with 18 items
+2026-02-04 11:51:52,843 - grab_html_content - INFO - [IMAGE_EMBEDDING] Calling add_to_faiss_index for https://avatars.githubusercontent.com/u/19386356?s=64&v=4...
+2026-02-04 11:51:53,447 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:54,021 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:51:54,024 - grab_html_content - INFO - [IMAGE_EMBEDDING] ✓ Successfully indexed: https://avatars.githubusercontent.com/u/19386356?s=64&v=4
+2026-02-04 11:51:54,024 - grab_html_content - INFO - [IMAGE_DOWNLOAD] Download complete: 11 succeeded, 0 failed
+2026-02-04 11:51:54,024 - grab_html_content - INFO - [IMAGE_DOWNLOAD_STATS] Total: 11, Success: 9, Failed: 1, Cached: 0, Skipped: 0, Duplicates: 1
+2026-02-04 11:51:54,024 - grab_html_content - INFO - [IMAGE_RESULT] Returning 10 processed images from page
+2026-02-04 11:51:54,052 - grab_html_content - INFO - 抓取进度: 3/3 - URL: https://github.com/willnewii/qiniuClient...
+2026-02-04 11:51:54,052 - grab_html_content - INFO - 抓取完成: 成功 3 / 总计 3
+2026-02-04 11:51:54,838 - utils.searxng_utils - INFO - [URL_MAPPING] search_result has 3 items, image_dict has 3 items, html_content_dict has 3 items
+2026-02-04 11:51:54,838 - utils.searxng_utils - INFO - [URL_MAPPING] Direct match for https://www.zhihu.com/org/qi-niu-yun: 6 images
+2026-02-04 11:51:54,838 - utils.searxng_utils - INFO - [URL_MAPPING] Direct match for https://github.com/willnewii/qiniuClient: 10 images
+2026-02-04 11:51:54,838 - utils.searxng_utils - INFO - [URL_MAPPING] Direct match for https://github.com/qiniu/QSunSync: 5 images
+2026-02-04 11:51:54,838 - utils.searxng_utils - INFO - [URL_MAPPING] After mapping: 3 items have images
+2026-02-04 11:51:54,838 - utils.searxng_utils - INFO - 最终返回搜索结果: 3 条
+2026-02-04 11:51:54,842 - backend.api.workers.article_worker - INFO - [Search] Stored 19 images in Redis for FAISS indexing: user=1, task=test-qiniu-837235
+2026-02-04 11:51:54,842 - backend.api.workers.article_worker - INFO - [Search] Triggered background FAISS index creation: user=1, task=test-qiniu-837235
+2026-02-04 11:51:54,842 - backend.api.workers.article_worker - INFO - Search completed: 3 results for topic: 测试七牛云配置
+2026-02-04 11:51:54,844 - utils.searxng_utils - INFO - 开始处理LLM任务: 模型=deepseek/deepseek-chat, 任务类型=---任务---根据<content>标签中的内容，**围绕用户给定的主题**，提炼出一份精简高效的文章大纲。
+        
+        大纲结构要求：
+        1. 标题（title）：
+           - 15-25字，一眼抓住注意力
+           - 公式：[悬念/数字] + [核心价值] + [情绪触发] 或者 [人群] + [场景/问题] + [结果/收益] 要围绕痛点、收益、目标人群
+           - 避免标题党，要有实质内容支撑，文字不要太多，突出 3–6 个词的核心卖点
+           - **SEO优化**：核心关键词前置，放在标题前半部分
+           - **推荐算法优化**：使用高搜索量的热门词汇，避免生僻表达
+           - 优化标题增加标题点击率
+        
+        2. 摘要（summary）：
+           - 80-120字，客观陈述
+           - 第一句：交代事件背景（什么事、谁、什么时候）
+           - 第二句：说明核心看点或争议焦点
+           - 第三句：点明本文将分析的角度或价值，提出深层次的疑问来引导读者继续阅读下文
+           - 禁止第一人称，禁止"我将带你..."等引导语
+           - **SEO优化**：自然融入2-3个核心关键词，提升搜索匹配度
+        
+        3. 目录（content_outline）：
+           - **严格控制：3-4个一级标题（h1），每个h1下最多3个二级标题（h2）**
+           - 每个标题必须承载独立的核心信息点
+           - 标题之间要有递进逻辑，不能重复或交叉
+           - 禁止：总结回顾、未来展望、反思感悟等水分章节
+        
+        JSON输出格式：
+        {
+          "title": "文章的标题",
+          "summary": "文章的简短摘要",
+          "tags": "文章标签，用逗号分隔",
+          "content_outline": [
+            {
+              "h1": "一级标题（核心论点）",
+              "h2": ["二级标题1", "二级标题2"]
+            }
+          ]
+        }---, 搜索结果数量=3
+2026-02-04 11:51:54,844 - utils.searxng_utils - INFO - 搜索结果优化: 原始数量=3, 优化后数量=1, 前5相关性得分=[0, 0, 0], 字数变化=+130, 原字数=10145, 优字数=10275
+2026-02-04 11:51:54,845 - utils.searxng_utils - INFO - 已提交1个LLM任务到线程池，等待完成...
+2026-02-04 11:51:54,845 - backend.api.workers.article_worker - INFO - [FAISS] Starting background index creation: user=1, task=test-qiniu-837235, images=19
+2026-02-04 11:51:54,845 - backend.api.workers.article_worker - INFO - [FAISS] Filtered images: 19/19 passed
+2026-02-04 11:51:54,845 - backend.api.workers.image_indexer - INFO - 【递归分治模式】19张图片，初始批次=10
+2026-02-04 11:51:54,845 - backend.api.workers.image_indexer - INFO -   层级1: 19张图片 → 2批(每批≤10张)
+2026-02-04 11:51:54,845 - backend.api.workers.image_indexer - INFO -     批次[1]: 批量发送10张...
+2026-02-04 11:51:56,154 - httpx - INFO - HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-02-04 11:51:56,509 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:51:58,597 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 10，状态码: 200，成功: True
+2026-02-04 11:51:58,606 - backend.api.workers.image_indexer - INFO -       ✓ 批次[1]成功: 10/10张
+2026-02-04 11:51:58,606 - backend.api.workers.image_indexer - INFO -     批次[2]: 批量发送9张...
+2026-02-04 11:52:02,087 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:52:03,978 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 9，状态码: 200，成功: True
+2026-02-04 11:52:03,987 - backend.api.workers.image_indexer - INFO -       ✓ 批次[2]成功: 9/9张
+2026-02-04 11:52:03,987 - backend.api.workers.image_indexer - INFO - ✓ Embedding完成: 19/19 张图片成功
+2026-02-04 11:52:03,987 - backend.api.workers.article_worker - INFO - [FAISS] Generated embeddings: 19 vectors
+2026-02-04 11:52:03,992 - backend.api.core.faiss_cache - INFO - FAISS index saved: user=1, task=test-qiniu-837235, count=19
+2026-02-04 11:52:03,992 - backend.api.workers.image_store - INFO - Marked index ready for user=1, task=test-qiniu-837235, count=19
+2026-02-04 11:52:03,993 - backend.api.workers.article_worker - INFO - [FAISS] Index created successfully: user=1, task=test-qiniu-837235, count=19
+2026-02-04 11:52:07,727 - utils.searxng_utils - INFO - 所有LLM任务已完成，获取到1个结果
+2026-02-04 11:52:07,727 - utils.searxng_utils - INFO - 大纲结果合并完成，总长度=651
+2026-02-04 11:52:07,729 - utils.searxng_utils - INFO - 大纲JSON解析成功: 标题='七牛云配置避坑指南：从零到一，3步搞定开发者文件同步难题...', 章节数=3
+2026-02-04 11:52:07,730 - backend.api.workers.article_worker - INFO - Outline generated: 3 sections
+2026-02-04 11:52:07,731 - utils.searxng_utils - INFO - 开始处理LLM任务: 模型=deepseek/deepseek-chat, 任务类型=---任务---根据完整大纲和相关资料，**紧密围绕主题**撰写指定章节内容。，同时优化内容以提升推荐曝光。---, 搜索结果数量=3
+2026-02-04 11:52:07,732 - utils.searxng_utils - INFO - 搜索结果优化: 原始数量=3, 优化后数量=1, 前5相关性得分=[8, 8, 2], 字数变化=+130, 原字数=10145, 优字数=10275
+2026-02-04 11:52:07,732 - utils.searxng_utils - INFO - 已提交1个LLM任务到线程池，等待完成...
+2026-02-04 11:52:08,010 - httpx - INFO - HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-02-04 11:52:31,519 - utils.searxng_utils - INFO - 所有LLM任务已完成，获取到1个结果
+2026-02-04 11:52:31,739 - httpx - INFO - HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-02-04 11:52:50,600 - backend.api.workers.article_worker - INFO - Inserting images into chapter 1/3
+2026-02-04 11:52:50,604 - backend.api.workers.article_worker - INFO - [Insert] Waiting for FAISS index: user=1, task=test-qiniu-837235
+2026-02-04 11:52:50,604 - backend.api.workers.article_worker - INFO - [FAISS] Waiting for index to be ready: user=1, task=test-qiniu-837235, timeout=30.0s
+2026-02-04 11:52:50,605 - backend.api.workers.article_worker - INFO - [FAISS] Index ready: user=1, task=test-qiniu-837235, size=19, elapsed=0.0s
+2026-02-04 11:52:50,605 - backend.api.workers.article_worker - INFO - [Insert] FAISS index ready: user=1, task=test-qiniu-837235, size=19
+2026-02-04 11:52:50,605 - backend.api.workers.article_worker - INFO - [Insert] Chapter query: h1='七牛云配置核心：AK/SK密钥获取与验证...', h2='['后台查找密钥：权限校验的起点', '客户端配置：输入错误的后果与提示', '多平台兼容性：不同客户端的密钥通用性']...', content_length=0
+2026-02-04 11:52:50,605 - backend.api.workers.article_worker - INFO - [Insert] Starting FAISS search with k=10...
+2026-02-04 11:52:50,605 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:52:51,362 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:52:51,376 - backend.api.workers.article_worker - INFO - [Insert] FAISS search returned 10 matches, similarities: [0.6544901132583618, 0.6379308700561523, 0.5630268454551697, 0.454937219619751, 0.43986886739730835]
+2026-02-04 11:52:51,376 - backend.api.workers.article_worker - INFO - [Insert] Filtering images with similarity threshold >= 0.3
+2026-02-04 11:52:51,376 - backend.api.workers.article_worker - INFO - [Insert] Image 1: similarity=0.654, ensuring public URL...
+2026-02-04 11:52:51,377 - backend.api.workers.article_worker - INFO - [Insert] Image 1: ✓ selected (similarity=0.654) - https://camo.githubusercontent.com/38fb811bd690d3ea119bf55117ecdb1f65f55d4523ce0
+2026-02-04 11:52:51,377 - backend.api.workers.article_worker - INFO - [Insert] Image 2: similarity=0.638, ensuring public URL...
+2026-02-04 11:52:51,377 - backend.api.workers.article_worker - INFO - [Insert] Image 2: ✓ selected (similarity=0.638) - https://camo.githubusercontent.com/ea106869dd5df04fb9224be10ebb3fd25ec6fc913c714
+2026-02-04 11:52:51,377 - backend.api.workers.article_worker - INFO - [Insert] Image 3: similarity=0.563, ensuring public URL...
+2026-02-04 11:52:51,377 - backend.api.workers.article_worker - INFO - [Insert] Image 3: ✓ selected (similarity=0.563) - https://camo.githubusercontent.com/c9cb4463476b16ad1e63a3a36c4f53ae5899ad5299f14
+2026-02-04 11:52:51,377 - backend.api.workers.article_worker - INFO - [Insert] Reached maximum of 3 images for this chapter
+2026-02-04 11:52:51,377 - backend.api.workers.article_worker - INFO - [Insert] Selected 3 images for insertion into chapter
+2026-02-04 11:52:51,377 - backend.api.workers.article_worker - INFO - [Insert] Preparing to insert 3 images into 5 paragraphs
+2026-02-04 11:52:51,377 - backend.api.workers.article_worker - INFO - [Insert] Inserted image 3 at paragraph position 3
+2026-02-04 11:52:51,377 - backend.api.workers.article_worker - INFO - [Insert] Inserted image 2 at paragraph position 2
+2026-02-04 11:52:51,377 - backend.api.workers.article_worker - INFO - [Insert] Inserted image 1 at paragraph position 1
+2026-02-04 11:52:51,377 - backend.api.workers.article_worker - INFO - [Insert] ✓✓✓ Successfully inserted 3 images into chapter! Final content length: 2139 chars
+2026-02-04 11:52:51,379 - utils.searxng_utils - INFO - 开始处理LLM任务: 模型=deepseek/deepseek-chat, 任务类型=---任务---根据完整大纲和相关资料，**紧密围绕主题**撰写指定章节内容。，同时优化内容以提升推荐曝光。---, 搜索结果数量=3
+2026-02-04 11:52:51,380 - utils.searxng_utils - INFO - 搜索结果优化: 原始数量=3, 优化后数量=1, 前5相关性得分=[8, 8, 2], 字数变化=+130, 原字数=10145, 优字数=10275
+2026-02-04 11:52:51,381 - utils.searxng_utils - INFO - 已提交1个LLM任务到线程池，等待完成...
+2026-02-04 11:52:51,734 - httpx - INFO - HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-02-04 11:53:28,725 - utils.searxng_utils - INFO - 所有LLM任务已完成，获取到1个结果
+2026-02-04 11:53:28,993 - httpx - INFO - HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-02-04 11:54:00,820 - backend.api.workers.article_worker - INFO - Inserting images into chapter 2/3
+2026-02-04 11:54:00,821 - backend.api.workers.article_worker - INFO - [Insert] Waiting for FAISS index: user=1, task=test-qiniu-837235
+2026-02-04 11:54:00,821 - backend.api.workers.article_worker - INFO - [FAISS] Waiting for index to be ready: user=1, task=test-qiniu-837235, timeout=30.0s
+2026-02-04 11:54:00,821 - backend.api.workers.article_worker - INFO - [FAISS] Index ready: user=1, task=test-qiniu-837235, size=19, elapsed=0.0s
+2026-02-04 11:54:00,821 - backend.api.workers.article_worker - INFO - [Insert] FAISS index ready: user=1, task=test-qiniu-837235, size=19
+2026-02-04 11:54:00,821 - backend.api.workers.article_worker - INFO - [Insert] Chapter query: h1='同步工具选择：官方QSunSync vs 第三方qiniuClient...', h2='['QSunSync：Windows专属的增量同步利器', 'qiniuClient：跨平台多云的图形化管理方案', '功能对比：从断点续传到批量导出URL']...', content_length=0
+2026-02-04 11:54:00,821 - backend.api.workers.article_worker - INFO - [Insert] Starting FAISS search with k=10...
+2026-02-04 11:54:00,821 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:54:01,459 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:54:01,462 - backend.api.workers.article_worker - INFO - [Insert] FAISS search returned 10 matches, similarities: [0.5956250429153442, 0.5852627754211426, 0.5281892418861389, 0.4158114790916443, 0.393989235162735]
+2026-02-04 11:54:01,462 - backend.api.workers.article_worker - INFO - [Insert] Filtering images with similarity threshold >= 0.3
+2026-02-04 11:54:01,463 - backend.api.workers.article_worker - INFO - [Insert] Image 1: similarity=0.596, ensuring public URL...
+2026-02-04 11:54:01,463 - backend.api.workers.article_worker - INFO - [Insert] Image 1: ✓ selected (similarity=0.596) - https://camo.githubusercontent.com/38fb811bd690d3ea119bf55117ecdb1f65f55d4523ce0
+2026-02-04 11:54:01,463 - backend.api.workers.article_worker - INFO - [Insert] Image 2: similarity=0.585, ensuring public URL...
+2026-02-04 11:54:01,463 - backend.api.workers.article_worker - INFO - [Insert] Image 2: ✓ selected (similarity=0.585) - https://camo.githubusercontent.com/ea106869dd5df04fb9224be10ebb3fd25ec6fc913c714
+2026-02-04 11:54:01,463 - backend.api.workers.article_worker - INFO - [Insert] Image 3: similarity=0.528, ensuring public URL...
+2026-02-04 11:54:01,464 - backend.api.workers.article_worker - INFO - [Insert] Image 3: ✓ selected (similarity=0.528) - https://camo.githubusercontent.com/c9cb4463476b16ad1e63a3a36c4f53ae5899ad5299f14
+2026-02-04 11:54:01,464 - backend.api.workers.article_worker - INFO - [Insert] Reached maximum of 3 images for this chapter
+2026-02-04 11:54:01,464 - backend.api.workers.article_worker - INFO - [Insert] Selected 3 images for insertion into chapter
+2026-02-04 11:54:01,464 - backend.api.workers.article_worker - INFO - [Insert] Preparing to insert 3 images into 14 paragraphs
+2026-02-04 11:54:01,464 - backend.api.workers.article_worker - INFO - [Insert] Inserted image 3 at paragraph position 9
+2026-02-04 11:54:01,464 - backend.api.workers.article_worker - INFO - [Insert] Inserted image 2 at paragraph position 6
+2026-02-04 11:54:01,464 - backend.api.workers.article_worker - INFO - [Insert] Inserted image 1 at paragraph position 3
+2026-02-04 11:54:01,464 - backend.api.workers.article_worker - INFO - [Insert] ✓✓✓ Successfully inserted 3 images into chapter! Final content length: 3140 chars
+2026-02-04 11:54:01,466 - utils.searxng_utils - INFO - 开始处理LLM任务: 模型=deepseek/deepseek-chat, 任务类型=---任务---根据完整大纲和相关资料，**紧密围绕主题**撰写指定章节内容。，同时优化内容以提升推荐曝光。---, 搜索结果数量=3
+2026-02-04 11:54:01,466 - utils.searxng_utils - INFO - 搜索结果优化: 原始数量=3, 优化后数量=1, 前5相关性得分=[8, 8, 2], 字数变化=+130, 原字数=10145, 优字数=10275
+2026-02-04 11:54:01,467 - utils.searxng_utils - INFO - 已提交1个LLM任务到线程池，等待完成...
+2026-02-04 11:54:01,731 - httpx - INFO - HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-02-04 11:54:28,805 - utils.searxng_utils - INFO - 所有LLM任务已完成，获取到1个结果
+2026-02-04 11:54:29,035 - httpx - INFO - HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-02-04 11:54:53,272 - backend.api.workers.article_worker - INFO - Inserting images into chapter 3/3
+2026-02-04 11:54:53,272 - backend.api.workers.article_worker - INFO - [Insert] Waiting for FAISS index: user=1, task=test-qiniu-837235
+2026-02-04 11:54:53,272 - backend.api.workers.article_worker - INFO - [FAISS] Waiting for index to be ready: user=1, task=test-qiniu-837235, timeout=30.0s
+2026-02-04 11:54:53,273 - backend.api.workers.article_worker - INFO - [FAISS] Index ready: user=1, task=test-qiniu-837235, size=19, elapsed=0.0s
+2026-02-04 11:54:53,273 - backend.api.workers.article_worker - INFO - [Insert] FAISS index ready: user=1, task=test-qiniu-837235, size=19
+2026-02-04 11:54:53,273 - backend.api.workers.article_worker - INFO - [Insert] Chapter query: h1='高效工作流构建：以Obsidian内容创作为例...', h2='['整合PicGo：实现Markdown图片一键上传', '配置同步任务：本地与云端路径映射', '规避内耗：避免多平台发布的重复操作']...', content_length=0
+2026-02-04 11:54:53,273 - backend.api.workers.article_worker - INFO - [Insert] Starting FAISS search with k=10...
+2026-02-04 11:54:53,273 - utils.embedding_utils - INFO - 尝试第 1/3 次调用 embedding API: https://ai.gitee.com/v1/embeddings
+2026-02-04 11:54:53,793 - utils.embedding_utils - INFO - 已发送请求到 https://ai.gitee.com/v1/embeddings，提供商: gitee，模型: jina-embeddings-v4，输入数量: 1，状态码: 200，成功: True
+2026-02-04 11:54:53,796 - backend.api.workers.article_worker - INFO - [Insert] FAISS search returned 10 matches, similarities: [0.5707088112831116, 0.5423593521118164, 0.47432756423950195, 0.4268154501914978, 0.40731576085090637]
+2026-02-04 11:54:53,796 - backend.api.workers.article_worker - INFO - [Insert] Filtering images with similarity threshold >= 0.3
+2026-02-04 11:54:53,797 - backend.api.workers.article_worker - INFO - [Insert] Image 1: similarity=0.571, ensuring public URL...
+2026-02-04 11:54:53,797 - backend.api.workers.article_worker - INFO - [Insert] Image 1: ✓ selected (similarity=0.571) - https://camo.githubusercontent.com/38fb811bd690d3ea119bf55117ecdb1f65f55d4523ce0
+2026-02-04 11:54:53,797 - backend.api.workers.article_worker - INFO - [Insert] Image 2: similarity=0.542, ensuring public URL...
+2026-02-04 11:54:53,797 - backend.api.workers.article_worker - INFO - [Insert] Image 2: ✓ selected (similarity=0.542) - https://camo.githubusercontent.com/c9cb4463476b16ad1e63a3a36c4f53ae5899ad5299f14
+2026-02-04 11:54:53,797 - backend.api.workers.article_worker - INFO - [Insert] Image 3: similarity=0.474, ensuring public URL...
+2026-02-04 11:54:53,797 - backend.api.workers.article_worker - INFO - [Insert] Image 3: ✓ selected (similarity=0.474) - https://camo.githubusercontent.com/ea106869dd5df04fb9224be10ebb3fd25ec6fc913c714
+2026-02-04 11:54:53,798 - backend.api.workers.article_worker - INFO - [Insert] Reached maximum of 3 images for this chapter
+2026-02-04 11:54:53,798 - backend.api.workers.article_worker - INFO - [Insert] Selected 3 images for insertion into chapter
+2026-02-04 11:54:53,798 - backend.api.workers.article_worker - INFO - [Insert] Preparing to insert 3 images into 16 paragraphs
+2026-02-04 11:54:53,798 - backend.api.workers.article_worker - INFO - [Insert] Inserted image 3 at paragraph position 12
+2026-02-04 11:54:53,798 - backend.api.workers.article_worker - INFO - [Insert] Inserted image 2 at paragraph position 8
+2026-02-04 11:54:53,798 - backend.api.workers.article_worker - INFO - [Insert] Inserted image 1 at paragraph position 4
+2026-02-04 11:54:53,798 - backend.api.workers.article_worker - INFO - [Insert] ✓✓✓ Successfully inserted 3 images into chapter! Final content length: 2368 chars
+2026-02-04 11:54:53,799 - backend.api.workers.article_worker - INFO - Article content written: 7775 characters
+2026-02-04 11:54:53,799 - backend.api.workers.article_worker - INFO - [DB] Saving article: user_id=1, title=七牛云配置避坑指南：从零到一，3步搞定开发者文件同步难题
+2026-02-04 11:54:53,799 - backend.api.workers.article_worker - ERROR - [DB] Error saving article: 'Settings' object has no attribute 'POSTGRES_HOST'
+2026-02-04 11:54:53,799 - backend.api.workers.article_worker - ERROR - Article generation failed: 'Settings' object has no attribute 'POSTGRES_HOST'
+11:54:53: 231.50s ← 86e40fae48644439ae2f90a0e9248d28:generate_article_task ● {'success': False, 'error': "'Settings' object has no attribute 'POSTGRES_HOST'…
+2026-02-04 11:54:53,800 - arq.worker - INFO - 231.50s ← 86e40fae48644439ae2f90a0e9248d28:generate_article_task ● {'success': False, 'error': "'Settings' object has no attribute 'POSTGRES_HOST'…
+12:00:00:   1.00s → cleanup_faiss_indexes()
+2026-02-04 12:00:00,435 - arq.worker - INFO -   1.00s → cleanup_faiss_indexes()
+2026-02-04 12:00:00,438 - backend.api.core.faiss_cache - INFO - FAISS cleanup completed: scanned=2, cleaned=0, errors=0
+12:00:00:   0.00s ← cleanup_faiss_indexes ● {'scanned': 2, 'cleaned': 0, 'errors': 0}
+2026-02-04 12:00:00,438 - arq.worker - INFO -   0.00s ← cleanup_faiss_indexes ● {'scanned': 2, 'cleaned': 0, 'errors': 0}
+Traceback (most recent call last):
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/arq/worker.py", line 309, in run
+    self.loop.run_until_complete(self.main_task)
+  File "/Users/wxk/.local/share/uv/python/cpython-3.12.9-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/arq/worker.py", line 362, in main
+    await self._poll_iteration()
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/arq/worker.py", line 387, in _poll_iteration
+    job_ids = await self.pool.zrangebyscore(
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/redis/asyncio/client.py", line 646, in execute_command
+    return await conn.retry.call_with_retry(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/redis/asyncio/retry.py", line 62, in call_with_retry
+    await fail(error)
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/redis/asyncio/client.py", line 633, in _disconnect_raise
+    raise error
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/redis/asyncio/retry.py", line 59, in call_with_retry
+    return await do()
+           ^^^^^^^^^^
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/redis/asyncio/client.py", line 620, in _send_command_parse_response
+    return await self.parse_response(conn, command_name, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/redis/asyncio/client.py", line 667, in parse_response
+    response = await connection.read_response()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/redis/asyncio/connection.py", line 562, in read_response
+    response = await self._parser.read_response(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/redis/_parsers/hiredis.py", line 211, in read_response
+    await self.read_from_socket()
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/redis/_parsers/hiredis.py", line 191, in read_from_socket
+    raise ConnectionError(SERVER_CLOSED_CONNECTION_ERROR) from None
+redis.exceptions.ConnectionError: Connection closed by server.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/bin/arq", line 10, in <module>
+    sys.exit(cli())
+             ^^^^^
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/click/core.py", line 1462, in __call__
+    return self.main(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/click/core.py", line 1383, in main
+    rv = self.invoke(ctx)
+         ^^^^^^^^^^^^^^^^
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/click/core.py", line 1246, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/click/core.py", line 814, in invoke
+    return callback(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/arq/cli.py", line 54, in cli
+    run_worker(worker_settings_, **kwargs)
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/arq/worker.py", line 895, in run_worker
+    worker.run()
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/arq/worker.py", line 314, in run
+    self.loop.run_until_complete(self.close())
+  File "/Users/wxk/.local/share/uv/python/cpython-3.12.9-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/arq/worker.py", line 870, in close
+    await self.pool.delete(self.health_check_key)
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/redis/asyncio/client.py", line 641, in execute_command
+    conn = self.connection or await pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/redis/asyncio/connection.py", line 1100, in get_connection
+    await self.ensure_connection(connection)
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/redis/asyncio/connection.py", line 1133, in ensure_connection
+    await connection.connect()
+  File "/Users/wxk/Desktop/workspace/supawriter/.venv/lib/python3.12/site-packages/redis/asyncio/connection.py", line 298, in connect
+    raise ConnectionError(self._error_message(e))
+redis.exceptions.ConnectionError: Error Multiple exceptions: [Errno 61] Connect call failed ('::1', 6379, 0, 0), [Errno 61] Connect call failed ('127.0.0.1', 6379) connecting to localhost:6379.

@@ -45,9 +45,10 @@ def _fix_markdown_table_spacing(text):
     
     return '\n'.join(new_lines)
 
-def markdown_to_wechat_html(markdown_text):
+def markdown_to_wechat_html(markdown_text, style="wechat"):
     """
     Convert Markdown text to WeChat-compatible HTML with inline styles.
+    Supports different themes: wechat, zhihu, futuristic, elegant.
     """
     if not markdown_text:
         return ""
@@ -56,7 +57,6 @@ def markdown_to_wechat_html(markdown_text):
     markdown_text = _fix_markdown_table_spacing(markdown_text)
 
     # 1. Convert Markdown to basic HTML
-    # Use extra extensions for better compatibility
     html = markdown.markdown(
         markdown_text, 
         extensions=[
@@ -70,96 +70,111 @@ def markdown_to_wechat_html(markdown_text):
     # 2. Parse with BeautifulSoup to apply styles
     soup = BeautifulSoup(html, 'html.parser')
 
-    # 3. Define WeChat-friendly styles
-    # colors
-    primary_color = "#07c160" # WeChat Green
-    text_color = "#333333"
-    secondary_text_color = "#888888"
-    bg_color = "#f7f7f7"
-    code_bg_color = "#f0f0f0"
-    
-    styles = {
-        'h1': f'font-size: 22px; font-weight: bold; margin-top: 30px; margin-bottom: 15px; color: {text_color}; text-align: center;',
-        'h2': f'font-size: 18px; font-weight: bold; margin-top: 30px; margin-bottom: 15px; padding-left: 10px; border-left: 4px solid {primary_color}; color: {text_color}; line-height: 1.4;',
-        'h3': f'font-size: 16px; font-weight: bold; margin-top: 20px; margin-bottom: 10px; color: {text_color}; display: flex; align-items: center; padding-left: 8px; border-left: 3px solid {primary_color};',
-        'p': f'font-size: 16px; line-height: 1.8; margin-bottom: 20px; color: {text_color}; text-align: justify; letter-spacing: 1px;',
-        'ul': f'margin-bottom: 20px; padding-left: 20px; color: {text_color}; list-style-type: disc;',
-        'ol': f'margin-bottom: 20px; padding-left: 20px; color: {text_color}; list-style-type: decimal;',
-        'li': 'font-size: 16px; line-height: 1.8; margin-bottom: 8px;',
-        'blockquote': f'padding: 15px; margin: 20px 0; border-left: 4px solid {primary_color}; background-color: {bg_color}; color: {secondary_text_color}; font-size: 15px; line-height: 1.6; border-radius: 4px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05);',
-        'code': f'font-family: Menlo, Monaco, Consolas, "Courier New", monospace; font-size: 14px; background-color: {code_bg_color}; padding: 2px 4px; border-radius: 3px; color: #d63384;',
-        'pre': f'background-color: #282c34; padding: 15px; overflow-x: auto; border-radius: 5px; margin-bottom: 20px; color: #abb2bf; font-family: Menlo, Monaco, Consolas, "Courier New", monospace; font-size: 13px; line-height: 1.5; -webkit-overflow-scrolling: touch;',
-        'img': 'max-width: 100%; height: auto; display: block; margin: 20px auto; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);',
-        'a': f'color: {primary_color}; text-decoration: none; border-bottom: 1px dashed {primary_color};',
-        'strong': f'font-weight: bold; color: {text_color};',
-        'em': 'font-style: italic;',
-        'table': 'width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 14px; border: 1px solid #e0e0e0;',
-        'th': f'background-color: {primary_color}; color: #ffffff; border: 1px solid #e0e0e0; padding: 10px; text-align: left; font-weight: bold;',
-        'td': 'border: 1px solid #e0e0e0; padding: 10px;',
-        'hr': 'border: 0; border-top: 1px solid #eee; margin: 30px 0;'
+    # 3. Define Theme-specific styles
+    themes = {
+        "wechat": {
+            "primary": "#07c160",
+            "text": "#333333",
+            "secondary_text": "#888888",
+            "bg": "#f7f7f7",
+            "code_bg": "#f0f0f0",
+            "font_family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        },
+        "zhihu": {
+            "primary": "#0066ff",
+            "text": "#121212",
+            "secondary_text": "#8590a6",
+            "bg": "#f6f6f6",
+            "code_bg": "#f4f4f4",
+            "font_family": "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif"
+        },
+        "futuristic": {
+            "primary": "#38bdf8",
+            "text": "#e2e8f0",
+            "secondary_text": "#94a3b8",
+            "bg": "#1e293b",
+            "code_bg": "#0f172a",
+            "font_family": "'Inter', 'Segoe UI', system-ui, sans-serif"
+        },
+        "elegant": {
+            "primary": "#d4af37",
+            "text": "#2c3e50",
+            "secondary_text": "#7f8c8d",
+            "bg": "#fdfcf0",
+            "code_bg": "#f4f1de",
+            "font_family": "'Georgia', 'Times New Roman', serif"
+        }
     }
 
+    theme = themes.get(style, themes["wechat"])
+    
+    styles = {
+        'h1': f'font-size: 24px; font-weight: bold; margin-top: 35px; margin-bottom: 20px; color: {theme["text"]}; text-align: center; border-bottom: 2px solid {theme["primary"]}; padding-bottom: 10px;',
+        'h2': f'font-size: 20px; font-weight: bold; margin-top: 30px; margin-bottom: 15px; padding-left: 12px; border-left: 5px solid {theme["primary"]}; color: {theme["text"]}; line-height: 1.4;',
+        'h3': f'font-size: 18px; font-weight: bold; margin-top: 25px; margin-bottom: 12px; color: {theme["text"]}; padding-left: 10px; border-left: 3px solid {theme["primary"]}; opacity: 0.9;',
+        'p': f'font-size: 16px; line-height: 1.8; margin-bottom: 20px; color: {theme["text"]}; text-align: justify; letter-spacing: 0.5px;',
+        'ul': f'margin-bottom: 20px; padding-left: 20px; color: {theme["text"]}; list-style-type: disc;',
+        'ol': f'margin-bottom: 20px; padding-left: 20px; color: {theme["text"]}; list-style-type: decimal;',
+        'li': 'font-size: 16px; line-height: 1.8; margin-bottom: 8px;',
+        'blockquote': f'padding: 15px 20px; margin: 25px 0; border-left: 4px solid {theme["primary"]}; background-color: {theme["bg"]}; color: {theme["secondary_text"]}; font-size: 15px; line-height: 1.7; border-radius: 8px; font-style: italic;',
+        'code': f'font-family: Menlo, Monaco, Consolas, monospace; font-size: 14px; background-color: {theme["code_bg"]}; padding: 3px 6px; border-radius: 4px; color: {theme["primary"]};',
+        'pre': f'background-color: #282c34; padding: 18px; overflow-x: auto; border-radius: 10px; margin-bottom: 25px; color: #abb2bf; font-family: Menlo, Monaco, Consolas, monospace; font-size: 14px; line-height: 1.6;',
+        'img': 'max-width: 100%; height: auto; display: block; margin: 25px auto; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);',
+        'a': f'color: {theme["primary"]}; text-decoration: none; border-bottom: 1px dashed {theme["primary"]};',
+        'strong': f'font-weight: bold; color: {theme["text"]}; border-bottom: 2px solid {theme["primary"]}40;',
+        'table': f'width: 100%; border-collapse: collapse; margin-bottom: 25px; font-size: 15px; border: 1px solid #e0e0e0; background-color: {theme["bg"]}10;',
+        'th': f'background-color: {theme["primary"]}; color: #ffffff; border: 1px solid #e0e0e0; padding: 12px; text-align: left; font-weight: bold;',
+        'td': 'border: 1px solid #e0e0e0; padding: 12px;',
+        'hr': f'border: 0; border-top: 1px solid {theme["primary"]}40; margin: 40px 0;'
+    }
+
+    # Custom theme adjustments
+    if style == "elegant":
+        styles['h1'] = f'font-size: 28px; font-family: serif; font-weight: normal; margin-top: 40px; margin-bottom: 30px; color: #1a1a1a; text-align: center; border-bottom: 1px solid {theme["primary"]}; padding-bottom: 15px;'
+        styles['h2'] = f'font-size: 22px; font-family: serif; font-weight: normal; margin-top: 35px; margin-bottom: 20px; text-align: center; color: #1a1a1a;'
+        styles['p'] = f'font-size: 17px; font-family: serif; line-height: 1.9; margin-bottom: 25px; color: {theme["text"]}; text-align: justify;'
+    
+    elif style == "futuristic":
+        styles['h1'] = f'font-size: 26px; font-weight: 800; margin-top: 35px; margin-bottom: 20px; color: {theme["primary"]}; text-align: left; text-transform: uppercase; letter-spacing: 2px; border-left: 8px solid {theme["primary"]}; padding-left: 15px;'
+        styles['p'] = f'font-size: 16px; line-height: 1.8; margin-bottom: 22px; color: {theme["text"]}; opacity: 0.9;'
+
     # 4. Apply styles
-    for tag, style in styles.items():
+    for tag, st in styles.items():
         for element in soup.find_all(tag):
-            # Handle code blocks separately (pre > code) vs inline code
             if tag == 'code' and element.parent.name == 'pre':
-                # Remove style from code inside pre, as pre handles the block style
                 element['style'] = 'font-family: inherit; color: inherit; background-color: transparent; padding: 0;' 
                 continue 
             
-            # Special handling for h3 to add a small icon or dot if desired
-            # Here we just apply the style
-            
-            # Merge existing style with new style
             existing_style = element.get('style', '')
-            # We prioritize our styles but allow existing styles to override if they were there (unlikely from pure markdown)
-            # Actually for WeChat, we want to enforce our styles
-            new_style = f"{style} {existing_style}".strip()
+            new_style = f"{st} {existing_style}".strip()
             element['style'] = new_style
 
-    # 4.1 Special handling for tables: zebra striping and wrapping
+    # 4.1 Table zebra striping
     for table in soup.find_all('table'):
-        # Apply zebra striping to rows
         rows = table.find_all('tr')
         for i, row in enumerate(rows):
-            # Skip header row if it's inside thead
-            if row.parent.name == 'thead':
-                continue
-            
-            # Apply background color to even rows (0-indexed, so actually 2nd, 4th...)
+            if row.parent.name == 'thead': continue
             if i % 2 == 1:
                 existing_style = row.get('style', '')
-                row['style'] = f"{existing_style} background-color: #f9f9f9;".strip()
+                row['style'] = f"{existing_style} background-color: {theme['bg']}50;".strip()
         
-        # Wrap table in a scrollable container
-        wrapper = soup.new_tag("section", style="overflow-x: auto; -webkit-overflow-scrolling: touch; margin-bottom: 20px; max-width: 100%;")
+        wrapper = soup.new_tag("section", style="overflow-x: auto; -webkit-overflow-scrolling: touch; margin-bottom: 25px; max-width: 100%; border-radius: 8px;")
         table.wrap(wrapper)
 
-    # 5. Additional processing for images to ensure they have proper structure
-    # WeChat likes images in a container sometimes, but simple img tag usually works
-    # Let's add a caption if alt text exists
+    # 5. Images
     for img in soup.find_all('img'):
         alt = img.get('alt')
         if alt and alt != '图片':
-            # Create a figure-like structure
-            # <div style="text-align: center;">
-            #   <img ...>
-            #   <span style="font-size: 12px; color: #888; display: block; margin-top: 5px;">alt</span>
-            # </div>
-            
-            wrapper = soup.new_tag("div", style="text-align: center; margin: 20px 0;")
-            caption = soup.new_tag("span", style="font-size: 14px; color: #888; display: block; margin-top: 6px;")
+            wrapper = soup.new_tag("div", style="text-align: center; margin: 25px 0;")
+            caption = soup.new_tag("span", style=f"font-size: 14px; color: {theme['secondary_text']}; display: block; margin-top: 8px; font-style: italic;")
             caption.string = alt
-            
             img.wrap(wrapper)
             wrapper.append(caption)
 
     # 6. Wrap in a main container
-    container = soup.new_tag("div", id="wechat-content", style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 16px; line-height: 1.6; color: #333; padding: 10px; background-color: #fff;")
+    container_style = f"font-family: {theme['font_family']}; font-size: 16px; line-height: 1.6; color: {theme['text']}; padding: 20px; background-color: {theme['bg'] if style == 'futuristic' else '#ffffff'};"
+    container = soup.new_tag("div", id="wechat-content", style=container_style)
     
-    # Move all top-level elements to container
-    # list(soup.contents) is needed because we are modifying the tree
     for element in list(soup.contents):
         container.append(element)
     

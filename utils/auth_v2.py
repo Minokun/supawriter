@@ -15,22 +15,10 @@ import base64
 import extra_streamlit_components as stx
 
 from utils.database import Database, User, OAuthAccount
+from backend.api.core.security import hash_password, verify_password
 
 logger = logging.getLogger(__name__)
 
-
-def hash_password(password: str) -> str:
-    """密码哈希函数"""
-    return hashlib.sha256(password.encode()).hexdigest()
-
-
-def verify_password(password: str, password_hash: str) -> bool:
-    """验证密码"""
-    return hash_password(password) == password_hash
-
-
-# Cookie管理器
-_cookie_manager = None
 
 def get_cookie_manager():
     """获取Cookie管理器实例"""
@@ -58,7 +46,7 @@ class AuthService:
         email: str,
         password: str,
         display_name: Optional[str] = None
-    ) -> Tuple[bool, str]:
+    ) -> Tuple[bool, str, Optional[Dict]]:
         """
         使用邮箱和密码注册新用户
         
@@ -69,25 +57,25 @@ class AuthService:
             display_name: 显示名称
         
         Returns:
-            (成功标志, 消息)
+            (成功标志, 消息, 用户信息)
         """
         # 验证输入
         if not username or len(username) < 3:
-            return False, "用户名至少3个字符"
+            return False, "用户名至少3个字符", None
         
         if not email or '@' not in email:
-            return False, "请输入有效的邮箱地址"
+            return False, "请输入有效的邮箱地址", None
         
         if not password or len(password) < 8:
-            return False, "密码至少8个字符"
+            return False, "密码至少8个字符", None
         
         # 检查用户名是否已存在
         if User.get_user_by_username(username):
-            return False, "用户名已存在"
+            return False, "用户名已存在", None
         
         # 检查邮箱是否已存在
         if User.get_user_by_email(email):
-            return False, "邮箱已被注册"
+            return False, "邮箱已被注册", None
         
         # 创建用户
         password_hash = hash_password(password)
@@ -99,10 +87,12 @@ class AuthService:
         )
         
         if user_id:
+            # 获取创建的用户信息
+            user = User.get_user_by_id(user_id)
             logger.info(f"✅ 新用户注册成功: {username}")
-            return True, "注册成功！请登录"
+            return True, "注册成功！请登录", user
         else:
-            return False, "注册失败，请稍后重试"
+            return False, "注册失败，请稍后重试", None
     
     @staticmethod
     def login_with_email(email: str, password: str, remember_me: bool = False) -> Tuple[bool, str, Optional[Dict]]:
@@ -127,7 +117,14 @@ class AuthService:
         if not user.get('password_hash'):
             return False, "此邮箱使用第三方登录，请使用对应的登录方式", None
         
-        if not verify_password(password, user['password_hash']):
+        logger.info(f"Verifying password for user: {email}")
+        logger.info(f"Password hash prefix: {user['password_hash'][:10]}")
+        logger.info(f"Password hash length: {len(user['password_hash'])}")
+        
+        password_valid = verify_password(password, user['password_hash'])
+        logger.info(f"Password verification result: {password_valid}")
+        
+        if not password_valid:
             return False, "邮箱或密码错误", None
         
         # 更新最后登录时间

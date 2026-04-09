@@ -222,8 +222,15 @@ def main():
         color: white;
         border-radius: 12px;
         padding: 1.2rem;
-        text-align: center;
+        text-align: left;
         box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    }
+    
+    /* 大屏幕适配 */
+    @media (min-width: 1400px) {
+        .header-box {
+            text-align: center;
+        }
     }
     
     .stat-number {
